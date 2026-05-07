@@ -25,8 +25,10 @@ import ast
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-TRANSPORTS_DIR = REPO_ROOT / "bridge" / "transports"
+# Layout: src/otaman_bridge/check_transport_boundary.py — repo root is parent.parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+PKG_DIR = Path(__file__).resolve().parent  # otaman_bridge/
+TRANSPORTS_DIR = PKG_DIR / "transports"
 
 FORBIDDEN_PREFIXES = (
     # Telegram
@@ -94,8 +96,8 @@ def _should_skip(path: Path) -> bool:
     for skip in SKIP_DIRS:
         if skip in parts:
             return True
-    # Files inside bridge/transports/ are allowed to import transport libs.
-    if parts[:2] == ("bridge", "transports"):
+    # Files inside any *transports/ directory are allowed transport libs (legacy bridge/transports/ + new otaman_bridge/transports/).
+    if "transports" in parts:
         return True
     return False
 
