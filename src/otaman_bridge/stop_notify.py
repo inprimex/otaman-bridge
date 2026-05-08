@@ -33,7 +33,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from otaman_core._resolve import find_maestro_root, read_expected_account, active_profile_env  # noqa: E402
+from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # noqa: E402
 from otaman_bridge.afk import read_afk  # noqa: E402
 
 
@@ -162,7 +162,7 @@ def debounce_ok(state_path: Path, session_id: str, content_hash: str) -> bool:
 
 
 def _derive_account(project_root: Path) -> str | None:
-    env_account = active_profile_env()
+    env_account = active_routing_env()
     if env_account:
         return env_account
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "")

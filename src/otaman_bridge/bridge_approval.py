@@ -34,7 +34,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from otaman_core._resolve import find_maestro_root, read_expected_account, active_profile_env  # noqa: E402
+from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # noqa: E402
 from otaman_bridge.afk import read_afk
 
 
@@ -71,14 +71,14 @@ def _derive_account(project_root: Path) -> str | None:
     """Figure out which account this session belongs to.
 
     Priority:
-      1. ``$OTAMAN_ACTIVE_PROFILE`` — set by the launcher (most reliable).
+      1. ``$OTAMAN_ACTIVE_ROUTING`` — set by the launcher (most reliable).
       2. ``CLAUDE_CONFIG_DIR`` basename — ``~/.claude-<name>`` → ``<name>``.
       3. The managed repo's ``.maestro`` marker ``expected_account`` field.
 
     Returns the account name, or ``None`` if nothing resolves — in which
     case the hook short-circuits to fail-safe (native prompt).
     """
-    env_account = active_profile_env()
+    env_account = active_routing_env()
     if env_account:
         return env_account
 
