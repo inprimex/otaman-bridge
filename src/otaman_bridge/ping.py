@@ -23,11 +23,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from otaman_core._resolve import find_maestro_root, read_expected_account  # noqa: E402
+from otaman_core._resolve import find_maestro_root, read_expected_account, active_profile_env  # noqa: E402
 
 
 def _derive_account(project_root: Path) -> str | None:
-    env_account = os.environ.get("MAESTRO_ACTIVE_ACCOUNT")
+    env_account = active_profile_env()
     if env_account:
         return env_account
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "")

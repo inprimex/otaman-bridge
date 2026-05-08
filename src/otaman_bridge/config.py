@@ -1,6 +1,6 @@
 """Account + transport config loader for the bridge.
 
-Reads ``launch-settings.yaml accounts.<name>`` and resolves which
+Reads ``launch-settings.yaml profiles.<name>`` (or legacy ``accounts.<name>``) and resolves which
 transport to instantiate, plus transport-specific config (with secrets
 resolved via ``scripts/_secrets.py``'s tiered source chain).
 
@@ -174,10 +174,12 @@ def load_account_config(
         KeyError: if ``account`` is not defined in the settings file.
     """
     settings = _load_yaml(settings_path)
-    accounts = settings.get("accounts") or {}
+    # New name "profiles:" preferred; legacy "accounts:" still honored for
+    # one release window. If both present, profiles: wins.
+    accounts = settings.get("profiles") or settings.get("accounts") or {}
     if not isinstance(accounts, dict) or account not in accounts:
         raise KeyError(
-            f"Account {account!r} not defined in {settings_path}"
+            f"Profile {account!r} not defined in {settings_path}"
         )
 
     raw = accounts[account] or {}
@@ -212,9 +214,10 @@ def load_account_config(
 
 
 def list_accounts_from_settings(settings_path: Path) -> list[str]:
-    """Return all account names defined in ``launch-settings.yaml``."""
+    """Return all profile names defined in ``launch-settings.yaml`` (reads
+    both new ``profiles:`` and legacy ``accounts:``)."""
     settings = _load_yaml(settings_path)
-    accounts = settings.get("accounts") or {}
+    accounts = settings.get("profiles") or settings.get("accounts") or {}
     if not isinstance(accounts, dict):
         return []
     return sorted(accounts)

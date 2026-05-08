@@ -52,7 +52,7 @@ except ImportError:
     )
     sys.exit(1)
 
-from otaman_core._resolve import find_maestro_root  # noqa: E402
+from otaman_core._resolve import find_maestro_root, active_profile_env  # noqa: E402
 
 
 AFK_FILENAME = "afk"
@@ -269,11 +269,11 @@ def clear_afk(maestro_root: Path) -> bool:
 def _resolve_account_for_notify() -> str | None:
     """Mirror of ``bridge_approval.py:_derive_account``.
 
-    Priority: ``$MAESTRO_ACTIVE_ACCOUNT`` → ``CLAUDE_CONFIG_DIR`` basename →
+    Priority: ``$OTAMAN_ACTIVE_PROFILE`` → ``CLAUDE_CONFIG_DIR`` basename →
     ``.maestro`` marker's ``expected_account`` field. Returns None if
     nothing resolves (caller should skip notifying).
     """
-    env_account = os.environ.get("MAESTRO_ACTIVE_ACCOUNT")
+    env_account = active_profile_env()
     if env_account:
         return env_account
 
