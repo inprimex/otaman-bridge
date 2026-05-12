@@ -359,16 +359,14 @@ class TestMakeInstallTarget:
         # layout (which differs between local dev and CI editable installs).
         stub_cli = tmp_path / "cli" / "maestro.sh"
         stub_cli.parent.mkdir(parents=True, exist_ok=True)
-        stub_cli.write_text("#!/bin/bash
-", encoding="utf-8")
+        stub_cli.write_text("#!/bin/bash\n", encoding="utf-8")
         t = make_install_target("personal", maestro_cli=stub_cli)
         assert t.python == sys.executable
 
     def test_explicit_system_honored(self, tmp_path):
         stub_cli = tmp_path / "cli" / "maestro.sh"
         stub_cli.parent.mkdir(parents=True, exist_ok=True)
-        stub_cli.write_text("#!/bin/bash
-", encoding="utf-8")
+        stub_cli.write_text("#!/bin/bash\n", encoding="utf-8")
         t = make_install_target("x", system="macos-launchd", python="/p", working_dir="/w", maestro_cli=stub_cli)
         assert t.system == "macos-launchd"
 
