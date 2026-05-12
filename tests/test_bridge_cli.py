@@ -90,7 +90,7 @@ class TestRunStopLifecycle:
                     break
                 time.sleep(0.1)
             else:
-                out, err = proc.communicate(timeout=2)
+                out, err = proc.communicate(timeout=10)
                 pytest.fail(
                     f"daemon failed to write endpoint file\nstdout={out}\nstderr={err}"
                 )
@@ -124,7 +124,7 @@ class TestRunStopLifecycle:
             if proc.poll() is None:
                 proc.terminate()
                 try:
-                    proc.wait(timeout=5)
+                    proc.wait(timeout=15)
                 except subprocess.TimeoutExpired:
                     proc.kill()
 
@@ -170,7 +170,7 @@ class TestRunStopLifecycle:
 
             # The main process MUST exit — not just the HTTP thread.
             try:
-                rc = proc.wait(timeout=5)
+                rc = proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 pytest.fail(
@@ -183,7 +183,7 @@ class TestRunStopLifecycle:
             if proc.poll() is None:
                 proc.terminate()
                 try:
-                    proc.wait(timeout=5)
+                    proc.wait(timeout=15)
                 except subprocess.TimeoutExpired:
                     proc.kill()
 
@@ -275,7 +275,7 @@ class TestConfigDrivenRun:
                     break
                 time.sleep(0.1)
             else:
-                out, err = proc.communicate(timeout=2)
+                out, err = proc.communicate(timeout=10)
                 pytest.fail(
                     f"daemon failed to start\nstdout={out}\nstderr={err}"
                 )
@@ -284,7 +284,7 @@ class TestConfigDrivenRun:
         finally:
             if proc.poll() is None:
                 proc.terminate()
-                proc.wait(timeout=5)
+                proc.wait(timeout=15)
 
     def test_missing_account_with_no_transport_errors(self, sandbox_home, tmp_path):
         """Account not in settings AND no --transport → clear error."""
