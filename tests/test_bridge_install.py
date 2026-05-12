@@ -351,16 +351,25 @@ class TestDispatcher:
 
 
 class TestMakeInstallTarget:
-    def test_defaults_to_sys_executable(self, sandbox_home, target, monkeypatch):
+    def test_defaults_to_sys_executable(self, sandbox_home, target, monkeypatch, tmp_path):
         """Python interpreter defaults to sys.executable (freezes what pip
         installed into)."""
         monkeypatch.setattr(sys, "platform", "linux")
-        # Provide a maestro.sh so resolve_maestro_cli finds it
-        t = make_install_target("personal")
+        # Pass maestro_cli explicitly — avoids dependency on actual filesystem
+        # layout (which differs between local dev and CI editable installs).
+        stub_cli = tmp_path / "cli" / "maestro.sh"
+        stub_cli.parent.mkdir(parents=True, exist_ok=True)
+        stub_cli.write_text("#!/bin/bash
+", encoding="utf-8")
+        t = make_install_target("personal", maestro_cli=stub_cli)
         assert t.python == sys.executable
 
-    def test_explicit_system_honored(self):
-        t = make_install_target("x", system="macos-launchd", python="/p", working_dir="/w")
+    def test_explicit_system_honored(self, tmp_path):
+        stub_cli = tmp_path / "cli" / "maestro.sh"
+        stub_cli.parent.mkdir(parents=True, exist_ok=True)
+        stub_cli.write_text("#!/bin/bash
+", encoding="utf-8")
+        t = make_install_target("x", system="macos-launchd", python="/p", working_dir="/w", maestro_cli=stub_cli)
         assert t.system == "macos-launchd"
 
     def test_to_dict_json_safe(self, target):
