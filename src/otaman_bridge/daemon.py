@@ -376,6 +376,11 @@ class BridgeDaemon:
         # Optional OIDC validator built from env. When unset, daemon
         # serves loopback-bearer only (Mode 1 / local-trust pattern).
         self.oidc_validator = _build_oidc_validator_from_env()
+        # Optional web-login flow (Authorization Code + PKCE). Built from
+        # OIDC_AUDIENCE_BRIDGE + OIDC_BRIDGE_REDIRECT_URI. None disables
+        # /auth/login (returns 503).
+        _web_login = _build_web_login_flow_from_env()
+        self.web_login_flow = _web_login[0] if _web_login is not None else None
 
         self._pending: dict[str, _PendingApproval] = {}
         # Parallel registry for bus spec-change-requests waiting on an
@@ -1260,6 +1265,21 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
                 self._reply_json(status, resp)
+                return
+            if route == "/auth/login":
+                # Unauth: this IS the start of the auth flow. Returns a
+                # 302 to Zitadel's /oauth/v2/authorize, or 503 if the web
+                # login flow is not configured (env vars incomplete).
+                if daemon.web_login_flow is None:
+                    self._reply_error(503, "web login flow not configured")
+                    return
+                started = daemon.web_login_flow.start()
+                self.send_response(302)
+                self.send_header("Location", started.authorize_url)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
                 return
             self._reply_error(404, f"unknown route: {self.path}")
 
