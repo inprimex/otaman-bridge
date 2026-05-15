@@ -295,6 +295,46 @@ def _build_oidc_validator_from_env():
     return OIDCValidator(cfg)
 
 
+def _build_web_login_flow_from_env():
+    """Build a (LoginFlow, PendingLoginStore) pair from environment, or None.
+
+    Reads:
+        OTAMAN_AUTH_MODE              -- must be ``oidc`` to enable
+        OIDC_ISSUER                   -- Zitadel issuer URL
+        OIDC_AUDIENCE_BRIDGE          -- bridge's client_id in Zitadel
+        OIDC_BRIDGE_REDIRECT_URI      -- public ``/auth/callback`` URL we
+                                         registered with Zitadel
+        OIDC_PROJECT_ID               -- optional; adds project-aud scope
+
+    Returns ``(LoginFlow, PendingLoginStore)`` when fully configured,
+    else ``None``. The daemon stores this on ``self.web_login_flow``;
+    when ``None`` the ``/auth/login`` route returns 503 (web login is
+    not enabled — clients should use a Bearer token directly).
+    """
+    if os.environ.get("OTAMAN_AUTH_MODE", "").lower() != "oidc":
+        return None
+    issuer = os.environ.get("OIDC_ISSUER", "").strip()
+    client_id = os.environ.get("OIDC_AUDIENCE_BRIDGE", "").strip()
+    redirect_uri = os.environ.get("OIDC_BRIDGE_REDIRECT_URI", "").strip()
+    if not issuer or not client_id or not redirect_uri:
+        _log.warning(
+            "OTAMAN_AUTH_MODE=oidc but web-login env incomplete; "
+            "/auth/login disabled (issuer=%s client=%s redirect=%s)",
+            bool(issuer), bool(client_id), bool(redirect_uri),
+        )
+        return None
+    from otaman_bridge.web_auth import LoginFlow, PendingLoginStore, WebAuthConfig
+    cfg = WebAuthConfig(
+        issuer=issuer,
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        project_id=os.environ.get("OIDC_PROJECT_ID") or None,
+    )
+    store = PendingLoginStore()
+    _log.info("web-login flow enabled (redirect_uri=%s)", redirect_uri)
+    return LoginFlow(cfg, store), store
+
+
 class BridgeDaemon:
     """Owns the HTTP server, the transport, and the pending-approval table."""
 
