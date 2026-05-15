@@ -12,7 +12,8 @@ dependencies = [
 
 [project.optional-dependencies]
 telegram = ["python-telegram-bot>=21,<23"]
-test = ["pytest>=7", "python-telegram-bot>=21,<23"]
+oidc = ["pyjwt[crypto]>=2.8"]
+test = ["pytest>=7", "python-telegram-bot>=21,<23", "pyjwt[crypto]>=2.8"]
 
 [build-system]
 requires = ["hatchling"]

@@ -261,6 +261,40 @@ class _AsyncLoopThread:
 # Daemon
 
 
+def _build_oidc_validator_from_env():
+    """Build an OIDCValidator from environment if configured, else None.
+
+    Reads:
+        OTAMAN_AUTH_MODE       — must be ``oidc`` to enable
+        OIDC_ISSUER            — the OIDC provider's issuer URL
+        OIDC_AUDIENCE_BRIDGE   — this bridge's Zitadel client id
+        OIDC_JWKS_URI          — optional; derived from issuer if absent
+        OIDC_REQUIRED_ROLE     — optional role gate
+
+    Returns ``OIDCValidator`` instance or ``None`` (auth falls back
+    to loopback bearer only — same-host CLI introspection).
+    """
+    if os.environ.get("OTAMAN_AUTH_MODE", "").lower() != "oidc":
+        return None
+    issuer = os.environ.get("OIDC_ISSUER", "").strip()
+    audience = os.environ.get("OIDC_AUDIENCE_BRIDGE", "").strip()
+    if not issuer or not audience:
+        _log.warning(
+            "OTAMAN_AUTH_MODE=oidc but OIDC_ISSUER/OIDC_AUDIENCE_BRIDGE unset; "
+            "falling back to loopback bearer only"
+        )
+        return None
+    from otaman_core.auth_oidc import OIDCConfig, OIDCValidator
+    cfg = OIDCConfig(
+        issuer=issuer,
+        audience=audience,
+        jwks_uri=os.environ.get("OIDC_JWKS_URI") or None,
+        required_role=os.environ.get("OIDC_REQUIRED_ROLE") or None,
+    )
+    _log.info("OIDC validator enabled (issuer=%s aud=%s)", issuer, audience)
+    return OIDCValidator(cfg)
+
+
 class BridgeDaemon:
     """Owns the HTTP server, the transport, and the pending-approval table."""
 
@@ -298,6 +332,10 @@ class BridgeDaemon:
         self.token = _secrets.token_hex(24)  # 48 hex chars
         self.pid = os.getpid()
         self.started_at = time.monotonic()
+
+        # Optional OIDC validator built from env. When unset, daemon
+        # serves loopback-bearer only (Mode 1 / local-trust pattern).
+        self.oidc_validator = _build_oidc_validator_from_env()
 
         self._pending: dict[str, _PendingApproval] = {}
         # Parallel registry for bus spec-change-requests waiting on an
@@ -1100,7 +1138,17 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                        fmt % args)
 
         def _auth_ok(self) -> bool:
+            # When OIDC is configured, try it first. Fall back to the
+            # loopback bearer for local same-host clients (CLI
+            # introspection, `maestro bridge status`, etc.).
             header = self.headers.get("Authorization", "")
+            if daemon.oidc_validator is not None and header.startswith("Bearer "):
+                result = daemon.oidc_validator.validate(header)
+                if result.ok:
+                    _log.debug("OIDC auth ok: user_id=%s roles=%s", result.user_id, result.roles)
+                    return True
+                # OIDC failed; fall through to loopback bearer (don't 401
+                # yet — same-host CLI may be using the loopback token).
             if not header.startswith("Bearer "):
                 return False
             supplied = header[len("Bearer "):].strip()
