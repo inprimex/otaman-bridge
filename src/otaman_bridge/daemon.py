@@ -381,6 +381,26 @@ class BridgeDaemon:
         # /auth/login (returns 503).
         _web_login = _build_web_login_flow_from_env()
         self.web_login_flow = _web_login[0] if _web_login is not None else None
+        # Web-login support stack -- only built when web_login_flow is.
+        # Tests inject stubs onto these attributes after construction.
+        self.session_store = None
+        self.session_cookie = None
+        self.login_completer = None
+        if self.web_login_flow is not None:
+            from otaman_bridge.web_auth import LoginCompleter, TokenExchanger
+            from otaman_bridge.web_session import SessionCookie, SessionStore
+            self.session_store = SessionStore()
+            # Cookie Secure flag derived from the registered redirect_uri
+            # scheme (https -> Secure, http -> not). Production always
+            # uses https; local dev / e2e harness can use http.
+            redirect_https = self.web_login_flow.config.redirect_uri.startswith("https://")
+            self.session_cookie = SessionCookie(secure=redirect_https)
+            self.login_completer = LoginCompleter(
+                token_exchanger=TokenExchanger(self.web_login_flow.config),
+                validator=self.oidc_validator,
+                session_store=self.session_store,
+                pending_store=self.web_login_flow.store,
+            )
 
         self._pending: dict[str, _PendingApproval] = {}
         # Parallel registry for bus spec-change-requests waiting on an
@@ -1260,7 +1280,11 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             self._reply_error(404, f"unknown route: {self.path}")
 
         def do_GET(self) -> None:  # noqa: N802
-            route = self.path.rstrip("/")
+            # Parse the path so query strings (e.g. /auth/callback?code=...)
+            # are stripped before route matching. Without this, dispatch
+            # falls through to the 404 handler for any URL with a query.
+            import urllib.parse as _u_parse
+            route = _u_parse.urlparse(self.path).path.rstrip("/")
             if route in ("/status", ""):
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
@@ -1276,6 +1300,47 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 started = daemon.web_login_flow.start()
                 self.send_response(302)
                 self.send_header("Location", started.authorize_url)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
+            if route == "/auth/callback":
+                # Unauth: completes the auth flow started at /auth/login.
+                # Reads ?code=&state=, calls LoginCompleter, sets session
+                # cookie + 302 to "/". Maps errors:
+                #   - LoginCompleteError -> 400 (state / id_token problems)
+                #   - TokenExchangeError -> 502 (token endpoint failure)
+                if daemon.login_completer is None:
+                    self._reply_error(503, "web login flow not configured")
+                    return
+                import urllib.parse as _u
+                from otaman_bridge.web_auth import LoginCompleteError, TokenExchangeError
+                qs = _u.urlparse(self.path).query
+                params = dict(_u.parse_qsl(qs))
+                if "error" in params:
+                    self._reply_error(400, f"oauth error: {params['error']}")
+                    return
+                code = params.get("code", "")
+                state = params.get("state", "")
+                if not code or not state:
+                    self._reply_error(400, "missing code or state")
+                    return
+                try:
+                    session = daemon.login_completer.complete(code=code, state=state)
+                except LoginCompleteError as exc:
+                    self._reply_error(400, f"login failed: {exc}")
+                    return
+                except TokenExchangeError as exc:
+                    self._reply_error(502, f"token endpoint failed: {exc}")
+                    return
+                cookie = daemon.session_cookie.set_header(
+                    session.id,
+                    max_age=daemon.session_store.ttl,
+                )
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.send_header("Set-Cookie", cookie)
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", "0")
                 self.send_header("Connection", "close")
