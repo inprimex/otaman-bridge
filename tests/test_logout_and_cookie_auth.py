@@ -42,8 +42,13 @@ def _request(url, *, method="GET", cookie=None, token=None, body=None):
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    # 302 must NOT be auto-followed (we test the 302 itself, not where it leads)
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **kw):
+            return None
+    opener = urllib.request.build_opener(_NoRedirect())
     try:
-        with urllib.request.urlopen(req, timeout=2) as resp:
+        with opener.open(req, timeout=2) as resp:
             return resp.status, dict(resp.headers), resp.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers), e.read()
@@ -77,7 +82,7 @@ class TestAuthLogout:
             f"{base}/auth/logout", method="POST",
             cookie=f"otaman_bridge_sid={sess.id}",
         )
-        assert code == 204
+        assert code == 302
         # Session removed from store
         assert daemon.session_store.get(sess.id) is None
         # Set-Cookie clears the cookie (Max-Age=0)
@@ -91,7 +96,7 @@ class TestAuthLogout:
         _wire_full_web_auth(daemon)
         base = _daemon_url(endpoint)
         code, _, _ = _request(f"{base}/auth/logout", method="POST")
-        assert code == 204
+        assert code == 302
 
     def test_logout_with_unknown_cookie_is_idempotent_204(self, running_daemon):
         daemon, endpoint = running_daemon
@@ -101,7 +106,7 @@ class TestAuthLogout:
             f"{base}/auth/logout", method="POST",
             cookie="otaman_bridge_sid=never-existed",
         )
-        assert code == 204
+        assert code == 302
 
     def test_logout_returns_503_when_unconfigured(self, running_daemon):
         daemon, endpoint = running_daemon

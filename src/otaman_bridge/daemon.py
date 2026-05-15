@@ -1285,7 +1285,12 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 sid = daemon.session_cookie.parse(cookie_header)
                 if sid is not None:
                     daemon.session_store.delete(sid)
-                self.send_response(204)
+                # 302 -> / so the browser auto-navigates and re-renders the
+                # landing page (which now shows "Not logged in" because the
+                # cookie was cleared by the Set-Cookie header below).
+                # 204 would leave the user on the same page visually.
+                self.send_response(302)
+                self.send_header("Location", "/")
                 self.send_header("Set-Cookie", daemon.session_cookie.clear_header())
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", "0")
@@ -1422,6 +1427,17 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     return
                 except TokenExchangeError as exc:
                     self._reply_error(502, f"token endpoint failed: {exc}")
+                    return
+                except Exception as exc:
+                    # Catches OIDCError from JWKS fetch + any other infra-level
+                    # failure during id_token validation. Without this, the state
+                    # gets consumed but the exception bubbles to a 500 traceback;
+                    # on retry the user sees "unknown or expired state" (the
+                    # state-consumed-on-first-call side effect). Map all such
+                    # cases to 502 -- they are IdP-side / network failures, not
+                    # user input problems.
+                    _log.exception("auth callback failed unexpectedly")
+                    self._reply_error(502, f"auth callback failed: {exc}")
                     return
                 cookie = daemon.session_cookie.set_header(
                     session.id,
