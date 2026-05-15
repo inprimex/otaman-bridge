@@ -314,7 +314,13 @@ def _build_web_login_flow_from_env():
     if os.environ.get("OTAMAN_AUTH_MODE", "").lower() != "oidc":
         return None
     issuer = os.environ.get("OIDC_ISSUER", "").strip()
-    client_id = os.environ.get("OIDC_AUDIENCE_BRIDGE", "").strip()
+    # Prefer the dedicated web-client id (created by zitadel-bootstrap.py
+    # as otaman-bridge-web). Fall back to OIDC_AUDIENCE_BRIDGE for backward
+    # compat with deployments that have one combined client id.
+    client_id = (
+        os.environ.get("OIDC_BRIDGE_WEB_CLIENT_ID", "").strip()
+        or os.environ.get("OIDC_AUDIENCE_BRIDGE", "").strip()
+    )
     redirect_uri = os.environ.get("OIDC_BRIDGE_REDIRECT_URI", "").strip()
     if not issuer or not client_id or not redirect_uri:
         _log.warning(
