@@ -1214,6 +1214,17 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     return True
                 # OIDC failed; fall through to loopback bearer (don't 401
                 # yet — same-host CLI may be using the loopback token).
+            # session cookie auth path: try the browser session cookie
+            # before falling back to loopback bearer
+            if daemon.session_store is not None and daemon.session_cookie is not None:
+                cookie_header = self.headers.get("Cookie", "")
+                sid = daemon.session_cookie.parse(cookie_header)
+                if sid is not None:
+                    sess = daemon.session_store.get(sid)
+                    if sess is not None:
+                        _log.debug("session cookie auth ok: user_id=%s", sess.user_id)
+                        return True
+                    # Unknown / expired cookie; fall through to loopback
             if not header.startswith("Bearer "):
                 return False
             supplied = header[len("Bearer "):].strip()
@@ -1256,7 +1267,25 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
         # --- routes -------------------------------------------------------
 
         def do_POST(self) -> None:  # noqa: N802 — stdlib name
-            route = self.path.rstrip("/")
+            import urllib.parse as _u_parse_post
+            route = _u_parse_post.urlparse(self.path).path.rstrip("/")
+            if route == "/auth/logout":
+                # Unauth: idempotent. Always 204; clears the cookie regardless.
+                if daemon.session_store is None or daemon.session_cookie is None:
+                    self._reply_error(503, "web login flow not configured")
+                    return
+                self._drain_body()
+                cookie_header = self.headers.get("Cookie", "")
+                sid = daemon.session_cookie.parse(cookie_header)
+                if sid is not None:
+                    daemon.session_store.delete(sid)
+                self.send_response(204)
+                self.send_header("Set-Cookie", daemon.session_cookie.clear_header())
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
             if route in ("/approval", "/notify", "/reply", "/shutdown"):
                 if not self._auth_ok():
                     self._reply_error(401, "invalid or missing bearer token")
