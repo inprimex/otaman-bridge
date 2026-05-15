@@ -291,3 +291,78 @@ __all__.extend([
     "TokenExchangeError",
     "TokenExchanger",
 ])
+
+
+class LoginCompleteError(RuntimeError):
+    """Raised on any callback-flow failure that's not a network error.
+
+    Includes: unknown/expired state (replay or stale browser tab),
+    missing id_token in the token response (Zitadel misconfig),
+    invalid id_token (signature / iss / aud / exp). Route handlers
+    map this to 400 Bad Request -- the user can retry by re-initiating
+    /auth/login.
+
+    TokenExchangeError (network / 5xx from token endpoint) is a
+    distinct concern -- callers should catch both separately and
+    map TokenExchangeError to 502/504.
+    """
+
+
+class LoginCompleter:
+    """Owns the callback half of the Authorization Code + PKCE flow.
+
+    Pulls together the verifier (from PendingLoginStore), the token
+    exchange (TokenExchanger), the id_token validation (OIDCValidator),
+    and the resulting Session creation (SessionStore).
+
+    The split between LoginFlow.start() (chunk B) and LoginCompleter
+    (this chunk) mirrors the OAuth state machine: the user leaves at
+    /auth/login, comes back at /auth/callback, and these two pieces
+    are the bridge halves of that round-trip.
+    """
+
+    def __init__(
+        self,
+        *,
+        token_exchanger: "TokenExchanger",
+        validator,
+        session_store: "object",
+        pending_store: "PendingLoginStore",
+    ) -> None:
+        self.token_exchanger = token_exchanger
+        self.validator = validator
+        self.session_store = session_store
+        self.pending_store = pending_store
+
+    def complete(self, *, code: str, state: str):
+        """Run the callback flow end to end. Returns the new Session.
+
+        Raises:
+            LoginCompleteError: for state / id_token problems (map to 400)
+            TokenExchangeError: for token-endpoint network / HTTP errors
+                (map to 502/504); propagates from TokenExchanger.exchange_code
+        """
+        if not code or not state:
+            raise LoginCompleteError("missing code or state")
+        verifier = self.pending_store.take(state)
+        if verifier is None:
+            raise LoginCompleteError("unknown or expired state")
+
+        token_response = self.token_exchanger.exchange_code(code, verifier)
+        if not token_response.id_token:
+            raise LoginCompleteError("token response missing id_token")
+
+        result = self.validator.validate(f"Bearer {token_response.id_token}")
+        if not result.ok:
+            raise LoginCompleteError(f"id_token validation failed: {result.error}")
+        if not result.user_id:
+            raise LoginCompleteError("id_token has no sub claim")
+
+        return self.session_store.create(
+            user_id=result.user_id,
+            email=result.email,
+            roles=tuple(result.roles),
+        )
+
+
+__all__.extend(["LoginCompleteError", "LoginCompleter"])
