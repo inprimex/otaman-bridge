@@ -169,3 +169,125 @@ __all__ = [
     "PendingLoginStore",
     "LoginFlow",
 ]
+
+
+import json as _json
+import urllib.error as _urlerror
+import urllib.parse as _urlparse
+import urllib.request as _urlrequest
+
+
+@dataclass(frozen=True)
+class TokenResponse:
+    """The /oauth/v2/token response we care about (RFC 6749 sec. 5.1)."""
+
+    access_token: str
+    id_token: str | None
+    refresh_token: str | None
+    expires_in: int
+    token_type: str
+
+    @classmethod
+    def from_dict(cls, d) -> "TokenResponse":
+        if "access_token" not in d:
+            raise ValueError(f"token response missing access_token: keys={sorted(d)}")
+        return cls(
+            access_token=str(d["access_token"]),
+            id_token=d.get("id_token"),
+            refresh_token=d.get("refresh_token"),
+            expires_in=int(d.get("expires_in", 0)),
+            token_type=str(d.get("token_type", "Bearer")),
+        )
+
+
+class TokenExchangeError(RuntimeError):
+    """Raised when /oauth/v2/token returns an error or is unreachable.
+
+    Distinct from a token-validation error -- this fires before we even
+    have a token to validate. Callers map this to a 502 / 504 response,
+    not a 401.
+    """
+
+
+class TokenExchanger:
+    """Exchanges an authorization code for a token set against Zitadel.
+
+    Implements the RFC 6749 sec. 4.1.3 token request with PKCE
+    code_verifier (RFC 7636 sec. 4.5). Public client style (no client
+    secret); confidential-client mode is added later if Zitadel
+    requires it for our app type.
+    """
+
+    def __init__(
+        self,
+        config: WebAuthConfig,
+        *,
+        fetcher=None,
+        timeout: float = 10.0,
+    ) -> None:
+        self.config = config
+        self.timeout = timeout
+        self._fetcher = fetcher or self._default_fetcher
+
+    def exchange_code(self, code: str, code_verifier: str) -> TokenResponse:
+        """Exchange an authorization code for a token set.
+
+        Raises ``TokenExchangeError`` on network failure, non-2xx HTTP
+        response, or malformed JSON. Returns ``TokenResponse`` on
+        success. Does NOT validate the id_token -- that's the caller's
+        job (via OIDCValidator).
+        """
+        body = _urlparse.urlencode({
+            "grant_type": "authorization_code",
+            "code": code,
+            "code_verifier": code_verifier,
+            "client_id": self.config.client_id,
+            "redirect_uri": self.config.redirect_uri,
+        }).encode("ascii")
+        try:
+            payload = self._fetcher(self.config.token_endpoint(), body, self.timeout)
+        except TokenExchangeError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- adapter boundary
+            raise TokenExchangeError(f"token endpoint call failed: {exc}") from exc
+        try:
+            data = _json.loads(payload)
+        except _json.JSONDecodeError as exc:
+            raise TokenExchangeError(f"token response not JSON: {exc}") from exc
+        if "error" in data:
+            desc = data.get("error_description", "")
+            raise TokenExchangeError(f"token endpoint error: {data['error']}: {desc}")
+        try:
+            return TokenResponse.from_dict(data)
+        except ValueError as exc:
+            raise TokenExchangeError(str(exc)) from exc
+
+    @staticmethod
+    def _default_fetcher(url: str, body: bytes, timeout: float) -> bytes:
+        req = _urlrequest.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with _urlrequest.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except _urlerror.HTTPError as e:
+            text = e.read().decode("utf-8", errors="replace")
+            try:
+                data = _json.loads(text)
+                err = data.get("error", "")
+                desc = data.get("error_description", "")
+                raise TokenExchangeError(f"HTTP {e.code} from token endpoint: {err}: {desc}")
+            except _json.JSONDecodeError:
+                raise TokenExchangeError(f"HTTP {e.code} from token endpoint: {text[:200]}")
+        except _urlerror.URLError as e:
+            raise TokenExchangeError(f"network error contacting token endpoint: {e}") from e
+
+
+__all__.extend([
+    "TokenResponse",
+    "TokenExchangeError",
+    "TokenExchanger",
+])
