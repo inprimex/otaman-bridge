@@ -1314,16 +1314,70 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 return
             self._reply_error(404, f"unknown route: {self.path}")
 
+        def _render_root_html(self, daemon) -> str:
+            """Build the minimal landing-page HTML.
+
+            Three cases: web auth not configured (show diagnostic), no
+            cookie or unknown cookie (show login link), valid cookie
+            (show user identity + logout button).
+            """
+            import html as _h
+            if daemon.session_store is None or daemon.session_cookie is None:
+                body_inner = (
+                    "<p>Web login flow is not configured (loopback bearer only).</p>"
+                    "<p>Set OTAMAN_AUTH_MODE, OIDC_ISSUER, OIDC_BRIDGE_WEB_CLIENT_ID, "
+                    "OIDC_BRIDGE_REDIRECT_URI and restart the daemon.</p>"
+                )
+            else:
+                cookie_header = self.headers.get("Cookie", "")
+                sid = daemon.session_cookie.parse(cookie_header)
+                sess = daemon.session_store.get(sid) if sid else None
+                if sess is None:
+                    body_inner = (
+                        "<p>Not logged in.</p>"
+                        "<p><a href=\"/auth/login\">Log in with Zitadel</a></p>"
+                    )
+                else:
+                    user = _h.escape(sess.user_id)
+                    email = _h.escape(sess.email or "(no email)")
+                    roles = _h.escape(", ".join(sess.roles) if sess.roles else "(none)")
+                    body_inner = (
+                        f"<p>Logged in as <strong>{email}</strong></p>"
+                        f"<dl><dt>user_id</dt><dd>{user}</dd>"
+                        f"<dt>roles</dt><dd>{roles}</dd></dl>"
+                        "<form method=\"post\" action=\"/auth/logout\">"
+                        "<button type=\"submit\">Log out</button></form>"
+                    )
+            return (
+                "<!DOCTYPE html><html><head>"
+                "<meta charset=\"utf-8\"><title>otaman bridge</title>"
+                "</head><body>"
+                "<h1>otaman bridge</h1>"
+                + body_inner +
+                "</body></html>"
+            )
+
         def do_GET(self) -> None:  # noqa: N802
             # Parse the path so query strings (e.g. /auth/callback?code=...)
             # are stripped before route matching. Without this, dispatch
             # falls through to the 404 handler for any URL with a query.
             import urllib.parse as _u_parse
             route = _u_parse.urlparse(self.path).path.rstrip("/")
-            if route in ("/status", ""):
+            if route == "/status":
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
                 self._reply_json(status, resp)
+                return
+            if route == "" or route == "/":
+                # Minimal landing page so a browser landing here after
+                # /auth/callback s 302 to / sees actual content.
+                html = self._render_root_html(daemon)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(html)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(html.encode("utf-8"))
                 return
             if route == "/auth/login":
                 # Unauth: this IS the start of the auth flow. Returns a
