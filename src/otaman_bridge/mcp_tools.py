@@ -407,3 +407,76 @@ def _format_messages_text(messages: list[dict], *, unread_only: bool) -> str:
 
 
 __all__.extend(["build_check_messages_tool"])
+
+
+def build_mark_message_read_tool(*, inbox: Inbox) -> Tool:
+    """Build the mark_message_read MCP tool.
+
+    Marks a single message read by id. With mark_all_before=true also
+    marks all unread messages with sent_at <= the target message's
+    sent_at -- useful for "I caught up to here". Idempotent: marking
+    an already-read message returns 0 (no change).
+    """
+
+    def handler(args: dict, ctx: CallContext) -> dict:
+        if not ctx.user_id:
+            return _mcp_error(
+                "caller identity required (loopback bearer has no user identity)"
+            )
+        message_id = args.get("message_id")
+        if not message_id or not isinstance(message_id, str):
+            return _mcp_error("missing or invalid message_id")
+        mark_all_before = bool(args.get("mark_all_before", False))
+
+        try:
+            count = inbox.mark_read(
+                ctx.user_id, message_id, mark_all_before=mark_all_before,
+            )
+        except Exception as exc:
+            return _mcp_error(f"mark_read failed: {exc}")
+
+        if count == 0:
+            text = (
+                f"No change: message {message_id!r} is already read"
+                " or does not exist."
+            )
+        elif mark_all_before:
+            text = f"Marked {count} message(s) read (up through {message_id})."
+        else:
+            text = f"Marked message {message_id!r} read."
+
+        return {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": {"marked": count, "message_id": message_id},
+        }
+
+    return Tool(
+        name="mark_message_read",
+        description=(
+            "Mark a message as read in the caller's inbox. Idempotent. "
+            "Optional mark_all_before to also mark older unread messages "
+            "as read in one shot."
+        ),
+        input_schema={
+            "type": "object",
+            "required": ["message_id"],
+            "properties": {
+                "message_id": {
+                    "type": "string",
+                    "description": "Id of the message to mark read.",
+                },
+                "mark_all_before": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "If true, also mark all unread messages with "
+                        "sent_at strictly older or equal to this one as read."
+                    ),
+                },
+            },
+        },
+        handler=handler,
+    )
+
+
+__all__.extend(["build_mark_message_read_tool"])
