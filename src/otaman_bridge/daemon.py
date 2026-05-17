@@ -261,6 +261,86 @@ class _AsyncLoopThread:
 # Daemon
 
 
+def _build_oidc_validator_from_env():
+    """Build an OIDCValidator from environment if configured, else None.
+
+    Reads:
+        OTAMAN_AUTH_MODE       — must be ``oidc`` to enable
+        OIDC_ISSUER            — the OIDC provider's issuer URL
+        OIDC_AUDIENCE_BRIDGE   — this bridge's Zitadel client id
+        OIDC_JWKS_URI          — optional; derived from issuer if absent
+        OIDC_REQUIRED_ROLE     — optional role gate
+
+    Returns ``OIDCValidator`` instance or ``None`` (auth falls back
+    to loopback bearer only — same-host CLI introspection).
+    """
+    if os.environ.get("OTAMAN_AUTH_MODE", "").lower() != "oidc":
+        return None
+    issuer = os.environ.get("OIDC_ISSUER", "").strip()
+    audience = os.environ.get("OIDC_AUDIENCE_BRIDGE", "").strip()
+    if not issuer or not audience:
+        _log.warning(
+            "OTAMAN_AUTH_MODE=oidc but OIDC_ISSUER/OIDC_AUDIENCE_BRIDGE unset; "
+            "falling back to loopback bearer only"
+        )
+        return None
+    from otaman_core.auth_oidc import OIDCConfig, OIDCValidator
+    cfg = OIDCConfig(
+        issuer=issuer,
+        audience=audience,
+        jwks_uri=os.environ.get("OIDC_JWKS_URI") or None,
+        required_role=os.environ.get("OIDC_REQUIRED_ROLE") or None,
+    )
+    _log.info("OIDC validator enabled (issuer=%s aud=%s)", issuer, audience)
+    return OIDCValidator(cfg)
+
+
+def _build_web_login_flow_from_env():
+    """Build a (LoginFlow, PendingLoginStore) pair from environment, or None.
+
+    Reads:
+        OTAMAN_AUTH_MODE              -- must be ``oidc`` to enable
+        OIDC_ISSUER                   -- Zitadel issuer URL
+        OIDC_AUDIENCE_BRIDGE          -- bridge's client_id in Zitadel
+        OIDC_BRIDGE_REDIRECT_URI      -- public ``/auth/callback`` URL we
+                                         registered with Zitadel
+        OIDC_PROJECT_ID               -- optional; adds project-aud scope
+
+    Returns ``(LoginFlow, PendingLoginStore)`` when fully configured,
+    else ``None``. The daemon stores this on ``self.web_login_flow``;
+    when ``None`` the ``/auth/login`` route returns 503 (web login is
+    not enabled — clients should use a Bearer token directly).
+    """
+    if os.environ.get("OTAMAN_AUTH_MODE", "").lower() != "oidc":
+        return None
+    issuer = os.environ.get("OIDC_ISSUER", "").strip()
+    # Prefer the dedicated web-client id (created by zitadel-bootstrap.py
+    # as otaman-bridge-web). Fall back to OIDC_AUDIENCE_BRIDGE for backward
+    # compat with deployments that have one combined client id.
+    client_id = (
+        os.environ.get("OIDC_BRIDGE_WEB_CLIENT_ID", "").strip()
+        or os.environ.get("OIDC_AUDIENCE_BRIDGE", "").strip()
+    )
+    redirect_uri = os.environ.get("OIDC_BRIDGE_REDIRECT_URI", "").strip()
+    if not issuer or not client_id or not redirect_uri:
+        _log.warning(
+            "OTAMAN_AUTH_MODE=oidc but web-login env incomplete; "
+            "/auth/login disabled (issuer=%s client=%s redirect=%s)",
+            bool(issuer), bool(client_id), bool(redirect_uri),
+        )
+        return None
+    from otaman_bridge.web_auth import LoginFlow, PendingLoginStore, WebAuthConfig
+    cfg = WebAuthConfig(
+        issuer=issuer,
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        project_id=os.environ.get("OIDC_PROJECT_ID") or None,
+    )
+    store = PendingLoginStore()
+    _log.info("web-login flow enabled (redirect_uri=%s)", redirect_uri)
+    return LoginFlow(cfg, store), store
+
+
 class BridgeDaemon:
     """Owns the HTTP server, the transport, and the pending-approval table."""
 
@@ -298,6 +378,65 @@ class BridgeDaemon:
         self.token = _secrets.token_hex(24)  # 48 hex chars
         self.pid = os.getpid()
         self.started_at = time.monotonic()
+
+        # Optional OIDC validator built from env. When unset, daemon
+        # serves loopback-bearer only (Mode 1 / local-trust pattern).
+        self.oidc_validator = _build_oidc_validator_from_env()
+        # Optional web-login flow (Authorization Code + PKCE). Built from
+        # OIDC_AUDIENCE_BRIDGE + OIDC_BRIDGE_REDIRECT_URI. None disables
+        # /auth/login (returns 503).
+        _web_login = _build_web_login_flow_from_env()
+        self.web_login_flow = _web_login[0] if _web_login is not None else None
+        # Web-login support stack -- only built when web_login_flow is.
+        # Tests inject stubs onto these attributes after construction.
+        self.session_store = None
+        self.session_cookie = None
+        self.login_completer = None
+        if self.web_login_flow is not None:
+            from otaman_bridge.web_auth import LoginCompleter, TokenExchanger
+            from otaman_bridge.web_session import SessionCookie, SessionStore
+            self.session_store = SessionStore()
+            # Cookie Secure flag derived from the registered redirect_uri
+            # scheme (https -> Secure, http -> not). Production always
+            # uses https; local dev / e2e harness can use http.
+            redirect_https = self.web_login_flow.config.redirect_uri.startswith("https://")
+            self.session_cookie = SessionCookie(secure=redirect_https)
+            self.login_completer = LoginCompleter(
+                token_exchanger=TokenExchanger(self.web_login_flow.config),
+                validator=self.oidc_validator,
+                session_store=self.session_store,
+                pending_store=self.web_login_flow.store,
+            )
+
+        # MCP server: tool registry for the team-mode v0 cross-user
+        # visibility flow. Always built (even when web_login_flow is
+        # None) -- some tools may not need web auth. Privacy mode is
+        # configurable via env (default emails for trusted teams).
+        from otaman_bridge.mcp_server import MCPServer
+        from otaman_bridge.mcp_tools import (
+            PRIVACY_EMAILS,
+            PRIVACY_OPAQUE,
+            build_list_team_sessions_tool,
+        )
+        from otaman_bridge.runner_client import RunnerClient
+        self.mcp_server = MCPServer()
+        self._runner_client = RunnerClient()
+        privacy = os.environ.get("OTAMAN_BRIDGE_PRIVACY_MODE", PRIVACY_EMAILS).strip()
+        if privacy not in (PRIVACY_EMAILS, PRIVACY_OPAQUE):
+            _log.warning(
+                "invalid OTAMAN_BRIDGE_PRIVACY_MODE=%r, using emails", privacy,
+            )
+            privacy = PRIVACY_EMAILS
+        # Only register list_team_sessions when session_store exists --
+        # the tool's email lookup depends on it. If web auth is
+        # disabled, the tool falls back to opaque (no email source).
+        if self.session_store is not None:
+            self.mcp_server.register(build_list_team_sessions_tool(
+                runner_client=self._runner_client,
+                session_store=self.session_store,
+                privacy_mode=privacy,
+            ))
+            _log.info("MCP: list_team_sessions registered (privacy=%s)", privacy)
 
         self._pending: dict[str, _PendingApproval] = {}
         # Parallel registry for bus spec-change-requests waiting on an
@@ -1099,8 +1238,65 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                        self.log_date_time_string(),
                        fmt % args)
 
-        def _auth_ok(self) -> bool:
+        def _auth_identify(self):
+            """Identify the caller across all three auth paths.
+
+            Returns a CallContext for OIDC bearer / session cookie /
+            loopback bearer, or None if all paths reject. Mirrors
+            _auth_ok's three-way logic but surfaces the user identity
+            so MCP tool handlers can attribute the request.
+            """
+            from otaman_bridge.mcp_server import CallContext
             header = self.headers.get("Authorization", "")
+            if daemon.oidc_validator is not None and header.startswith("Bearer "):
+                result = daemon.oidc_validator.validate(header)
+                if result.ok:
+                    return CallContext(
+                        user_id=result.user_id or "",
+                        user_email=result.email,
+                        roles=tuple(result.roles),
+                    )
+            if daemon.session_store is not None and daemon.session_cookie is not None:
+                cookie_header = self.headers.get("Cookie", "")
+                sid = daemon.session_cookie.parse(cookie_header)
+                if sid is not None:
+                    sess = daemon.session_store.get(sid)
+                    if sess is not None:
+                        return CallContext(
+                            user_id=sess.user_id,
+                            user_email=sess.email,
+                            roles=tuple(sess.roles),
+                        )
+            if header.startswith("Bearer "):
+                supplied = header[len("Bearer "):].strip()
+                if _secrets.compare_digest(supplied, daemon.token):
+                    # Loopback bearer = same-host CLI; no user identity
+                    return CallContext(user_id="", user_email=None, roles=())
+            return None
+
+        def _auth_ok(self) -> bool:
+            # When OIDC is configured, try it first. Fall back to the
+            # loopback bearer for local same-host clients (CLI
+            # introspection, `maestro bridge status`, etc.).
+            header = self.headers.get("Authorization", "")
+            if daemon.oidc_validator is not None and header.startswith("Bearer "):
+                result = daemon.oidc_validator.validate(header)
+                if result.ok:
+                    _log.debug("OIDC auth ok: user_id=%s roles=%s", result.user_id, result.roles)
+                    return True
+                # OIDC failed; fall through to loopback bearer (don't 401
+                # yet — same-host CLI may be using the loopback token).
+            # session cookie auth path: try the browser session cookie
+            # before falling back to loopback bearer
+            if daemon.session_store is not None and daemon.session_cookie is not None:
+                cookie_header = self.headers.get("Cookie", "")
+                sid = daemon.session_cookie.parse(cookie_header)
+                if sid is not None:
+                    sess = daemon.session_store.get(sid)
+                    if sess is not None:
+                        _log.debug("session cookie auth ok: user_id=%s", sess.user_id)
+                        return True
+                    # Unknown / expired cookie; fall through to loopback
             if not header.startswith("Bearer "):
                 return False
             supplied = header[len("Bearer "):].strip()
@@ -1143,7 +1339,50 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
         # --- routes -------------------------------------------------------
 
         def do_POST(self) -> None:  # noqa: N802 — stdlib name
-            route = self.path.rstrip("/")
+            import urllib.parse as _u_parse_post
+            route = _u_parse_post.urlparse(self.path).path.rstrip("/")
+            if route == "/mcp":
+                # MCP JSON-RPC endpoint. Auth via the standard three-path
+                # _auth_identify; tools see the caller via CallContext.
+                ctx = self._auth_identify()
+                if ctx is None:
+                    self._reply_error(401, "unauthorized")
+                    return
+                body = self._read_body()
+                if body is None:
+                    from otaman_bridge.mcp_server import PARSE_ERROR
+                    self._reply_json(200, {
+                        "jsonrpc": "2.0", "id": None,
+                        "error": {"code": PARSE_ERROR, "message": "invalid JSON"},
+                    })
+                    return
+                response = daemon.mcp_server.handle_request(body, context=ctx)
+                # JSON-RPC responses are always HTTP 200 -- errors are in
+                # the envelope, not the transport status.
+                self._reply_json(200, response)
+                return
+            if route == "/auth/logout":
+                # Unauth: idempotent. Always 204; clears the cookie regardless.
+                if daemon.session_store is None or daemon.session_cookie is None:
+                    self._reply_error(503, "web login flow not configured")
+                    return
+                self._drain_body()
+                cookie_header = self.headers.get("Cookie", "")
+                sid = daemon.session_cookie.parse(cookie_header)
+                if sid is not None:
+                    daemon.session_store.delete(sid)
+                # 302 -> / so the browser auto-navigates and re-renders the
+                # landing page (which now shows "Not logged in" because the
+                # cookie was cleared by the Set-Cookie header below).
+                # 204 would leave the user on the same page visually.
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.send_header("Set-Cookie", daemon.session_cookie.clear_header())
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
             if route in ("/approval", "/notify", "/reply", "/shutdown"):
                 if not self._auth_ok():
                     self._reply_error(401, "invalid or missing bearer token")
@@ -1166,12 +1405,137 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 return
             self._reply_error(404, f"unknown route: {self.path}")
 
+        def _render_root_html(self, daemon) -> str:
+            """Build the minimal landing-page HTML.
+
+            Three cases: web auth not configured (show diagnostic), no
+            cookie or unknown cookie (show login link), valid cookie
+            (show user identity + logout button).
+            """
+            import html as _h
+            if daemon.session_store is None or daemon.session_cookie is None:
+                body_inner = (
+                    "<p>Web login flow is not configured (loopback bearer only).</p>"
+                    "<p>Set OTAMAN_AUTH_MODE, OIDC_ISSUER, OIDC_BRIDGE_WEB_CLIENT_ID, "
+                    "OIDC_BRIDGE_REDIRECT_URI and restart the daemon.</p>"
+                )
+            else:
+                cookie_header = self.headers.get("Cookie", "")
+                sid = daemon.session_cookie.parse(cookie_header)
+                sess = daemon.session_store.get(sid) if sid else None
+                if sess is None:
+                    body_inner = (
+                        "<p>Not logged in.</p>"
+                        "<p><a href=\"/auth/login\">Log in with Zitadel</a></p>"
+                    )
+                else:
+                    user = _h.escape(sess.user_id)
+                    email = _h.escape(sess.email or "(no email)")
+                    roles = _h.escape(", ".join(sess.roles) if sess.roles else "(none)")
+                    body_inner = (
+                        f"<p>Logged in as <strong>{email}</strong></p>"
+                        f"<dl><dt>user_id</dt><dd>{user}</dd>"
+                        f"<dt>roles</dt><dd>{roles}</dd></dl>"
+                        "<form method=\"post\" action=\"/auth/logout\">"
+                        "<button type=\"submit\">Log out</button></form>"
+                    )
+            return (
+                "<!DOCTYPE html><html><head>"
+                "<meta charset=\"utf-8\"><title>otaman bridge</title>"
+                "</head><body>"
+                "<h1>otaman bridge</h1>"
+                + body_inner +
+                "</body></html>"
+            )
+
         def do_GET(self) -> None:  # noqa: N802
-            route = self.path.rstrip("/")
-            if route in ("/status", ""):
+            # Parse the path so query strings (e.g. /auth/callback?code=...)
+            # are stripped before route matching. Without this, dispatch
+            # falls through to the 404 handler for any URL with a query.
+            import urllib.parse as _u_parse
+            route = _u_parse.urlparse(self.path).path.rstrip("/")
+            if route == "/status":
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
                 self._reply_json(status, resp)
+                return
+            if route == "" or route == "/":
+                # Minimal landing page so a browser landing here after
+                # /auth/callback s 302 to / sees actual content.
+                html = self._render_root_html(daemon)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(html)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(html.encode("utf-8"))
+                return
+            if route == "/auth/login":
+                # Unauth: this IS the start of the auth flow. Returns a
+                # 302 to Zitadel's /oauth/v2/authorize, or 503 if the web
+                # login flow is not configured (env vars incomplete).
+                if daemon.web_login_flow is None:
+                    self._reply_error(503, "web login flow not configured")
+                    return
+                started = daemon.web_login_flow.start()
+                self.send_response(302)
+                self.send_header("Location", started.authorize_url)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
+            if route == "/auth/callback":
+                # Unauth: completes the auth flow started at /auth/login.
+                # Reads ?code=&state=, calls LoginCompleter, sets session
+                # cookie + 302 to "/". Maps errors:
+                #   - LoginCompleteError -> 400 (state / id_token problems)
+                #   - TokenExchangeError -> 502 (token endpoint failure)
+                if daemon.login_completer is None:
+                    self._reply_error(503, "web login flow not configured")
+                    return
+                import urllib.parse as _u
+                from otaman_bridge.web_auth import LoginCompleteError, TokenExchangeError
+                qs = _u.urlparse(self.path).query
+                params = dict(_u.parse_qsl(qs))
+                if "error" in params:
+                    self._reply_error(400, f"oauth error: {params['error']}")
+                    return
+                code = params.get("code", "")
+                state = params.get("state", "")
+                if not code or not state:
+                    self._reply_error(400, "missing code or state")
+                    return
+                try:
+                    session = daemon.login_completer.complete(code=code, state=state)
+                except LoginCompleteError as exc:
+                    self._reply_error(400, f"login failed: {exc}")
+                    return
+                except TokenExchangeError as exc:
+                    self._reply_error(502, f"token endpoint failed: {exc}")
+                    return
+                except Exception as exc:
+                    # Catches OIDCError from JWKS fetch + any other infra-level
+                    # failure during id_token validation. Without this, the state
+                    # gets consumed but the exception bubbles to a 500 traceback;
+                    # on retry the user sees "unknown or expired state" (the
+                    # state-consumed-on-first-call side effect). Map all such
+                    # cases to 502 -- they are IdP-side / network failures, not
+                    # user input problems.
+                    _log.exception("auth callback failed unexpectedly")
+                    self._reply_error(502, f"auth callback failed: {exc}")
+                    return
+                cookie = daemon.session_cookie.set_header(
+                    session.id,
+                    max_age=daemon.session_store.ttl,
+                )
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.send_header("Set-Cookie", cookie)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
                 return
             self._reply_error(404, f"unknown route: {self.path}")
 
