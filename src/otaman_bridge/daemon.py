@@ -408,6 +408,36 @@ class BridgeDaemon:
                 pending_store=self.web_login_flow.store,
             )
 
+        # MCP server: tool registry for the team-mode v0 cross-user
+        # visibility flow. Always built (even when web_login_flow is
+        # None) -- some tools may not need web auth. Privacy mode is
+        # configurable via env (default emails for trusted teams).
+        from otaman_bridge.mcp_server import MCPServer
+        from otaman_bridge.mcp_tools import (
+            PRIVACY_EMAILS,
+            PRIVACY_OPAQUE,
+            build_list_team_sessions_tool,
+        )
+        from otaman_bridge.runner_client import RunnerClient
+        self.mcp_server = MCPServer()
+        self._runner_client = RunnerClient()
+        privacy = os.environ.get("OTAMAN_BRIDGE_PRIVACY_MODE", PRIVACY_EMAILS).strip()
+        if privacy not in (PRIVACY_EMAILS, PRIVACY_OPAQUE):
+            _log.warning(
+                "invalid OTAMAN_BRIDGE_PRIVACY_MODE=%r, using emails", privacy,
+            )
+            privacy = PRIVACY_EMAILS
+        # Only register list_team_sessions when session_store exists --
+        # the tool's email lookup depends on it. If web auth is
+        # disabled, the tool falls back to opaque (no email source).
+        if self.session_store is not None:
+            self.mcp_server.register(build_list_team_sessions_tool(
+                runner_client=self._runner_client,
+                session_store=self.session_store,
+                privacy_mode=privacy,
+            ))
+            _log.info("MCP: list_team_sessions registered (privacy=%s)", privacy)
+
         self._pending: dict[str, _PendingApproval] = {}
         # Parallel registry for bus spec-change-requests waiting on an
         # Approve/Reject tap. Keyed by request_id (= bus message stem).
@@ -1208,6 +1238,42 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                        self.log_date_time_string(),
                        fmt % args)
 
+        def _auth_identify(self):
+            """Identify the caller across all three auth paths.
+
+            Returns a CallContext for OIDC bearer / session cookie /
+            loopback bearer, or None if all paths reject. Mirrors
+            _auth_ok's three-way logic but surfaces the user identity
+            so MCP tool handlers can attribute the request.
+            """
+            from otaman_bridge.mcp_server import CallContext
+            header = self.headers.get("Authorization", "")
+            if daemon.oidc_validator is not None and header.startswith("Bearer "):
+                result = daemon.oidc_validator.validate(header)
+                if result.ok:
+                    return CallContext(
+                        user_id=result.user_id or "",
+                        user_email=result.email,
+                        roles=tuple(result.roles),
+                    )
+            if daemon.session_store is not None and daemon.session_cookie is not None:
+                cookie_header = self.headers.get("Cookie", "")
+                sid = daemon.session_cookie.parse(cookie_header)
+                if sid is not None:
+                    sess = daemon.session_store.get(sid)
+                    if sess is not None:
+                        return CallContext(
+                            user_id=sess.user_id,
+                            user_email=sess.email,
+                            roles=tuple(sess.roles),
+                        )
+            if header.startswith("Bearer "):
+                supplied = header[len("Bearer "):].strip()
+                if _secrets.compare_digest(supplied, daemon.token):
+                    # Loopback bearer = same-host CLI; no user identity
+                    return CallContext(user_id="", user_email=None, roles=())
+            return None
+
         def _auth_ok(self) -> bool:
             # When OIDC is configured, try it first. Fall back to the
             # loopback bearer for local same-host clients (CLI
@@ -1275,6 +1341,26 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:  # noqa: N802 — stdlib name
             import urllib.parse as _u_parse_post
             route = _u_parse_post.urlparse(self.path).path.rstrip("/")
+            if route == "/mcp":
+                # MCP JSON-RPC endpoint. Auth via the standard three-path
+                # _auth_identify; tools see the caller via CallContext.
+                ctx = self._auth_identify()
+                if ctx is None:
+                    self._reply_error(401, "unauthorized")
+                    return
+                body = self._read_body()
+                if body is None:
+                    from otaman_bridge.mcp_server import PARSE_ERROR
+                    self._reply_json(200, {
+                        "jsonrpc": "2.0", "id": None,
+                        "error": {"code": PARSE_ERROR, "message": "invalid JSON"},
+                    })
+                    return
+                response = daemon.mcp_server.handle_request(body, context=ctx)
+                # JSON-RPC responses are always HTTP 200 -- errors are in
+                # the envelope, not the transport status.
+                self._reply_json(200, response)
+                return
             if route == "/auth/logout":
                 # Unauth: idempotent. Always 204; clears the cookie regardless.
                 if daemon.session_store is None or daemon.session_cookie is None:
