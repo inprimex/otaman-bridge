@@ -175,3 +175,122 @@ __all__ = [
     "PRIVACY_OPAQUE",
     "build_list_team_sessions_tool",
 ]
+
+
+from otaman_bridge.inbox import Inbox
+
+
+def build_send_message_to_user_tool(
+    *,
+    inbox: Inbox,
+    session_store: SessionStore,
+) -> Tool:
+    """Build the send_message_to_user MCP tool.
+
+    Writes a message to the recipient's per-user inbox. Sender identity
+    comes from the MCP CallContext (auth boundary); from_email is
+    denormalized from session_store at send time so the recipient sees
+    a readable name without needing their own session lookup.
+
+    Per v0+ design (decision Q&A): unknown recipient (no live session,
+    no email known) is accepted -- we skip the from_email field rather
+    than reject. Recipient sees from_user_id only.
+    """
+
+    def handler(args: dict, ctx: CallContext) -> dict:
+        target_user_id = args.get("target_user_id")
+        body = args.get("body")
+        if not target_user_id or not isinstance(target_user_id, str):
+            return _mcp_error("missing or invalid target_user_id")
+        if not body or not isinstance(body, str) or not body.strip():
+            return _mcp_error("missing or empty body")
+        if not ctx.user_id:
+            return _mcp_error(
+                "sender identity required but call is unauthenticated"
+                " (loopback-bearer calls have no user identity)"
+            )
+        subject = args.get("subject")
+        in_reply_to = args.get("in_reply_to")
+        priority = args.get("priority", "normal")
+        msg_type = args.get("type", "chat")
+
+        try:
+            sent = inbox.write_message(
+                from_user=ctx.user_id,
+                from_email=ctx.user_email,   # may be None; that's fine
+                to_user=target_user_id,
+                subject=subject,
+                body=body,
+                in_reply_to=in_reply_to,
+                priority=priority,
+                msg_type=msg_type,
+            )
+        except ValueError as exc:
+            return _mcp_error(f"invalid message: {exc}")
+
+        return {
+            "content": [{"type": "text", "text": (
+                f"Sent message to {target_user_id} "
+                f"(subject: {sent.subject!r}, id: {sent.id})."
+            )}],
+            "structuredContent": {
+                "message_id": sent.id,
+                "to_user": sent.to_user,
+                "subject": sent.subject,
+                "sent_at": sent.sent_at,
+            },
+        }
+
+    return Tool(
+        name="send_message_to_user",
+        description=(
+            "Send a message to another otaman team member by user_id. "
+            "The recipient sees it in their inbox via check_messages. "
+            "Use list_team_sessions first to find their user_id."
+        ),
+        input_schema={
+            "type": "object",
+            "required": ["target_user_id", "body"],
+            "properties": {
+                "target_user_id": {
+                    "type": "string",
+                    "description": "Zitadel sub of the recipient (from list_team_sessions)",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Message body (markdown OK)",
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Optional one-line subject. Default: derived from body's first line, max 80 chars.",
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["low", "normal", "high"],
+                    "default": "normal",
+                },
+                "in_reply_to": {
+                    "type": "string",
+                    "description": "Optional: message id this replies to.",
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["chat", "review-request", "task-handoff", "approval-request"],
+                    "default": "chat",
+                    "description": "Message category. Default chat; richer types are for tools that wrap send_message_to_user.",
+                },
+            },
+        },
+        handler=handler,
+    )
+
+
+def _mcp_error(message: str) -> dict:
+    """Build a CallToolResult-style error result for MCP."""
+    return {
+        "isError": True,
+        "content": [{"type": "text", "text": message}],
+    }
+
+
+__all__.extend(["build_send_message_to_user_tool"])
