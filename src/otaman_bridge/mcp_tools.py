@@ -294,3 +294,116 @@ def _mcp_error(message: str) -> dict:
 
 
 __all__.extend(["build_send_message_to_user_tool"])
+
+
+def build_check_messages_tool(*, inbox: Inbox) -> Tool:
+    """Build the check_messages MCP tool.
+
+    Reads the calling user's inbox. By default returns unread only;
+    `unread_only=false` returns everything (subject to limit). Reading
+    via this tool does NOT mark messages read -- that's a separate
+    explicit mark_message_read call (so "I looked but didn't ack" is
+    possible).
+    """
+
+    def handler(args: dict, ctx: CallContext) -> dict:
+        if not ctx.user_id:
+            return _mcp_error(
+                "caller identity required (loopback bearer has no user identity)"
+            )
+        unread_only = bool(args.get("unread_only", True))
+        from_user = args.get("from_user")
+        since = args.get("since")
+        limit = args.get("limit", 50)
+        if not isinstance(limit, int):
+            return _mcp_error(f"limit must be int, got {type(limit).__name__}")
+        try:
+            messages = inbox.list_messages(
+                ctx.user_id,
+                unread_only=unread_only,
+                from_user=from_user,
+                since=since,
+                limit=limit,
+            )
+        except ValueError as exc:
+            return _mcp_error(str(exc))
+
+        out = [
+            {
+                "message_id": m.id,
+                "from_user": m.from_user,
+                "from_email": m.from_email,
+                "subject": m.subject,
+                "body": m.body,
+                "sent_at": m.sent_at,
+                "read_at": m.read_at,
+                "in_reply_to": m.in_reply_to,
+                "priority": m.priority,
+                "type": m.type,
+            }
+            for m in messages
+        ]
+        text = _format_messages_text(out, unread_only=unread_only)
+        return {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": {
+                "messages": out,
+                "total": len(out),
+                "oldest_unread_at": (
+                    next((m["sent_at"] for m in reversed(out) if m["read_at"] is None), None)
+                ),
+            },
+        }
+
+    return Tool(
+        name="check_messages",
+        description=(
+            "List messages in the caller's inbox. By default returns "
+            "unread only. Does NOT mark messages read -- use "
+            "mark_message_read for that. Filter by from_user / since / "
+            "limit. Newest first."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "unread_only": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If true (default), return only unread messages.",
+                },
+                "from_user": {
+                    "type": "string",
+                    "description": "Filter to messages from this user_id.",
+                },
+                "since": {
+                    "type": "string",
+                    "description": "ISO timestamp; return messages sent strictly after this.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 50,
+                    "minimum": 1,
+                    "maximum": 200,
+                },
+            },
+        },
+        handler=handler,
+    )
+
+
+def _format_messages_text(messages: list[dict], *, unread_only: bool) -> str:
+    if not messages:
+        return "No unread messages." if unread_only else "No messages in inbox."
+    label = "unread" if unread_only else "total"
+    lines = [f"{len(messages)} {label} message(s):"]
+    for m in messages:
+        who = m.get("from_email") or m.get("from_user") or "(unknown)"
+        sent = m.get("sent_at") or "?"
+        subject = m.get("subject") or "(no subject)"
+        prio = m.get("priority") or "normal"
+        prio_tag = "" if prio == "normal" else f" [{prio}]"
+        lines.append(f"  - {sent} from {who}{prio_tag}: {subject}")
+    return "\n".join(lines)
+
+
+__all__.extend(["build_check_messages_tool"])
