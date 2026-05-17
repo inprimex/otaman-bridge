@@ -437,6 +437,25 @@ class BridgeDaemon:
                 privacy_mode=privacy,
             ))
             _log.info("MCP: list_team_sessions registered (privacy=%s)", privacy)
+        # Messaging tools (v0+): send_message_to_user / check_messages /
+        # mark_message_read. Inbox storage under ~/.otaman/inboxes/ by
+        # default; override via OTAMAN_BRIDGE_INBOX_ROOT env var. These
+        # tools work without web auth (they read ctx.user_id from any
+        # of the three auth paths; loopback bearer is rejected at handler).
+        from otaman_bridge.inbox import Inbox
+        from otaman_bridge.mcp_tools import (
+            build_check_messages_tool,
+            build_mark_message_read_tool,
+            build_send_message_to_user_tool,
+        )
+        inbox_root = os.environ.get("OTAMAN_BRIDGE_INBOX_ROOT", "").strip()
+        self.inbox = Inbox(root=Path(inbox_root)) if inbox_root else Inbox()
+        self.mcp_server.register(build_send_message_to_user_tool(
+            inbox=self.inbox, session_store=self.session_store,
+        ))
+        self.mcp_server.register(build_check_messages_tool(inbox=self.inbox))
+        self.mcp_server.register(build_mark_message_read_tool(inbox=self.inbox))
+        _log.info("MCP: messaging tools registered (inbox=%s)", self.inbox.root)
 
         self._pending: dict[str, _PendingApproval] = {}
         # Parallel registry for bus spec-change-requests waiting on an
