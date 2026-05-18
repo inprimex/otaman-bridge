@@ -422,6 +422,25 @@ class BridgeDaemon:
         # Optional OIDC validator built from env. When unset, daemon
         # serves loopback-bearer only (Mode 1 / local-trust pattern).
         self.oidc_validator = _build_oidc_validator_from_env()
+        # Optional DCR shim (mcp-oauth wave chunk D3+). When enabled the
+        # daemon serves AS metadata overlay routes pointing at itself,
+        # so MCP clients (Claude Code) can do RFC 7591 against Zitadel
+        # which lacks native DCR. None = inert.
+        from otaman_bridge.dcr_shim import IdpConfig, MetadataCache
+        self.idp_config = IdpConfig.from_env()
+        self._idp_metadata_cache = (
+            MetadataCache(ttl_seconds=self.idp_config.metadata_cache_seconds)
+            if self.idp_config is not None
+            else None
+        )
+        if self.idp_config is not None:
+            _log.info(
+                "DCR shim enabled (type=%s mgmt=%s trust=%s cache=%ds)",
+                self.idp_config.type,
+                self.idp_config.management_base_url,
+                self.idp_config.registration_trust,
+                self.idp_config.metadata_cache_seconds,
+            )
         # Optional web-login flow (Authorization Code + PKCE). Built from
         # OIDC_AUDIENCE_BRIDGE + OIDC_BRIDGE_REDIRECT_URI. None disables
         # /auth/login (returns 503).
@@ -1532,6 +1551,23 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     status, resp = 404, {"error": "unknown route"}
                 self._reply_json(status, resp)
                 return
+            if route == "/oauth/register":
+                # DCR endpoint (RFC 7591). D3 wires the route + gate
+                # so the AS metadata overlay (which advertises this URL)
+                # points somewhere real. The actual create-client logic
+                # lands in D4 — for now this returns 501.
+                if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
+                    self._reply_error(404, "DCR shim not enabled")
+                    return
+                self._drain_body()
+                self._reply_json(501, {
+                    "error": "not_implemented",
+                    "error_description": (
+                        "POST /oauth/register: shim active but "
+                        "create-client handler not yet wired (D4)."
+                    ),
+                })
+                return
             self._reply_error(404, f"unknown route: {self.path}")
 
         def _render_root_html(self, daemon) -> str:
@@ -1597,11 +1633,59 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     self._reply_error(404, "OIDC not configured on this bridge")
                     return
                 resource = _resolve_public_resource_url(self.headers.get("Host", ""))
+                # With the DCR shim enabled (D3+), advertise the bridge
+                # itself as the authorization server so MCP clients fetch
+                # the AS metadata overlay (with injected registration_endpoint)
+                # from us. Without the shim, point clients at the real
+                # OIDC issuer URL directly (chunk B behavior).
+                if daemon.idp_config is not None and daemon.idp_config.dcr_shim:
+                    authorization_server = resource
+                else:
+                    authorization_server = daemon.oidc_validator.config.issuer
                 metadata = _build_protected_resource_metadata(
-                    issuer=daemon.oidc_validator.config.issuer,
+                    issuer=authorization_server,
                     resource=resource,
                 )
                 self._reply_json(200, metadata)
+                return
+            if route in (
+                "/.well-known/oauth-authorization-server",
+                "/.well-known/openid-configuration",
+            ):
+                # AS metadata overlay (mcp-oauth chunk D3). Only served
+                # when the DCR shim is enabled — without it, MCP clients
+                # are routed directly to the IdP's own metadata URL by
+                # /.well-known/oauth-protected-resource above. Same payload
+                # for both paths (different MCP clients prefer different
+                # ones; serve both).
+                if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
+                    self._reply_error(404, "DCR shim not enabled on this bridge")
+                    return
+                from otaman_bridge.dcr_shim import (
+                    MetadataFetchError,
+                    derive_registration_endpoint,
+                    fetch_upstream_metadata,
+                    overlay_metadata,
+                )
+                cached = daemon._idp_metadata_cache.get()
+                if cached is None:
+                    try:
+                        cached = fetch_upstream_metadata(
+                            daemon.idp_config.management_base_url,
+                        )
+                    except MetadataFetchError as exc:
+                        _log.warning("AS metadata upstream fetch failed: %s", exc)
+                        self._reply_error(502, f"upstream metadata unavailable: {exc}")
+                        return
+                    daemon._idp_metadata_cache.put(cached)
+                bridge_url = _resolve_public_resource_url(self.headers.get("Host", ""))
+                overlaid = overlay_metadata(
+                    cached,
+                    registration_endpoint=derive_registration_endpoint(
+                        bridge_public_url=bridge_url,
+                    ),
+                )
+                self._reply_json(200, overlaid)
                 return
             if route == "" or route == "/":
                 # Minimal landing page so a browser landing here after
