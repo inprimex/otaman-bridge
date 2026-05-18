@@ -295,6 +295,46 @@ def _build_oidc_validator_from_env():
     return OIDCValidator(cfg)
 
 
+def _build_protected_resource_metadata(
+    *,
+    issuer: str,
+    resource: str,
+    scopes: tuple[str, ...] = ("openid", "profile", "email"),
+) -> dict[str, Any]:
+    """RFC 9728 Protected Resource Metadata payload.
+
+    Returned at ``/.well-known/oauth-protected-resource`` so MCP clients
+    can discover this bridge's authorization server. The MCP authorization
+    spec then has the client fetch ``<issuer>/.well-known/oauth-authorization-server``
+    directly from the issuer — we do not host AS metadata here.
+    """
+    return {
+        "resource": resource,
+        "authorization_servers": [issuer],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": list(scopes),
+    }
+
+
+def _resolve_public_resource_url(host_header: str) -> str:
+    """Derive the resource-server identifier URL from a request Host header.
+
+    Precedence:
+        1. ``OTAMAN_BRIDGE_PUBLIC_URL`` env var (set when bridge sits
+           behind a reverse proxy with a public hostname / TLS).
+        2. ``http://<Host header>`` (loopback dev case).
+
+    The fallback is intentionally http; production deployments behind
+    TLS must set the env override so the resource identifier matches
+    what clients actually reach.
+    """
+    override = os.environ.get("OTAMAN_BRIDGE_PUBLIC_URL", "").strip()
+    if override:
+        return override.rstrip("/")
+    host = (host_header or "127.0.0.1").strip()
+    return f"http://{host}"
+
+
 def _build_web_login_flow_from_env():
     """Build a (LoginFlow, PendingLoginStore) pair from environment, or None.
 
@@ -382,6 +422,25 @@ class BridgeDaemon:
         # Optional OIDC validator built from env. When unset, daemon
         # serves loopback-bearer only (Mode 1 / local-trust pattern).
         self.oidc_validator = _build_oidc_validator_from_env()
+        # Optional DCR shim (mcp-oauth wave chunk D3+). When enabled the
+        # daemon serves AS metadata overlay routes pointing at itself,
+        # so MCP clients (Claude Code) can do RFC 7591 against Zitadel
+        # which lacks native DCR. None = inert.
+        from otaman_bridge.dcr_shim import IdpConfig, MetadataCache
+        self.idp_config = IdpConfig.from_env()
+        self._idp_metadata_cache = (
+            MetadataCache(ttl_seconds=self.idp_config.metadata_cache_seconds)
+            if self.idp_config is not None
+            else None
+        )
+        if self.idp_config is not None:
+            _log.info(
+                "DCR shim enabled (type=%s mgmt=%s trust=%s cache=%ds)",
+                self.idp_config.type,
+                self.idp_config.management_base_url,
+                self.idp_config.registration_trust,
+                self.idp_config.metadata_cache_seconds,
+            )
         # Optional web-login flow (Authorization Code + PKCE). Built from
         # OIDC_AUDIENCE_BRIDGE + OIDC_BRIDGE_REDIRECT_URI. None disables
         # /auth/login (returns 503).
@@ -591,6 +650,18 @@ class BridgeDaemon:
                 "idle-afk monitor started (threshold=%d min)",
                 self.idle_auto_afk_minutes,
             )
+
+        # DCR shim cleanup sweep (D6). Background task that periodically
+        # prunes shim-managed apps older than ``cleanup_ttl_seconds``. Off
+        # when shim disabled or sweep_interval=0 (manual cleanup via the
+        # `maestro bridge dcr-cleanup` CLI command still works).
+        self._dcr_sweep_future = None
+        if (
+            self.idp_config is not None
+            and self.idp_config.dcr_shim
+            and self.idp_config.cleanup_sweep_interval_seconds > 0
+        ):
+            self._dcr_sweep_future = self._async.submit(self._dcr_cleanup_sweep_loop())
 
         _log.info(
             "bridge daemon listening on %s:%d (account=%s, transport=%s)",
@@ -1224,6 +1295,77 @@ class BridgeDaemon:
             if still_pending is pending:
                 still_pending.handle = new_handle
 
+    async def _dcr_cleanup_sweep_loop(self):
+        """Background task that periodically prunes stale shim-managed apps.
+
+        Run when both ``idp_config.dcr_shim`` and ``cleanup_sweep_interval_seconds > 0``.
+        Each iteration sleeps for the interval first, then sweeps; this lets
+        the daemon finish startup before the first sweep request to Zitadel.
+        Failures are logged but never abort the loop.
+        """
+        from otaman_bridge.dcr_shim import sweep_orphans
+        cfg = self.idp_config
+        interval = cfg.cleanup_sweep_interval_seconds
+        _log.info(
+            "DCR shim cleanup loop started "
+            "(interval=%ds ttl=%ds prefix=%s project=%s)",
+            interval, cfg.cleanup_ttl_seconds, cfg.managed_name_prefix, cfg.project_id,
+        )
+        while True:
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                _log.debug("DCR cleanup loop cancelled — daemon shutting down")
+                return
+            mgmt_client = self.get_or_build_dcr_mgmt_client()
+            if mgmt_client is None:
+                _log.debug("DCR cleanup skipped — mgmt client unavailable")
+                continue
+            try:
+                report = await asyncio.to_thread(
+                    sweep_orphans,
+                    mgmt_client=mgmt_client,
+                    project_id=cfg.project_id,
+                    name_prefix=cfg.managed_name_prefix,
+                    ttl_seconds=cfg.cleanup_ttl_seconds,
+                )
+                if report.deleted or report.failed:
+                    _log.info(
+                        "DCR sweep: found=%d eligible=%d deleted=%d failed=%d",
+                        report.found, report.eligible, report.deleted, report.failed,
+                    )
+                else:
+                    _log.debug("DCR sweep: nothing to delete (found=%d)", report.found)
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("DCR sweep iteration failed: %s", exc)
+
+    def get_or_build_dcr_mgmt_client(self):
+        """Lazy-construct the Zitadel mgmt API client for the DCR shim.
+
+        Returns None when shim is enabled but credentials aren't fully
+        populated (route then returns 503 server_error). Tests can
+        monkey-patch self._dcr_mgmt_client to inject a stub.
+        """
+        if getattr(self, "_dcr_mgmt_client_cached", None) is not None:
+            return self._dcr_mgmt_client_cached
+        if self.idp_config is None or not self.idp_config.dcr_shim:
+            return None
+        cfg = self.idp_config
+        if not (cfg.machine_user_client_id and cfg.machine_user_client_secret and cfg.org_id):
+            return None
+        from otaman_bridge.dcr_shim import ZitadelMgmtClient
+        # token endpoint is the standard OIDC location on the mgmt host.
+        token_url = f"{cfg.management_base_url}/oauth/v2/token"
+        self._dcr_mgmt_client_cached = ZitadelMgmtClient(
+            base_url=cfg.management_base_url,
+            token_url=token_url,
+            client_id=cfg.machine_user_client_id,
+            client_secret=cfg.machine_user_client_secret,
+            org_id=cfg.org_id,
+            expected_host=cfg.expected_host,
+        )
+        return self._dcr_mgmt_client_cached
+
     def handle_status(self) -> tuple[int, dict[str, Any]]:
         with self._pending_lock:
             pending_count = len(self._pending)
@@ -1322,16 +1464,27 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             return _secrets.compare_digest(supplied, daemon.token)
 
         def _drain_body(self) -> None:
-            """Consume the request body so Windows doesn't RST on close."""
+            """Consume the request body so Windows doesn't RST on close.
+
+            Idempotent: safe to call from error-reply helpers after the
+            body has already been read by ``_read_body``. Without the
+            flag, a second ``rfile.read(length)`` on a fully-consumed
+            stream blocks until the connection timeout.
+            """
+            if getattr(self, "_body_consumed", False):
+                return
             length = int(self.headers.get("Content-Length", "0") or "0")
             if length > 0:
                 self.rfile.read(length)
+            self._body_consumed = True
 
         def _read_body(self) -> dict[str, Any] | None:
             length = int(self.headers.get("Content-Length", "0") or "0")
             if length == 0:
+                self._body_consumed = True
                 return {}
             raw = self.rfile.read(length)
+            self._body_consumed = True
             try:
                 return json.loads(raw)
             except json.JSONDecodeError:
@@ -1355,6 +1508,39 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 pass
             self._reply_json(status, {"error": message})
 
+        def _reply_unauthenticated(
+            self,
+            *,
+            error: str = "invalid_token",
+            description: str = "unauthorized",
+        ) -> None:
+            """Send 401 with a WWW-Authenticate challenge per RFC 6750 + 9728.
+
+            The header lets MCP clients (Claude Code) discover this
+            bridge's OIDC issuer and run the auth_code+PKCE flow without
+            any preconfigured token. Falls back to a plain 401 without
+            the challenge when OIDC isn't configured on this daemon —
+            there's no authorization server to point at anyway.
+            """
+            try:
+                self._drain_body()
+            except OSError:
+                pass
+            payload = json.dumps({"error": description}).encode("utf-8")
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
+            if daemon.oidc_validator is not None:
+                rm_url = (
+                    f"{_resolve_public_resource_url(self.headers.get('Host', ''))}"
+                    f"/.well-known/oauth-protected-resource"
+                )
+                challenge = f'Bearer resource_metadata="{rm_url}", error="{error}"'
+                self.send_header("WWW-Authenticate", challenge)
+            self.end_headers()
+            self.wfile.write(payload)
+
         # --- routes -------------------------------------------------------
 
         def do_POST(self) -> None:  # noqa: N802 — stdlib name
@@ -1365,7 +1551,13 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 # _auth_identify; tools see the caller via CallContext.
                 ctx = self._auth_identify()
                 if ctx is None:
-                    self._reply_error(401, "unauthorized")
+                    # No auth at all: 401 + WWW-Authenticate so MCP clients
+                    # (Claude Code) initiate the OAuth flow against the
+                    # issuer named in our protected-resource metadata.
+                    self._reply_unauthenticated(
+                        error="invalid_token",
+                        description="unauthorized",
+                    )
                     return
                 body = self._read_body()
                 if body is None:
@@ -1375,6 +1567,26 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                         "error": {"code": PARSE_ERROR, "message": "invalid JSON"},
                     })
                     return
+                # Identity-requiring tools (send_message_to_user etc.)
+                # called by an identity-less caller (loopback bearer = no
+                # user identity) get a 401 + WWW-Authenticate so the
+                # client upgrades to an OIDC bearer instead of seeing a
+                # tool-level isError that no client can recover from.
+                if (
+                    isinstance(body, dict)
+                    and body.get("method") == "tools/call"
+                    and not ctx.user_id
+                ):
+                    from otaman_bridge.mcp_tools import IDENTITY_REQUIRED_TOOLS
+                    tool_name = (body.get("params") or {}).get("name", "")
+                    if tool_name in IDENTITY_REQUIRED_TOOLS:
+                        self._reply_unauthenticated(
+                            error="insufficient_scope",
+                            description=(
+                                f"tool {tool_name!r} requires authenticated user"
+                            ),
+                        )
+                        return
                 response = daemon.mcp_server.handle_request(body, context=ctx)
                 # JSON-RPC responses are always HTTP 200 -- errors are in
                 # the envelope, not the transport status.
@@ -1421,6 +1633,82 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 else:
                     status, resp = 404, {"error": "unknown route"}
                 self._reply_json(status, resp)
+                return
+            if route == "/oauth/register":
+                # DCR endpoint (RFC 7591). Validates the request, looks
+                # up an existing app by deterministic fingerprint name
+                # (reuse path), and creates a new Zitadel OIDC app when
+                # not found. Returns the resulting client_id in RFC 7591
+                # client_information_response shape.
+                if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
+                    self._reply_error(404, "DCR shim not enabled")
+                    return
+                # Trust gate (design §4.1):
+                #   open      — accept any caller
+                #   protected — require an authenticated user (real OIDC
+                #               bearer; loopback bearer's empty user_id is
+                #               not enough)
+                if daemon.idp_config.registration_trust == "protected":
+                    ctx = self._auth_identify()
+                    if ctx is None or not getattr(ctx, "user_id", ""):
+                        self._reply_unauthenticated(
+                            error="invalid_token",
+                            description="DCR shim requires authenticated user when trust=protected",
+                        )
+                        return
+                body = self._read_body()
+                if body is None:
+                    self._reply_json(400, {
+                        "error": "invalid_client_metadata",
+                        "error_description": "request body is not valid JSON",
+                    })
+                    return
+                from otaman_bridge.dcr_shim import (
+                    DCRError,
+                    ZitadelMgmtError,
+                    find_or_create_client,
+                    parse_register_request,
+                    to_rfc7591_response,
+                )
+                try:
+                    request = parse_register_request(body)
+                except DCRError as exc:
+                    self._reply_json(exc.http_status, {
+                        "error": exc.error,
+                        "error_description": exc.description,
+                    })
+                    return
+                # Lazy-build the mgmt client (idempotent — once per daemon).
+                mgmt_client = daemon.get_or_build_dcr_mgmt_client()
+                if mgmt_client is None:
+                    self._reply_json(503, {
+                        "error": "server_error",
+                        "error_description": (
+                            "DCR shim enabled but management API credentials "
+                            "(client_id/client_secret/org_id) are not configured."
+                        ),
+                    })
+                    return
+                try:
+                    client_id = find_or_create_client(
+                        mgmt_client=mgmt_client,
+                        project_id=daemon.idp_config.project_id,
+                        request=request,
+                        name_prefix=daemon.idp_config.managed_name_prefix,
+                    )
+                except ZitadelMgmtError as exc:
+                    _log.warning("DCR mgmt API failure: %s", exc)
+                    self._reply_json(502, {
+                        "error": "server_error",
+                        "error_description": f"upstream IdP rejected: {exc}",
+                    })
+                    return
+                import time as _t
+                self._reply_json(201, to_rfc7591_response(
+                    request=request,
+                    client_id=client_id,
+                    now_unix=int(_t.time()),
+                ))
                 return
             self._reply_error(404, f"unknown route: {self.path}")
 
@@ -1477,6 +1765,69 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
                 self._reply_json(status, resp)
+                return
+            if route == "/.well-known/oauth-protected-resource":
+                # RFC 9728 Protected Resource Metadata. Unauthenticated by
+                # design — MCP clients fetch this to discover the OIDC
+                # issuer before they have a token. If OIDC isn't enabled
+                # on this daemon, there's no protected resource to describe.
+                if daemon.oidc_validator is None:
+                    self._reply_error(404, "OIDC not configured on this bridge")
+                    return
+                resource = _resolve_public_resource_url(self.headers.get("Host", ""))
+                # With the DCR shim enabled (D3+), advertise the bridge
+                # itself as the authorization server so MCP clients fetch
+                # the AS metadata overlay (with injected registration_endpoint)
+                # from us. Without the shim, point clients at the real
+                # OIDC issuer URL directly (chunk B behavior).
+                if daemon.idp_config is not None and daemon.idp_config.dcr_shim:
+                    authorization_server = resource
+                else:
+                    authorization_server = daemon.oidc_validator.config.issuer
+                metadata = _build_protected_resource_metadata(
+                    issuer=authorization_server,
+                    resource=resource,
+                )
+                self._reply_json(200, metadata)
+                return
+            if route in (
+                "/.well-known/oauth-authorization-server",
+                "/.well-known/openid-configuration",
+            ):
+                # AS metadata overlay (mcp-oauth chunk D3). Only served
+                # when the DCR shim is enabled — without it, MCP clients
+                # are routed directly to the IdP's own metadata URL by
+                # /.well-known/oauth-protected-resource above. Same payload
+                # for both paths (different MCP clients prefer different
+                # ones; serve both).
+                if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
+                    self._reply_error(404, "DCR shim not enabled on this bridge")
+                    return
+                from otaman_bridge.dcr_shim import (
+                    MetadataFetchError,
+                    derive_registration_endpoint,
+                    fetch_upstream_metadata,
+                    overlay_metadata,
+                )
+                cached = daemon._idp_metadata_cache.get()
+                if cached is None:
+                    try:
+                        cached = fetch_upstream_metadata(
+                            daemon.idp_config.management_base_url,
+                        )
+                    except MetadataFetchError as exc:
+                        _log.warning("AS metadata upstream fetch failed: %s", exc)
+                        self._reply_error(502, f"upstream metadata unavailable: {exc}")
+                        return
+                    daemon._idp_metadata_cache.put(cached)
+                bridge_url = _resolve_public_resource_url(self.headers.get("Host", ""))
+                overlaid = overlay_metadata(
+                    cached,
+                    registration_endpoint=derive_registration_endpoint(
+                        bridge_public_url=bridge_url,
+                    ),
+                )
+                self._reply_json(200, overlaid)
                 return
             if route == "" or route == "/":
                 # Minimal landing page so a browser landing here after

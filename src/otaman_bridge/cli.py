@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -392,6 +393,85 @@ def cmd_stop(args: argparse.Namespace) -> int:
 # install / uninstall
 
 
+def cmd_dcr_cleanup(args: argparse.Namespace) -> int:
+    """Delete stale DCR-shim-managed Zitadel apps.
+
+    Reads shim config from the same env vars the daemon uses
+    (OTAMAN_DCR_SHIM, OTAMAN_DCR_SHIM_CLIENT_ID, OTAMAN_DCR_SHIM_SECRET,
+    OIDC_PROJECT_ID, OIDC_ORG_ID, etc.). Builds an ephemeral mgmt-API
+    client and calls sweep_orphans().
+
+    Use this when the daemon hasn't been running and orphans piled up,
+    or for one-off cleanup outside the daemon's sweep cadence. The
+    daemon's background sweep covers the steady state.
+    """
+    from otaman_bridge.dcr_shim import (
+        IdpConfig,
+        ZitadelMgmtClient,
+        ZitadelMgmtError,
+        parse_duration_seconds,
+        sweep_orphans,
+    )
+
+    cfg = IdpConfig.from_env()
+    if cfg is None:
+        print("DCR shim not enabled (OTAMAN_DCR_SHIM is off). Nothing to clean.",
+              file=sys.stderr)
+        return 2
+    if not (cfg.machine_user_client_id and cfg.machine_user_client_secret and cfg.org_id):
+        print(
+            "DCR shim mgmt-API credentials incomplete: need "
+            "OTAMAN_DCR_SHIM_CLIENT_ID + OTAMAN_DCR_SHIM_SECRET + OIDC_ORG_ID.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.ttl:
+        try:
+            ttl_seconds = parse_duration_seconds(args.ttl)
+        except ValueError as exc:
+            print(f"invalid --ttl: {exc}", file=sys.stderr)
+            return 2
+    else:
+        ttl_seconds = cfg.cleanup_ttl_seconds
+
+    token_url = f"{cfg.management_base_url}/oauth/v2/token"
+    mgmt = ZitadelMgmtClient(
+        base_url=cfg.management_base_url,
+        token_url=token_url,
+        client_id=cfg.machine_user_client_id,
+        client_secret=cfg.machine_user_client_secret,
+        org_id=cfg.org_id,
+        expected_host=cfg.expected_host,
+    )
+
+    try:
+        report = sweep_orphans(
+            mgmt_client=mgmt,
+            project_id=cfg.project_id,
+            name_prefix=cfg.managed_name_prefix,
+            ttl_seconds=ttl_seconds,
+            dry_run=bool(args.dry_run),
+        )
+    except ZitadelMgmtError as exc:
+        print(f"sweep failed: {exc}", file=sys.stderr)
+        return 1
+
+    verb = "would delete" if args.dry_run else "deleted"
+    print(f"DCR cleanup sweep ({cfg.managed_name_prefix}*, ttl={ttl_seconds}s)")
+    print(f"  found:    {report.found}")
+    print(f"  eligible: {report.eligible}")
+    print(f"  {verb}: {report.deleted}")
+    if report.failed:
+        print(f"  failed:   {report.failed}")
+        for fid in report.failed_ids:
+            print(f"    - {fid}")
+    if args.dry_run and report.deleted:
+        print()
+        print("Re-run without --dry-run to actually delete.")
+    return 0 if report.failed == 0 else 1
+
+
 def _resolve_accounts(settings_path: Path, cli_account: str | None, all_flag: bool) -> list[str]:
     """Resolve which accounts install/uninstall applies to."""
     if all_flag:
@@ -510,8 +590,14 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # OTAMAN_BRIDGE_LOG_LEVEL overrides the default. Useful for operators
+    # tracing OAuth discovery / MCP request dispatch -- the per-request
+    # log_message in the daemon handler is at DEBUG, so DEBUG surfaces
+    # the HTTP wire activity.
+    _level_name = os.environ.get("OTAMAN_BRIDGE_LOG_LEVEL", "INFO").upper()
+    _level = getattr(logging, _level_name, logging.INFO)
     logging.basicConfig(
-        level=logging.INFO,
+        level=_level,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
     # Silence third-party loggers that leak secrets at INFO level.
@@ -573,6 +659,22 @@ def main(argv: list[str] | None = None) -> int:
     p_stop.add_argument("--account", required=True,
                         help="Account name of the daemon to stop")
     p_stop.set_defaults(func=cmd_stop)
+
+    p_dcr = subs.add_parser(
+        "dcr-cleanup",
+        help="Delete DCR-shim-managed Zitadel OIDC apps older than TTL "
+             "(orphans from stale fingerprints). Reads shim config from env.",
+    )
+    p_dcr.add_argument(
+        "--dry-run", action="store_true",
+        help="Report what would be deleted without actually deleting.",
+    )
+    p_dcr.add_argument(
+        "--ttl",
+        help="Override OTAMAN_DCR_SHIM_TTL (e.g. 7d / 24h / 1h). "
+             "Apps with creation age greater than this are eligible for delete.",
+    )
+    p_dcr.set_defaults(func=cmd_dcr_cleanup)
 
     p_install = subs.add_parser(
         "install",

@@ -80,41 +80,45 @@ class TestRegistration:
 
 class TestEndToEnd:
     def test_send_then_check_then_mark(self, running_daemon):
-        """Note: this test uses the loopback bearer which has user_id=''.
-        That's rejected by send/check/mark validation. So we use this test
-        only to verify the route registers and dispatches; per-user
-        end-to-end is in the manual-test runbook addendum (chunk 6).
+        """Loopback bearer has ctx.user_id=''. Per the mcp-oauth wave
+        (chunk C), identity-required tools now short-circuit at the HTTP
+        layer with 401 (not a tool-level isError inside HTTP 200), so MCP
+        clients can run their OAuth flow against the issuer named in
+        /.well-known/oauth-protected-resource. Per-user end-to-end with
+        a real OIDC token is in the manual-test runbook addendum.
         """
         daemon, endpoint = running_daemon
         base = _daemon_url(endpoint)
 
-        # 1. send -- rejected because loopback bearer has no user_id
-        _, send_resp = _post(f"{base}/mcp", token=daemon.token, body={
+        # 1. send -- rejected at HTTP layer because loopback bearer has no user_id
+        send_code, send_resp = _post(f"{base}/mcp", token=daemon.token, body={
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {
                 "name": "send_message_to_user",
                 "arguments": {"target_user_id": "user-B", "body": "hi"},
             },
         })
-        assert send_resp["result"]["isError"] is True
-        assert "unauthenticated" in send_resp["result"]["content"][0]["text"].lower()
+        assert send_code == 401
+        assert "send_message_to_user" in send_resp["error"]
 
         # 2. check -- same loopback rejection path
-        _, check_resp = _post(f"{base}/mcp", token=daemon.token, body={
+        check_code, check_resp = _post(f"{base}/mcp", token=daemon.token, body={
             "jsonrpc": "2.0", "id": 2, "method": "tools/call",
             "params": {"name": "check_messages", "arguments": {}},
         })
-        assert check_resp["result"]["isError"] is True
+        assert check_code == 401
+        assert "check_messages" in check_resp["error"]
 
         # 3. mark -- same
-        _, mark_resp = _post(f"{base}/mcp", token=daemon.token, body={
+        mark_code, mark_resp = _post(f"{base}/mcp", token=daemon.token, body={
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {
                 "name": "mark_message_read",
                 "arguments": {"message_id": "x"},
             },
         })
-        assert mark_resp["result"]["isError"] is True
+        assert mark_code == 401
+        assert "mark_message_read" in mark_resp["error"]
 
     def test_send_then_check_via_injected_user_context(self, running_daemon, tmp_path):
         """Drive the full flow by writing directly to the daemon's inbox
