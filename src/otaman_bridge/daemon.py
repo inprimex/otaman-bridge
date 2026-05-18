@@ -1362,16 +1362,27 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             return _secrets.compare_digest(supplied, daemon.token)
 
         def _drain_body(self) -> None:
-            """Consume the request body so Windows doesn't RST on close."""
+            """Consume the request body so Windows doesn't RST on close.
+
+            Idempotent: safe to call from error-reply helpers after the
+            body has already been read by ``_read_body``. Without the
+            flag, a second ``rfile.read(length)`` on a fully-consumed
+            stream blocks until the connection timeout.
+            """
+            if getattr(self, "_body_consumed", False):
+                return
             length = int(self.headers.get("Content-Length", "0") or "0")
             if length > 0:
                 self.rfile.read(length)
+            self._body_consumed = True
 
         def _read_body(self) -> dict[str, Any] | None:
             length = int(self.headers.get("Content-Length", "0") or "0")
             if length == 0:
+                self._body_consumed = True
                 return {}
             raw = self.rfile.read(length)
+            self._body_consumed = True
             try:
                 return json.loads(raw)
             except json.JSONDecodeError:
@@ -1395,6 +1406,39 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 pass
             self._reply_json(status, {"error": message})
 
+        def _reply_unauthenticated(
+            self,
+            *,
+            error: str = "invalid_token",
+            description: str = "unauthorized",
+        ) -> None:
+            """Send 401 with a WWW-Authenticate challenge per RFC 6750 + 9728.
+
+            The header lets MCP clients (Claude Code) discover this
+            bridge's OIDC issuer and run the auth_code+PKCE flow without
+            any preconfigured token. Falls back to a plain 401 without
+            the challenge when OIDC isn't configured on this daemon —
+            there's no authorization server to point at anyway.
+            """
+            try:
+                self._drain_body()
+            except OSError:
+                pass
+            payload = json.dumps({"error": description}).encode("utf-8")
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
+            if daemon.oidc_validator is not None:
+                rm_url = (
+                    f"{_resolve_public_resource_url(self.headers.get('Host', ''))}"
+                    f"/.well-known/oauth-protected-resource"
+                )
+                challenge = f'Bearer resource_metadata="{rm_url}", error="{error}"'
+                self.send_header("WWW-Authenticate", challenge)
+            self.end_headers()
+            self.wfile.write(payload)
+
         # --- routes -------------------------------------------------------
 
         def do_POST(self) -> None:  # noqa: N802 — stdlib name
@@ -1405,7 +1449,13 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 # _auth_identify; tools see the caller via CallContext.
                 ctx = self._auth_identify()
                 if ctx is None:
-                    self._reply_error(401, "unauthorized")
+                    # No auth at all: 401 + WWW-Authenticate so MCP clients
+                    # (Claude Code) initiate the OAuth flow against the
+                    # issuer named in our protected-resource metadata.
+                    self._reply_unauthenticated(
+                        error="invalid_token",
+                        description="unauthorized",
+                    )
                     return
                 body = self._read_body()
                 if body is None:
@@ -1415,6 +1465,26 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                         "error": {"code": PARSE_ERROR, "message": "invalid JSON"},
                     })
                     return
+                # Identity-requiring tools (send_message_to_user etc.)
+                # called by an identity-less caller (loopback bearer = no
+                # user identity) get a 401 + WWW-Authenticate so the
+                # client upgrades to an OIDC bearer instead of seeing a
+                # tool-level isError that no client can recover from.
+                if (
+                    isinstance(body, dict)
+                    and body.get("method") == "tools/call"
+                    and not ctx.user_id
+                ):
+                    from otaman_bridge.mcp_tools import IDENTITY_REQUIRED_TOOLS
+                    tool_name = (body.get("params") or {}).get("name", "")
+                    if tool_name in IDENTITY_REQUIRED_TOOLS:
+                        self._reply_unauthenticated(
+                            error="insufficient_scope",
+                            description=(
+                                f"tool {tool_name!r} requires authenticated user"
+                            ),
+                        )
+                        return
                 response = daemon.mcp_server.handle_request(body, context=ctx)
                 # JSON-RPC responses are always HTTP 200 -- errors are in
                 # the envelope, not the transport status.

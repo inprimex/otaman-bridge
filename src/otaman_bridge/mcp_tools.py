@@ -29,6 +29,26 @@ PRIVACY_EMAILS = "emails"     # default; useful for small trusted teams
 PRIVACY_OPAQUE = "opaque"     # strip user_email, just return user_id
 
 
+# Tools that require an authenticated user identity (ctx.user_id non-empty).
+# Loopback-bearer callers (same-host CLI introspection) have ctx.user_id=""
+# and would receive a tool-level isError. The /mcp route uses this set to
+# short-circuit with HTTP 401 + WWW-Authenticate instead, so MCP clients
+# (Claude Code) initiate their OAuth dance against the issuer named in
+# /.well-known/oauth-protected-resource and retry with a real OIDC bearer.
+#
+# Identity-less tools (e.g. list_team_sessions) are deliberately omitted:
+# they're safe for CLI introspection and there's no user attribution to
+# enforce.
+#
+# TODO: lift this into Tool dataclass metadata so tools self-describe
+# their auth requirements instead of being listed by name in two places.
+IDENTITY_REQUIRED_TOOLS: frozenset[str] = frozenset({
+    "send_message_to_user",
+    "check_messages",
+    "mark_message_read",
+})
+
+
 def build_list_team_sessions_tool(
     *,
     runner_client: RunnerClient,
@@ -171,6 +191,7 @@ def _format_sessions(entries: list[dict]) -> str:
 
 
 __all__ = [
+    "IDENTITY_REQUIRED_TOOLS",
     "PRIVACY_EMAILS",
     "PRIVACY_OPAQUE",
     "build_list_team_sessions_tool",
