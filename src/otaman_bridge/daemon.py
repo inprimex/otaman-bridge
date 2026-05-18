@@ -295,6 +295,46 @@ def _build_oidc_validator_from_env():
     return OIDCValidator(cfg)
 
 
+def _build_protected_resource_metadata(
+    *,
+    issuer: str,
+    resource: str,
+    scopes: tuple[str, ...] = ("openid", "profile", "email"),
+) -> dict[str, Any]:
+    """RFC 9728 Protected Resource Metadata payload.
+
+    Returned at ``/.well-known/oauth-protected-resource`` so MCP clients
+    can discover this bridge's authorization server. The MCP authorization
+    spec then has the client fetch ``<issuer>/.well-known/oauth-authorization-server``
+    directly from the issuer — we do not host AS metadata here.
+    """
+    return {
+        "resource": resource,
+        "authorization_servers": [issuer],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": list(scopes),
+    }
+
+
+def _resolve_public_resource_url(host_header: str) -> str:
+    """Derive the resource-server identifier URL from a request Host header.
+
+    Precedence:
+        1. ``OTAMAN_BRIDGE_PUBLIC_URL`` env var (set when bridge sits
+           behind a reverse proxy with a public hostname / TLS).
+        2. ``http://<Host header>`` (loopback dev case).
+
+    The fallback is intentionally http; production deployments behind
+    TLS must set the env override so the resource identifier matches
+    what clients actually reach.
+    """
+    override = os.environ.get("OTAMAN_BRIDGE_PUBLIC_URL", "").strip()
+    if override:
+        return override.rstrip("/")
+    host = (host_header or "127.0.0.1").strip()
+    return f"http://{host}"
+
+
 def _build_web_login_flow_from_env():
     """Build a (LoginFlow, PendingLoginStore) pair from environment, or None.
 
@@ -1477,6 +1517,21 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
                 self._reply_json(status, resp)
+                return
+            if route == "/.well-known/oauth-protected-resource":
+                # RFC 9728 Protected Resource Metadata. Unauthenticated by
+                # design — MCP clients fetch this to discover the OIDC
+                # issuer before they have a token. If OIDC isn't enabled
+                # on this daemon, there's no protected resource to describe.
+                if daemon.oidc_validator is None:
+                    self._reply_error(404, "OIDC not configured on this bridge")
+                    return
+                resource = _resolve_public_resource_url(self.headers.get("Host", ""))
+                metadata = _build_protected_resource_metadata(
+                    issuer=daemon.oidc_validator.config.issuer,
+                    resource=resource,
+                )
+                self._reply_json(200, metadata)
                 return
             if route == "" or route == "/":
                 # Minimal landing page so a browser landing here after
