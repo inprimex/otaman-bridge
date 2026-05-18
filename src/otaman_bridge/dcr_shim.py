@@ -59,10 +59,20 @@ class IdpConfig:
     # Project under which DCR-registered apps are created.
     project_id: str
 
-    # Mgmt-API auth (machine user — client_credentials grant). Both
-    # populated together; secret resolved via the _secrets chain when
-    # daemon-level config loading lands. For D3-only the values may be
-    # empty (route works without making mgmt calls).
+    # Mgmt-API auth — two supported modes; PAT preferred when set.
+    #
+    # 1. PAT (recommended for deployments behind a TLS terminator):
+    #    Opaque Personal Access Token bound to a machine user. Zitadel
+    #    DB-introspects it on every mgmt API call, bypassing the JWT
+    #    validation interceptor that breaks behind h2c-incapable proxies
+    #    (Cloudflare Tunnel etc.). See strategy doc § "PAT vs JWT".
+    # 2. Client credentials (legacy / non-proxied deployments):
+    #    Machine-user client_id + client_secret. Bridge mints a JWT via
+    #    client_credentials grant, caches, refreshes.
+    #
+    # If both are set, PAT wins. If neither, the shim can serve the
+    # discovery overlay but /oauth/register returns 503 server_error.
+    mgmt_pat: str = ""
     machine_user_client_id: str = ""
     machine_user_client_secret: str = ""
 
@@ -157,6 +167,7 @@ class IdpConfig:
             dcr_shim=True,
             management_base_url=mgmt,
             project_id=e.get("OIDC_PROJECT_ID", "").strip(),
+            mgmt_pat=e.get("OTAMAN_DCR_SHIM_PAT", "").strip(),
             machine_user_client_id=e.get("OTAMAN_DCR_SHIM_CLIENT_ID", "").strip(),
             machine_user_client_secret=e.get("OTAMAN_DCR_SHIM_SECRET", "").strip(),
             org_id=(
@@ -229,9 +240,19 @@ def fetch_upstream_metadata(
     additions, and is what AS-metadata-aware clients accept.
 
     Raises ``MetadataFetchError`` on any network or parse failure.
+
+    Sets a User-Agent header — Cloudflare's Bot Fight Mode (and similar
+    TLS-terminating proxies) block urllib's default ``Python-urllib/3.x``
+    with 403. Anyone fronting their IdP with a CDN/WAF hits this.
     """
     url = f"{base_url.rstrip('/')}/.well-known/openid-configuration"
-    req = urllib.request.Request(url, method="GET")
+    req = urllib.request.Request(
+        url, method="GET",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "otaman-bridge-dcr-shim/1.0",
+        },
+    )
     o = opener or urllib.request.build_opener()
     try:
         with o.open(req, timeout=timeout_seconds) as resp:
@@ -470,15 +491,29 @@ class ZitadelMgmtError(Exception):
 class ZitadelMgmtClient:
     """Minimal Zitadel mgmt API client used by the DCR shim.
 
-    Authenticates via client_credentials grant against ``<issuer>/oauth/v2/token``.
-    Caches the access token until ~30s before expiry. All mgmt calls
-    include the ``x-zitadel-orgid`` header (required by Zitadel for
-    org-scoped operations) and the ``Host`` header expected by Zitadel's
-    ExternalDomain origin check.
+    Two auth modes:
+
+    1. **PAT** (preferred): pass a Personal Access Token via ``pat``.
+       Used directly as Bearer on every mgmt call. Opaque token, no
+       token-minting step, no JWT validation interceptor — works behind
+       Cloudflare Tunnel and other h2c-incapable TLS terminators.
+    2. **Client credentials** (legacy / non-proxied deployments): pass
+       ``client_id`` + ``client_secret``. The client mints an access
+       token via ``<issuer>/oauth/v2/token`` and caches it until ~30s
+       before expiry.
+
+    If both ``pat`` and ``client_id``/``client_secret`` are passed,
+    ``pat`` wins. If neither is set, every mgmt call raises
+    ``ZitadelMgmtError`` immediately.
+
+    All mgmt calls include the ``x-zitadel-orgid`` header (required by
+    Zitadel for org-scoped operations) and the ``Host`` header expected
+    by Zitadel's ExternalDomain origin check.
     """
 
     # Refresh the access token this many seconds before its claimed expiry,
-    # to avoid racing the boundary while a request is in flight.
+    # to avoid racing the boundary while a request is in flight. Unused
+    # in PAT mode.
     _TOKEN_REFRESH_LEEWAY = 30
 
     def __init__(
@@ -486,8 +521,9 @@ class ZitadelMgmtClient:
         *,
         base_url: str,
         token_url: str,
-        client_id: str,
-        client_secret: str,
+        client_id: str = "",
+        client_secret: str = "",
+        pat: str = "",
         org_id: str,
         expected_host: str = "",
         opener: urllib.request.OpenerDirector | None = None,
@@ -496,6 +532,7 @@ class ZitadelMgmtClient:
         self.token_url = token_url
         self.client_id = client_id
         self.client_secret = client_secret
+        self.pat = pat
         self.org_id = org_id
         self.expected_host = expected_host
         self._opener = opener
@@ -507,7 +544,18 @@ class ZitadelMgmtClient:
     # ---- auth ----------------------------------------------------------
 
     def _get_access_token(self, *, now: float | None = None) -> str:
-        """Return a fresh access token, minting via client_credentials if needed."""
+        """Return a usable Bearer token: PAT directly, or minted JWT.
+
+        PAT short-circuits the whole token-cache machinery — the PAT
+        itself IS the Bearer. Otherwise falls back to client_credentials.
+        Raises ZitadelMgmtError if neither auth mode is configured.
+        """
+        if self.pat:
+            return self.pat
+        if not (self.client_id and self.client_secret):
+            raise ZitadelMgmtError(
+                "no auth configured: set either pat or client_id+client_secret"
+            )
         n = now if now is not None else time.monotonic()
         with self._token_lock:
             if self._access_token and n < self._token_expires_at - self._TOKEN_REFRESH_LEEWAY:
@@ -539,6 +587,8 @@ class ZitadelMgmtClient:
             "Content-Type": "application/x-www-form-urlencoded",
             "Authorization": f"Basic {basic}",
             "Accept": "application/json",
+            # Cloudflare's Bot Fight Mode blocks urllib's default UA.
+            "User-Agent": "otaman-bridge-dcr-shim/1.0",
         }
         if self.expected_host:
             headers["Host"] = self.expected_host
@@ -576,6 +626,7 @@ class ZitadelMgmtClient:
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
             "x-zitadel-orgid": self.org_id,
+            "User-Agent": "otaman-bridge-dcr-shim/1.0",
         }
         if data:
             headers["Content-Type"] = "application/json"

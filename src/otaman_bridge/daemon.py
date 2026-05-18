@@ -1365,7 +1365,10 @@ class BridgeDaemon:
         if self.idp_config is None or not self.idp_config.dcr_shim:
             return None
         cfg = self.idp_config
-        if not (cfg.machine_user_client_id and cfg.machine_user_client_secret and cfg.org_id):
+        # Need at least one auth mode (PAT preferred) + org_id.
+        has_pat = bool(cfg.mgmt_pat)
+        has_client_creds = bool(cfg.machine_user_client_id and cfg.machine_user_client_secret)
+        if not cfg.org_id or not (has_pat or has_client_creds):
             return None
         from otaman_bridge.dcr_shim import ZitadelMgmtClient
         # token endpoint is the standard OIDC location on the mgmt host.
@@ -1375,6 +1378,7 @@ class BridgeDaemon:
             token_url=token_url,
             client_id=cfg.machine_user_client_id,
             client_secret=cfg.machine_user_client_secret,
+            pat=cfg.mgmt_pat,
             org_id=cfg.org_id,
             expected_host=cfg.expected_host,
         )
