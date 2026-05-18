@@ -47,6 +47,7 @@ IDENTITY_REQUIRED_TOOLS: frozenset[str] = frozenset({
     "check_messages",
     "mark_message_read",
     "request_review",
+    "get_recent_activity",
 })
 
 
@@ -497,6 +498,256 @@ def build_request_review_tool(
                 "subject": {
                     "type": "string",
                     "description": "Optional: override the auto-generated subject line.",
+                },
+            },
+        },
+        handler=handler,
+    )
+
+
+def _iso_since_hours_ago(hours: int, *, now=None) -> str:
+    """Compute the RFC-3339 'sent_at must be after this' cutoff string.
+
+    Used by get_recent_activity to compute the window. Output matches
+    Zitadel / inbox sent_at format (UTC, Z suffix, second precision).
+    """
+    import datetime
+    cur = now if now is not None else datetime.datetime.now(tz=datetime.timezone.utc)
+    if cur.tzinfo is None:
+        cur = cur.replace(tzinfo=datetime.timezone.utc)
+    delta = datetime.timedelta(hours=hours)
+    out = cur - delta
+    return out.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _summarize_messages(messages: list) -> dict:
+    """Compute aggregate stats over a list of StoredMessage-like objects.
+
+    Each message must expose .type / .priority / .read_at attributes.
+    Returns {total, unread, by_type, by_priority}.
+    """
+    by_type: dict[str, int] = {}
+    by_priority: dict[str, int] = {}
+    unread = 0
+    for m in messages:
+        t = getattr(m, "type", "chat") or "chat"
+        p = getattr(m, "priority", "normal") or "normal"
+        by_type[t] = by_type.get(t, 0) + 1
+        by_priority[p] = by_priority.get(p, 0) + 1
+        if getattr(m, "read_at", None) is None:
+            unread += 1
+    return {
+        "total": len(messages),
+        "unread": unread,
+        "by_type": by_type,
+        "by_priority": by_priority,
+    }
+
+
+def _summarize_team_sessions(sessions: list, *, exclude_user_id: str | None = None) -> dict:
+    """Count sessions per repo. Excludes the caller's own sessions by default.
+
+    sessions is the raw list from RunnerClient.list_sessions(); each entry
+    has .repo / .user_id. Output: {total, by_repo: {repo: count}}.
+    """
+    by_repo: dict[str, int] = {}
+    total = 0
+    for s in sessions:
+        if exclude_user_id and s.get("user_id") == exclude_user_id:
+            continue
+        repo = s.get("repo") or "(unknown)"
+        by_repo[repo] = by_repo.get(repo, 0) + 1
+        total += 1
+    return {"total": total, "by_repo": by_repo}
+
+
+def _format_recent_activity(
+    *,
+    window_hours: int,
+    inbox_summary: dict,
+    inbox_messages: list,
+    team_summary: dict | None,
+) -> str:
+    """Build the human-readable text for the MCP tool's content[0].text field.
+
+    Kept separate from the structured response so the LLM can be terse
+    when it summarizes; we don't dictate the prose, just provide a
+    pre-formatted starting point.
+    """
+    lines: list[str] = [f"Recent activity (last {window_hours}h):", ""]
+
+    inbox_line = f"Inbox: {inbox_summary['total']} message(s)"
+    if inbox_summary['total']:
+        inbox_line += f" ({inbox_summary['unread']} unread)"
+    lines.append(inbox_line)
+
+    if inbox_summary['total']:
+        by_type = inbox_summary['by_type']
+        if by_type:
+            lines.append(
+                "  types: "
+                + ", ".join(f"{n} {t}" for t, n in sorted(by_type.items()))
+            )
+        for m in inbox_messages[:10]:
+            read_marker = "read" if getattr(m, "read_at", None) else "unread"
+            mtype = getattr(m, "type", "chat") or "chat"
+            mprio = getattr(m, "priority", "normal") or "normal"
+            subject = getattr(m, "subject", "") or "(no subject)"
+            sent = getattr(m, "sent_at", "")
+            sender = getattr(m, "from_user", "(unknown)")
+            lines.append(
+                f"  - [{sent}] {sender} — {subject} "
+                f"[{mprio}, {mtype}, {read_marker}]"
+            )
+        if len(inbox_messages) > 10:
+            lines.append(f"  (... {len(inbox_messages) - 10} more)")
+
+    if team_summary is not None:
+        lines.append("")
+        lines.append(f"Team: {team_summary['total']} active session(s) from others")
+        for repo, n in sorted(team_summary['by_repo'].items()):
+            lines.append(f"  - {repo}: {n}")
+
+    return "\n".join(lines)
+
+
+def build_get_recent_activity_tool(
+    *,
+    inbox: Inbox,
+    runner_client,
+) -> Tool:
+    """Build the get_recent_activity MCP tool.
+
+    Read-only aggregation: caller's recent inbox + team session snapshot.
+    Window is hours-back from now (default 24, max 168 = 1 week). Returns
+    both a structuredContent block (for programmatic use) and a
+    pre-formatted text summary (for the LLM to relay verbatim or condense).
+
+    Privacy: only ever reads the caller's own inbox (ctx.user_id). Team
+    section returns counts per repo, no message content from others.
+    The runner snapshot is the same data list_team_sessions returns,
+    just aggregated by repo.
+
+    Identity-required (caller's inbox is keyed by ctx.user_id); loopback
+    bearer rejected at HTTP layer via IDENTITY_REQUIRED_TOOLS.
+    """
+
+    def handler(args: dict, ctx: CallContext) -> dict:
+        if not ctx.user_id:
+            return _mcp_error(
+                "caller identity required (loopback bearer has no user identity)"
+            )
+
+        hours = args.get("hours", 24)
+        if not isinstance(hours, int) or isinstance(hours, bool):
+            return _mcp_error("hours must be a positive integer")
+        if hours < 1 or hours > 168:
+            return _mcp_error("hours must be 1..168 (max 1 week)")
+
+        limit = args.get("limit", 50)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            return _mcp_error("limit must be a positive integer")
+        if limit < 1 or limit > 200:
+            return _mcp_error("limit must be 1..200")
+
+        include_team = bool(args.get("include_team_sessions", True))
+
+        since = _iso_since_hours_ago(hours)
+        try:
+            messages = inbox.list_messages(
+                ctx.user_id,
+                unread_only=False,
+                since=since,
+                limit=limit,
+            )
+        except ValueError as exc:
+            return _mcp_error(f"inbox query failed: {exc}")
+
+        inbox_summary = _summarize_messages(messages)
+
+        team_summary: dict | None = None
+        team_error: str | None = None
+        if include_team:
+            try:
+                sessions = runner_client.list_sessions() or []
+                team_summary = _summarize_team_sessions(
+                    sessions, exclude_user_id=ctx.user_id,
+                )
+            except RunnerUnreachableError as exc:
+                team_error = f"runner unreachable: {exc}"
+            except RunnerAuthError as exc:
+                team_error = f"runner auth failed: {exc}"
+            except Exception as exc:  # noqa: BLE001
+                team_error = f"runner error: {exc}"
+
+        text = _format_recent_activity(
+            window_hours=hours,
+            inbox_summary=inbox_summary,
+            inbox_messages=messages,
+            team_summary=team_summary,
+        )
+        if team_error:
+            text += f"\n\nTeam snapshot unavailable: {team_error}"
+
+        structured: dict = {
+            "window_hours": hours,
+            "since": since,
+            "user_id": ctx.user_id,
+            "inbox": {
+                **inbox_summary,
+                "messages": [
+                    {
+                        "id": getattr(m, "id", ""),
+                        "from_user": getattr(m, "from_user", ""),
+                        "subject": getattr(m, "subject", ""),
+                        "type": getattr(m, "type", "chat") or "chat",
+                        "priority": getattr(m, "priority", "normal") or "normal",
+                        "sent_at": getattr(m, "sent_at", ""),
+                        "read": getattr(m, "read_at", None) is not None,
+                    }
+                    for m in messages
+                ],
+            },
+        }
+        if team_summary is not None:
+            structured["team"] = team_summary
+        if team_error:
+            structured["team_error"] = team_error
+
+        return {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": structured,
+        }
+
+    return Tool(
+        name="get_recent_activity",
+        description=(
+            "Aggregate the caller's recent team activity: their inbox "
+            "messages within a window (default last 24h) plus a snapshot "
+            "of teammates' active sessions by repo. Read-only. Useful "
+            "for stand-ups and 'what's the team up to right now'."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 168,
+                    "default": 24,
+                    "description": "Look-back window in hours (1..168, default 24).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "default": 50,
+                    "description": "Max number of inbox messages to return.",
+                },
+                "include_team_sessions": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If false, skip the team-session snapshot.",
                 },
             },
         },

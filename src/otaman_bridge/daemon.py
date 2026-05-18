@@ -502,9 +502,11 @@ class BridgeDaemon:
         # tools work without web auth (they read ctx.user_id from any
         # of the three auth paths; loopback bearer is rejected at handler).
 
+
         from otaman_bridge.inbox import Inbox
         from otaman_bridge.mcp_tools import (
             build_check_messages_tool,
+            build_get_recent_activity_tool,
             build_mark_message_read_tool,
             build_request_review_tool,
             build_send_message_to_user_tool,
@@ -518,6 +520,9 @@ class BridgeDaemon:
         self.mcp_server.register(build_mark_message_read_tool(inbox=self.inbox))
         self.mcp_server.register(build_request_review_tool(
             inbox=self.inbox, session_store=self.session_store,
+        ))
+        self.mcp_server.register(build_get_recent_activity_tool(
+            inbox=self.inbox, runner_client=self._runner_client,
         ))
         _log.info("MCP: messaging tools registered (inbox=%s)", self.inbox.root)
 
