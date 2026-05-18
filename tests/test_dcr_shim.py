@@ -128,6 +128,35 @@ class TestIdpConfigFromEnv:
         })
         assert cfg.metadata_cache_seconds == 300
 
+    def test_pat_loaded_from_env(self):
+        cfg = IdpConfig.from_env(env={
+            "OTAMAN_DCR_SHIM": "1",
+            "OIDC_ISSUER": "http://i",
+            "OTAMAN_DCR_SHIM_PAT": "MY-PAT-TOKEN",
+        })
+        assert cfg.mgmt_pat == "MY-PAT-TOKEN"
+
+    def test_pat_defaults_to_empty(self):
+        cfg = IdpConfig.from_env(env={
+            "OTAMAN_DCR_SHIM": "1",
+            "OIDC_ISSUER": "http://i",
+        })
+        assert cfg.mgmt_pat == ""
+
+    def test_pat_and_client_credentials_both_loaded(self):
+        """Both auth modes can be set in env simultaneously; the runtime
+        chooses (PAT wins). This is what bootstrap emits today."""
+        cfg = IdpConfig.from_env(env={
+            "OTAMAN_DCR_SHIM": "1",
+            "OIDC_ISSUER": "http://i",
+            "OTAMAN_DCR_SHIM_PAT": "P",
+            "OTAMAN_DCR_SHIM_CLIENT_ID": "C",
+            "OTAMAN_DCR_SHIM_SECRET": "S",
+        })
+        assert cfg.mgmt_pat == "P"
+        assert cfg.machine_user_client_id == "C"
+        assert cfg.machine_user_client_secret == "S"
+
     def test_cache_seconds_minimum_is_1(self):
         """Zero or negative would mean 'never cache'; clamp to 1 so the
         cache always returns something coherent."""

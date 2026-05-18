@@ -392,6 +392,68 @@ def _mgmt_client_with_responses(responses):
     )
 
 
+class TestZitadelMgmtClientPATMode:
+    """PAT mode: token-endpoint never called; PAT used directly as Bearer.
+
+    Critical for deployments behind h2c-incapable TLS terminators
+    (Cloudflare Tunnel) where the client_credentials JWT path fails
+    on Zitadel's mgmt API.
+    """
+
+    def test_pat_skips_token_endpoint(self):
+        """No token endpoint call when pat is set."""
+        c = ZitadelMgmtClient(
+            base_url="http://mgmt.example",
+            token_url="http://mgmt.example/oauth/v2/token",
+            pat="MY-PAT-TOKEN", org_id="org-1",
+            opener=_FakeOpener({}),
+        )
+        tok = c._get_access_token()
+        assert tok == "MY-PAT-TOKEN"
+        # Zero requests made — PAT used directly without any HTTP call.
+        assert c._opener.requests == []
+
+    def test_pat_wins_over_client_credentials(self):
+        """When both pat and client_id+secret are set, pat takes precedence."""
+        c = ZitadelMgmtClient(
+            base_url="http://mgmt.example",
+            token_url="http://mgmt.example/oauth/v2/token",
+            client_id="svc", client_secret="sec",
+            pat="MY-PAT-TOKEN", org_id="org-1",
+            opener=_FakeOpener({}),
+        )
+        assert c._get_access_token() == "MY-PAT-TOKEN"
+        assert c._opener.requests == []
+
+    def test_pat_used_for_mgmt_calls(self):
+        c = ZitadelMgmtClient(
+            base_url="http://mgmt.example",
+            token_url="http://mgmt.example/oauth/v2/token",
+            pat="MY-PAT-TOKEN", org_id="org-1",
+            opener=_FakeOpener({
+                "http://mgmt.example/management/v1/projects/p/apps/_search": (
+                    json.dumps({"result": []}).encode(), 200,
+                ),
+            }),
+        )
+        c.find_app_by_name(project_id="p", name="dcr-shim:x")
+        # The mgmt request should carry the PAT as Bearer.
+        search_req = next(r for r in c._opener.requests if r[1].endswith("/apps/_search"))
+        h = {k.lower(): v for k, v in search_req[2].items()}
+        assert h["authorization"] == "Bearer MY-PAT-TOKEN"
+
+    def test_no_auth_configured_raises(self):
+        """Neither pat nor client_id+secret → raises on first use."""
+        c = ZitadelMgmtClient(
+            base_url="http://mgmt.example",
+            token_url="http://mgmt.example/oauth/v2/token",
+            org_id="org-1",
+            opener=_FakeOpener({}),
+        )
+        with pytest.raises(ZitadelMgmtError, match="no auth configured"):
+            c._get_access_token()
+
+
 class TestZitadelMgmtClientAuth:
     def test_get_access_token_calls_token_endpoint(self):
         opener_responses = {
