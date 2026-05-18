@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -510,8 +511,14 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # OTAMAN_BRIDGE_LOG_LEVEL overrides the default. Useful for operators
+    # tracing OAuth discovery / MCP request dispatch -- the per-request
+    # log_message in the daemon handler is at DEBUG, so DEBUG surfaces
+    # the HTTP wire activity.
+    _level_name = os.environ.get("OTAMAN_BRIDGE_LOG_LEVEL", "INFO").upper()
+    _level = getattr(logging, _level_name, logging.INFO)
     logging.basicConfig(
-        level=logging.INFO,
+        level=_level,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
     # Silence third-party loggers that leak secrets at INFO level.
