@@ -1283,6 +1283,33 @@ class BridgeDaemon:
             if still_pending is pending:
                 still_pending.handle = new_handle
 
+    def get_or_build_dcr_mgmt_client(self):
+        """Lazy-construct the Zitadel mgmt API client for the DCR shim.
+
+        Returns None when shim is enabled but credentials aren't fully
+        populated (route then returns 503 server_error). Tests can
+        monkey-patch self._dcr_mgmt_client to inject a stub.
+        """
+        if getattr(self, "_dcr_mgmt_client_cached", None) is not None:
+            return self._dcr_mgmt_client_cached
+        if self.idp_config is None or not self.idp_config.dcr_shim:
+            return None
+        cfg = self.idp_config
+        if not (cfg.machine_user_client_id and cfg.machine_user_client_secret and cfg.org_id):
+            return None
+        from otaman_bridge.dcr_shim import ZitadelMgmtClient
+        # token endpoint is the standard OIDC location on the mgmt host.
+        token_url = f"{cfg.management_base_url}/oauth/v2/token"
+        self._dcr_mgmt_client_cached = ZitadelMgmtClient(
+            base_url=cfg.management_base_url,
+            token_url=token_url,
+            client_id=cfg.machine_user_client_id,
+            client_secret=cfg.machine_user_client_secret,
+            org_id=cfg.org_id,
+            expected_host=cfg.expected_host,
+        )
+        return self._dcr_mgmt_client_cached
+
     def handle_status(self) -> tuple[int, dict[str, Any]]:
         with self._pending_lock:
             pending_count = len(self._pending)
@@ -1552,21 +1579,80 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 self._reply_json(status, resp)
                 return
             if route == "/oauth/register":
-                # DCR endpoint (RFC 7591). D3 wires the route + gate
-                # so the AS metadata overlay (which advertises this URL)
-                # points somewhere real. The actual create-client logic
-                # lands in D4 — for now this returns 501.
+                # DCR endpoint (RFC 7591). Validates the request, looks
+                # up an existing app by deterministic fingerprint name
+                # (reuse path), and creates a new Zitadel OIDC app when
+                # not found. Returns the resulting client_id in RFC 7591
+                # client_information_response shape.
                 if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
                     self._reply_error(404, "DCR shim not enabled")
                     return
-                self._drain_body()
-                self._reply_json(501, {
-                    "error": "not_implemented",
-                    "error_description": (
-                        "POST /oauth/register: shim active but "
-                        "create-client handler not yet wired (D4)."
-                    ),
-                })
+                # Trust gate (design §4.1):
+                #   open      — accept any caller
+                #   protected — require an authenticated user (real OIDC
+                #               bearer; loopback bearer's empty user_id is
+                #               not enough)
+                if daemon.idp_config.registration_trust == "protected":
+                    ctx = self._auth_identify()
+                    if ctx is None or not getattr(ctx, "user_id", ""):
+                        self._reply_unauthenticated(
+                            error="invalid_token",
+                            description="DCR shim requires authenticated user when trust=protected",
+                        )
+                        return
+                body = self._read_body()
+                if body is None:
+                    self._reply_json(400, {
+                        "error": "invalid_client_metadata",
+                        "error_description": "request body is not valid JSON",
+                    })
+                    return
+                from otaman_bridge.dcr_shim import (
+                    DCRError,
+                    ZitadelMgmtError,
+                    find_or_create_client,
+                    parse_register_request,
+                    to_rfc7591_response,
+                )
+                try:
+                    request = parse_register_request(body)
+                except DCRError as exc:
+                    self._reply_json(exc.http_status, {
+                        "error": exc.error,
+                        "error_description": exc.description,
+                    })
+                    return
+                # Lazy-build the mgmt client (idempotent — once per daemon).
+                mgmt_client = daemon.get_or_build_dcr_mgmt_client()
+                if mgmt_client is None:
+                    self._reply_json(503, {
+                        "error": "server_error",
+                        "error_description": (
+                            "DCR shim enabled but management API credentials "
+                            "(client_id/client_secret/org_id) are not configured."
+                        ),
+                    })
+                    return
+                try:
+                    client_id = find_or_create_client(
+                        mgmt_client=mgmt_client,
+                        project_id=daemon.idp_config.project_id,
+                        request=request,
+                        name_prefix=daemon.idp_config.managed_name_prefix,
+                    )
+                except ZitadelMgmtError as exc:
+                    _log.warning("DCR mgmt API failure: %s", exc)
+                    self._reply_json(502, {
+                        "error": "server_error",
+                        "error_description": f"upstream IdP rejected: {exc}",
+                    })
+                    return
+                import time as _t
+                self._reply_json(201, to_rfc7591_response(
+                    request=request,
+                    client_id=client_id,
+                    now_unix=int(_t.time()),
+                ))
                 return
             self._reply_error(404, f"unknown route: {self.path}")
 

@@ -246,7 +246,9 @@ class TestProtectedResourceRouteFlip:
 # ---- /oauth/register stub (D3-only) --------------------------------------
 
 
-class TestRegisterRouteStub:
+class TestRegisterRouteGate:
+    """Route-presence gate (real handler tests live in test_dcr_register.py)."""
+
     def test_returns_404_when_shim_disabled(self, daemon_without_shim):
         _, endpoint = daemon_without_shim
         code, _, body = _post(_daemon_url(endpoint) + "/oauth/register", body={
@@ -254,14 +256,3 @@ class TestRegisterRouteStub:
         })
         assert code == 404
         assert b"DCR shim" in body
-
-    def test_returns_501_when_shim_enabled_pending_d4(self, daemon_with_shim):
-        _, endpoint = daemon_with_shim
-        code, _, body = _post(_daemon_url(endpoint) + "/oauth/register", body={
-            "redirect_uris": ["http://localhost:54321/cb"],
-        })
-        assert code == 501
-        err = json.loads(body)
-        assert err["error"] == "not_implemented"
-        # Body mentions D4 so future ops know where the handler will land.
-        assert "D4" in err["error_description"]
