@@ -234,15 +234,31 @@ def overlay_metadata(
     *,
     registration_endpoint: str,
 ) -> dict[str, Any]:
-    """Return a copy of ``upstream_doc`` with shim-injected fields.
+    """Return a copy of ``upstream_doc`` with shim-injected + constrained fields.
 
     Fields injected:
         registration_endpoint
             URL the MCP client POSTs to for RFC 7591 DCR.
         registration_endpoint_auth_methods_supported
-            "none" — anonymous DCR (Zitadel doesn't have RFC 7592, so
+            ["none"] — anonymous DCR (Zitadel doesn't have RFC 7592, so
             registered clients can't be managed via the same auth path
             anyway; the shim's cleanup policy is server-side).
+
+    Fields constrained (overwritten):
+        token_endpoint_auth_methods_supported
+            Locked to ["none"] regardless of what the upstream IdP
+            advertises. The shim only ever creates PUBLIC clients
+            (OIDC_AUTH_METHOD_TYPE_NONE + PKCE), so advertising
+            other auth methods misleads the MCP client. Claude Code
+            v2.1.143 was observed (2026-05-18) picking client_secret_basic
+            from Zitadel's advertised list and then erroring at token
+            exchange because no client_secret existed. Constraining to
+            ["none"] forces the right method.
+        code_challenge_methods_supported
+            Locked to ["S256"] — public clients without secrets MUST use
+            PKCE, and S256 is the only RFC-7636-compliant method.
+            (Zitadel already advertises this; we constrain anyway as
+            belt-and-braces against future IdPs that might add "plain".)
 
     The original document is not mutated — callers can hold long-lived
     cache references safely.
@@ -250,6 +266,8 @@ def overlay_metadata(
     out = dict(upstream_doc)
     out["registration_endpoint"] = registration_endpoint
     out["registration_endpoint_auth_methods_supported"] = ["none"]
+    out["token_endpoint_auth_methods_supported"] = ["none"]
+    out["code_challenge_methods_supported"] = ["S256"]
     return out
 
 

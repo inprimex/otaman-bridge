@@ -262,6 +262,26 @@ class TestOverlayMetadata:
         out = overlay_metadata({}, registration_endpoint="http://x")
         assert out["registration_endpoint_auth_methods_supported"] == ["none"]
 
+    def test_constrains_token_endpoint_auth_methods_to_none(self):
+        """The shim only emits public PKCE clients. Even though Zitadel
+        advertises client_secret_basic and friends, we must constrain
+        the AS metadata to ["none"] so MCP clients don't try basic auth
+        and get rejected at token exchange (regression from D7 probe)."""
+        doc = {
+            "token_endpoint_auth_methods_supported": [
+                "none", "client_secret_basic", "client_secret_post", "private_key_jwt",
+            ],
+        }
+        out = overlay_metadata(doc, registration_endpoint="http://x")
+        assert out["token_endpoint_auth_methods_supported"] == ["none"]
+
+    def test_constrains_pkce_methods_to_s256(self):
+        """Public clients require PKCE; S256 is the only RFC-7636-compliant
+        method. Some IdPs also advertise 'plain' which is deprecated."""
+        doc = {"code_challenge_methods_supported": ["plain", "S256"]}
+        out = overlay_metadata(doc, registration_endpoint="http://x")
+        assert out["code_challenge_methods_supported"] == ["S256"]
+
     def test_preserves_upstream_fields(self):
         doc = {
             "issuer": "http://i",
@@ -274,7 +294,10 @@ class TestOverlayMetadata:
             assert out[k] == v
 
     def test_does_not_mutate_input(self):
-        doc = {"issuer": "http://i"}
+        doc = {
+            "issuer": "http://i",
+            "token_endpoint_auth_methods_supported": ["client_secret_basic"],
+        }
         original = dict(doc)
         _ = overlay_metadata(doc, registration_endpoint="http://r")
         assert doc == original
