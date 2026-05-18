@@ -146,6 +146,29 @@ class TestSummarizeTeamSessions:
         s = _summarize_team_sessions(sessions)
         assert s["by_repo"] == {"(unknown)": 2}
 
+    def test_accepts_runner_wire_user_field(self):
+        """Real runner returns sessions with field name 'user' (not 'user_id').
+        build_list_team_sessions_tool uses s.get('user'); our helper must too,
+        or exclude_user_id silently fails to filter (caught 2026-05-18 smoke test
+        where dev-a's own auth-service session appeared in the team list)."""
+        sessions = [
+            {"user": "373388691550240771", "repo": "auth-service"},
+            {"user": "373388695945871363", "repo": "web-app"},
+        ]
+        s = _summarize_team_sessions(
+            sessions, exclude_user_id="373388691550240771",
+        )
+        assert s == {"total": 1, "by_repo": {"web-app": 1}}
+
+    def test_user_id_field_still_works_for_tests(self):
+        """Test convenience: synthetic data using 'user_id' still works."""
+        sessions = [
+            {"user_id": "me", "repo": "x"},
+            {"user_id": "other", "repo": "y"},
+        ]
+        s = _summarize_team_sessions(sessions, exclude_user_id="me")
+        assert s == {"total": 1, "by_repo": {"y": 1}}
+
 
 # ---- _format_recent_activity --------------------------------------------
 

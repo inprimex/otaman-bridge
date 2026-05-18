@@ -548,12 +548,16 @@ def _summarize_team_sessions(sessions: list, *, exclude_user_id: str | None = No
     """Count sessions per repo. Excludes the caller's own sessions by default.
 
     sessions is the raw list from RunnerClient.list_sessions(); each entry
-    has .repo / .user_id. Output: {total, by_repo: {repo: count}}.
+    has .repo + a user identifier. The runner wire schema uses ``user``
+    (not ``user_id``) — matches how build_list_team_sessions_tool reads it.
+    Output: {total, by_repo: {repo: count}}.
     """
     by_repo: dict[str, int] = {}
     total = 0
     for s in sessions:
-        if exclude_user_id and s.get("user_id") == exclude_user_id:
+        # Accept both "user" (runner wire shape) and "user_id" (test convenience).
+        session_user = s.get("user") or s.get("user_id")
+        if exclude_user_id and session_user == exclude_user_id:
             continue
         repo = s.get("repo") or "(unknown)"
         by_repo[repo] = by_repo.get(repo, 0) + 1
