@@ -214,6 +214,20 @@ class TestBuildZitadelOidcPayload:
         assert p["authMethodType"] == "OIDC_AUTH_METHOD_TYPE_NONE"
         assert p["devMode"] is False
 
+    def test_emits_jwt_tokens_with_roles(self):
+        """The bridge's OIDC validator validates JWTs locally; opaque
+        bearer tokens (OIDC_TOKEN_TYPE_BEARER) would require introspection
+        calls back to Zitadel and break ctx.user_id extraction. Project
+        roles must land in the access token (accessTokenRoleAssertion=true)
+        so the bridge can use them for authorization decisions."""
+        p = build_zitadel_oidc_payload(
+            name="x", redirect_uris=["http://localhost:1/cb"],
+            grant_types=("authorization_code",),
+        )
+        assert p["accessTokenType"] == "OIDC_TOKEN_TYPE_JWT"
+        assert p["accessTokenRoleAssertion"] is True
+        assert p["idTokenRoleAssertion"] is True
+
     def test_redirect_uris_passed_through(self):
         uris = ["http://localhost:1/a", "http://localhost:2/b"]
         p = build_zitadel_oidc_payload(

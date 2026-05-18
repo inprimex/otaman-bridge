@@ -609,7 +609,11 @@ def build_zitadel_oidc_payload(
 
     Always uses OIDC_APP_TYPE_NATIVE (Claude Code = CLI client opening
     a localhost callback) + OIDC_AUTH_METHOD_TYPE_NONE (public client,
-    PKCE-required by Zitadel for this auth method).
+    PKCE-required by Zitadel for this auth method) + OIDC_TOKEN_TYPE_JWT
+    (the bridge's OIDC validator validates JWTs; without this, Zitadel
+    issues opaque bearer tokens that the validator can't introspect).
+    Also enables accessTokenRoleAssertion so the user's project roles
+    land in the JWT (the bridge uses them for ctx.roles).
     """
     zitadel_grants = []
     if "authorization_code" in grant_types:
@@ -625,8 +629,10 @@ def build_zitadel_oidc_payload(
         "authMethodType": "OIDC_AUTH_METHOD_TYPE_NONE",
         "version": "OIDC_VERSION_1_0",
         "devMode": False,
-        "accessTokenType": "OIDC_TOKEN_TYPE_BEARER",
-        "accessTokenRoleAssertion": False,
+        # JWT (not BEARER/opaque) — bridge's OIDC validator decodes the
+        # token locally rather than calling Zitadel's introspect endpoint.
+        "accessTokenType": "OIDC_TOKEN_TYPE_JWT",
+        "accessTokenRoleAssertion": True,
         "idTokenRoleAssertion": True,
         "idTokenUserinfoAssertion": False,
         "clockSkew": "0s",
