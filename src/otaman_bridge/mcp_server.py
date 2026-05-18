@@ -116,7 +116,28 @@ class MCPServer:
     # ---- method handlers ----------------------------------------------
 
     def _handle_initialize(self, params: dict) -> dict:
-        """Client tells us its protocol version; we tell ours + capabilities."""
+        """Client tells us its protocol version; we tell ours + capabilities.
+
+        ``tools.listChanged`` is False (and must stay that way) because
+        the bridge's /mcp is stateless HTTP POST/response only — there's
+        no server→client push channel for the
+        ``notifications/tools/list_changed`` JSON-RPC notification.
+        Claude Code v2.1.143 was observed (2026-05-18) using the stateless
+        variant of the MCP HTTP transport (Accept-Encoding: identity, no
+        text/event-stream subscription).
+
+        Advertising listChanged: true without a delivery channel would be
+        spec-non-compliant — the client would expect notifications that
+        we can't send. Practical consequence: when new tools are
+        registered, MCP clients see the updated set only after they
+        reconnect (e.g., Claude Code requires a session restart).
+
+        To make listChanged: true honest we'd need to add a streamable
+        HTTP variant (SSE endpoint + per-client subscription tracking +
+        broadcast on tool registration). Tracked as backlog. Bumping
+        this flag must land in the same PR as the SSE implementation,
+        not separately, to avoid the misleading-capability window.
+        """
         return {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {
