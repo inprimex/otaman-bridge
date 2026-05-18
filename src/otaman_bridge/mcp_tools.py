@@ -19,6 +19,7 @@ from otaman_bridge.runner_client import (
     RunnerAuthError,
     RunnerClient,
     RunnerUnreachableError,
+    SessionNotFoundError,
 )
 from otaman_bridge.web_session import SessionStore
 
@@ -48,7 +49,14 @@ IDENTITY_REQUIRED_TOOLS: frozenset[str] = frozenset({
     "mark_message_read",
     "request_review",
     "get_recent_activity",
+    "kill_session_for_user",
 })
+
+# Role name that the kill_session_for_user tool checks for in ctx.roles.
+# Aligns with the project's existing role hierarchy (otaman:admin /
+# otaman:approver / otaman:developer / otaman:viewer — see
+# zitadel-bootstrap.py).
+ADMIN_ROLE = "otaman:admin"
 
 
 def build_list_team_sessions_tool(
@@ -752,6 +760,117 @@ def build_get_recent_activity_tool(
                     "type": "boolean",
                     "default": True,
                     "description": "If false, skip the team-session snapshot.",
+                },
+            },
+        },
+        handler=handler,
+    )
+
+
+def build_kill_session_for_user_tool(
+    *,
+    runner_client,
+) -> Tool:
+    """Build the kill_session_for_user MCP tool (v0++ admin).
+
+    Forcibly terminates another user's otaman session via the runner's
+    POST /kill. Two-layer auth:
+
+    1. **Identity** (HTTP layer): added to IDENTITY_REQUIRED_TOOLS so
+       loopback-bearer callers get 401 + WWW-Authenticate. Real OIDC
+       bearer required.
+    2. **Role** (handler): caller's JWT must include
+       ``otaman:admin`` in the roles claim. Without it, returns
+       isError with a clear "needs admin role" message so the LLM can
+       relay an actionable explanation.
+
+    Inputs:
+    - session_id (required): UUID from list_team_sessions / runner.
+    - reason (optional): free-text for the bridge-side audit log; not
+      currently sent to the runner (runner has its own audit on kill).
+
+    The runner authenticates the bridge's loopback bearer and trusts
+    the bridge has authorized the caller. Future hardening: pass the
+    caller's identity to the runner so it can double-check the role.
+    """
+
+    def handler(args: dict, ctx: CallContext) -> dict:
+        # Defensive identity check (HTTP layer also gates, but a stale
+        # IDENTITY_REQUIRED_TOOLS set shouldn't lead to data loss).
+        if not ctx.user_id:
+            return _mcp_error(
+                "caller identity required (loopback bearer has no user identity)"
+            )
+        roles = getattr(ctx, "roles", ()) or ()
+        if ADMIN_ROLE not in roles:
+            return _mcp_error(
+                f"kill_session_for_user requires the {ADMIN_ROLE!r} role; "
+                f"caller has roles: {list(roles) or 'none'}"
+            )
+
+        session_id = args.get("session_id")
+        if not session_id or not isinstance(session_id, str):
+            return _mcp_error("missing or invalid session_id")
+
+        reason = args.get("reason")
+        if reason is not None and not isinstance(reason, str):
+            return _mcp_error("reason must be a string")
+
+        _log.info(
+            "kill_session_for_user: user=%s session=%s reason=%r",
+            ctx.user_id, session_id, reason or "(none given)",
+        )
+
+        try:
+            runner_client.kill_session(session_id)
+        except SessionNotFoundError as exc:
+            return _mcp_error(f"session not found: {session_id}")
+        except RunnerAuthError as exc:
+            return _mcp_error(f"runner auth failed: {exc}")
+        except RunnerUnreachableError as exc:
+            return _mcp_error(f"runner unreachable: {exc}")
+        except ValueError as exc:
+            return _mcp_error(f"invalid session_id: {exc}")
+
+        return {
+            "content": [{"type": "text", "text": (
+                f"Killed session {session_id}"
+                + (f" (reason: {reason})" if reason else "")
+                + "."
+            )}],
+            "structuredContent": {
+                "session_id": session_id,
+                "killed_by": ctx.user_id,
+                "reason": reason,
+            },
+        }
+
+    return Tool(
+        name="kill_session_for_user",
+        description=(
+            "Forcibly stop another user's otaman session via the runner. "
+            "Admin-only: caller's OIDC token must include the 'otaman:admin' "
+            "role. Get session_id from list_team_sessions or get_recent_activity. "
+            "Use sparingly — this terminates the target user's interactive "
+            "session immediately."
+        ),
+        input_schema={
+            "type": "object",
+            "required": ["session_id"],
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": (
+                        "UUID of the session to terminate "
+                        "(from list_team_sessions.session_id)."
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": (
+                        "Optional free-text reason for the bridge-side audit "
+                        "log (e.g., 'session stuck after deploy')."
+                    ),
                 },
             },
         },

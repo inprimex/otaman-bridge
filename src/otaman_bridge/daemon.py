@@ -507,6 +507,7 @@ class BridgeDaemon:
         from otaman_bridge.mcp_tools import (
             build_check_messages_tool,
             build_get_recent_activity_tool,
+            build_kill_session_for_user_tool,
             build_mark_message_read_tool,
             build_request_review_tool,
             build_send_message_to_user_tool,
@@ -523,6 +524,9 @@ class BridgeDaemon:
         ))
         self.mcp_server.register(build_get_recent_activity_tool(
             inbox=self.inbox, runner_client=self._runner_client,
+        ))
+        self.mcp_server.register(build_kill_session_for_user_tool(
+            runner_client=self._runner_client,
         ))
         _log.info("MCP: messaging tools registered (inbox=%s)", self.inbox.root)
 
