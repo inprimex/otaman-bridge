@@ -46,6 +46,8 @@ IDENTITY_REQUIRED_TOOLS: frozenset[str] = frozenset({
     "send_message_to_user",
     "check_messages",
     "mark_message_read",
+    "request_review",
+    "get_recent_activity",
 })
 
 
@@ -299,6 +301,457 @@ def build_send_message_to_user_tool(
                     "enum": ["chat", "review-request", "task-handoff", "approval-request"],
                     "default": "chat",
                     "description": "Message category. Default chat; richer types are for tools that wrap send_message_to_user.",
+                },
+            },
+        },
+        handler=handler,
+    )
+
+
+def _compose_review_body(
+    *,
+    summary: str,
+    repo: str | None,
+    branch: str | None,
+    pr_url: str | None,
+    checklist: list[str] | None,
+) -> str:
+    """Build the structured markdown body for a review request.
+
+    Fields are emitted only when provided — clean output even with
+    minimal inputs (summary alone). Kept as a pure function for tests.
+    """
+    parts: list[str] = [summary.strip()]
+    meta_lines: list[str] = []
+    if repo:
+        meta_lines.append(f"**Repo:** {repo}")
+    if branch:
+        meta_lines.append(f"**Branch:** `{branch}`")
+    if pr_url:
+        meta_lines.append(f"**PR / link:** {pr_url}")
+    if meta_lines:
+        parts.append("\n".join(meta_lines))
+    if checklist:
+        clean = [item.strip() for item in checklist if item and item.strip()]
+        if clean:
+            parts.append(
+                "**Please check:**\n" + "\n".join(f"- {item}" for item in clean)
+            )
+    return "\n\n".join(parts)
+
+
+def _compose_review_subject(
+    *,
+    summary: str,
+    repo: str | None,
+    branch: str | None,
+) -> str:
+    """Auto-generate a subject line from inputs.
+
+    Priority: repo+branch > repo > first 60 chars of summary.
+    """
+    if repo and branch:
+        return f"Review: {repo} / {branch}"
+    if repo:
+        return f"Review: {repo}"
+    head = summary.strip().splitlines()[0] if summary.strip() else "request"
+    if len(head) > 60:
+        head = head[:57].rstrip() + "..."
+    return f"Review: {head}"
+
+
+def build_request_review_tool(
+    *,
+    inbox: Inbox,
+    session_store: SessionStore,
+) -> Tool:
+    """Build the request_review MCP tool.
+
+    Higher-level wrapper around inbox.write_message that emits a
+    structured review request: takes (target_user_id, summary) plus
+    optional repo / branch / pr_url / urgency / checklist, composes a
+    well-formatted markdown body, auto-generates a subject, and writes
+    the message with type=review-request so the recipient's
+    check_messages output can distinguish it visually.
+
+    Same identity model as send_message_to_user — requires a real
+    OIDC bearer (ctx.user_id non-empty); loopback bearer is gated at
+    the HTTP layer via IDENTITY_REQUIRED_TOOLS.
+    """
+
+    def handler(args: dict, ctx: CallContext) -> dict:
+        target_user_id = args.get("target_user_id")
+        summary = args.get("summary")
+        if not target_user_id or not isinstance(target_user_id, str):
+            return _mcp_error("missing or invalid target_user_id")
+        if not summary or not isinstance(summary, str) or not summary.strip():
+            return _mcp_error("missing or empty summary")
+        if not ctx.user_id:
+            return _mcp_error(
+                "sender identity required but call is unauthenticated"
+                " (loopback-bearer calls have no user identity)"
+            )
+
+        repo = args.get("repo")
+        branch = args.get("branch")
+        pr_url = args.get("pr_url")
+        urgency = args.get("urgency", "normal")
+        if urgency not in ("low", "normal", "high"):
+            return _mcp_error(
+                f"invalid urgency {urgency!r}: must be low / normal / high"
+            )
+        checklist = args.get("checklist")
+        if checklist is not None and not isinstance(checklist, list):
+            return _mcp_error("checklist must be an array of strings")
+        if isinstance(checklist, list):
+            for item in checklist:
+                if not isinstance(item, str):
+                    return _mcp_error("checklist must be an array of strings")
+
+        for field_name, value in (
+            ("repo", repo), ("branch", branch), ("pr_url", pr_url),
+        ):
+            if value is not None and not isinstance(value, str):
+                return _mcp_error(f"{field_name} must be a string")
+
+        body = _compose_review_body(
+            summary=summary, repo=repo, branch=branch, pr_url=pr_url,
+            checklist=checklist,
+        )
+        subject = args.get("subject") or _compose_review_subject(
+            summary=summary, repo=repo, branch=branch,
+        )
+
+        try:
+            sent = inbox.write_message(
+                from_user=ctx.user_id,
+                from_email=ctx.user_email,
+                to_user=target_user_id,
+                subject=subject,
+                body=body,
+                in_reply_to=None,
+                priority=urgency,
+                msg_type="review-request",
+            )
+        except ValueError as exc:
+            return _mcp_error(f"invalid message: {exc}")
+
+        return {
+            "content": [{"type": "text", "text": (
+                f"Review request sent to {target_user_id} "
+                f"(subject: {sent.subject!r}, id: {sent.id})."
+            )}],
+            "structuredContent": {
+                "message_id": sent.id,
+                "to_user": sent.to_user,
+                "subject": sent.subject,
+                "sent_at": sent.sent_at,
+                "urgency": urgency,
+                "type": "review-request",
+            },
+        }
+
+    return Tool(
+        name="request_review",
+        description=(
+            "Ask a teammate to review your code. Composes a structured "
+            "review-request message with repo / branch / PR / checklist "
+            "context. Use list_team_sessions first to find the reviewer's "
+            "user_id. The recipient sees it via check_messages tagged as "
+            "type=review-request."
+        ),
+        input_schema={
+            "type": "object",
+            "required": ["target_user_id", "summary"],
+            "properties": {
+                "target_user_id": {
+                    "type": "string",
+                    "description": "Zitadel sub of the reviewer (from list_team_sessions)",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "What you want reviewed and why (markdown OK)",
+                },
+                "repo": {
+                    "type": "string",
+                    "description": "Optional: repo name (e.g. 'auth-service')",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Optional: branch name (e.g. 'wip/jwt-rotation')",
+                },
+                "pr_url": {
+                    "type": "string",
+                    "description": "Optional: PR / MR URL or other link to the code",
+                },
+                "urgency": {
+                    "type": "string",
+                    "enum": ["low", "normal", "high"],
+                    "default": "normal",
+                    "description": "Maps to message priority.",
+                },
+                "checklist": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional: specific items the reviewer should check.",
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Optional: override the auto-generated subject line.",
+                },
+            },
+        },
+        handler=handler,
+    )
+
+
+def _iso_since_hours_ago(hours: int, *, now=None) -> str:
+    """Compute the RFC-3339 'sent_at must be after this' cutoff string.
+
+    Used by get_recent_activity to compute the window. Output matches
+    Zitadel / inbox sent_at format (UTC, Z suffix, second precision).
+    """
+    import datetime
+    cur = now if now is not None else datetime.datetime.now(tz=datetime.timezone.utc)
+    if cur.tzinfo is None:
+        cur = cur.replace(tzinfo=datetime.timezone.utc)
+    delta = datetime.timedelta(hours=hours)
+    out = cur - delta
+    return out.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _summarize_messages(messages: list) -> dict:
+    """Compute aggregate stats over a list of StoredMessage-like objects.
+
+    Each message must expose .type / .priority / .read_at attributes.
+    Returns {total, unread, by_type, by_priority}.
+    """
+    by_type: dict[str, int] = {}
+    by_priority: dict[str, int] = {}
+    unread = 0
+    for m in messages:
+        t = getattr(m, "type", "chat") or "chat"
+        p = getattr(m, "priority", "normal") or "normal"
+        by_type[t] = by_type.get(t, 0) + 1
+        by_priority[p] = by_priority.get(p, 0) + 1
+        if getattr(m, "read_at", None) is None:
+            unread += 1
+    return {
+        "total": len(messages),
+        "unread": unread,
+        "by_type": by_type,
+        "by_priority": by_priority,
+    }
+
+
+def _summarize_team_sessions(sessions: list, *, exclude_user_id: str | None = None) -> dict:
+    """Count sessions per repo. Excludes the caller's own sessions by default.
+
+    sessions is the raw list from RunnerClient.list_sessions(); each entry
+    has .repo + a user identifier. The runner wire schema uses ``user``
+    (not ``user_id``) — matches how build_list_team_sessions_tool reads it.
+    Output: {total, by_repo: {repo: count}}.
+    """
+    by_repo: dict[str, int] = {}
+    total = 0
+    for s in sessions:
+        # Accept both "user" (runner wire shape) and "user_id" (test convenience).
+        session_user = s.get("user") or s.get("user_id")
+        if exclude_user_id and session_user == exclude_user_id:
+            continue
+        repo = s.get("repo") or "(unknown)"
+        by_repo[repo] = by_repo.get(repo, 0) + 1
+        total += 1
+    return {"total": total, "by_repo": by_repo}
+
+
+def _format_recent_activity(
+    *,
+    window_hours: int,
+    inbox_summary: dict,
+    inbox_messages: list,
+    team_summary: dict | None,
+) -> str:
+    """Build the human-readable text for the MCP tool's content[0].text field.
+
+    Kept separate from the structured response so the LLM can be terse
+    when it summarizes; we don't dictate the prose, just provide a
+    pre-formatted starting point.
+    """
+    lines: list[str] = [f"Recent activity (last {window_hours}h):", ""]
+
+    inbox_line = f"Inbox: {inbox_summary['total']} message(s)"
+    if inbox_summary['total']:
+        inbox_line += f" ({inbox_summary['unread']} unread)"
+    lines.append(inbox_line)
+
+    if inbox_summary['total']:
+        by_type = inbox_summary['by_type']
+        if by_type:
+            lines.append(
+                "  types: "
+                + ", ".join(f"{n} {t}" for t, n in sorted(by_type.items()))
+            )
+        for m in inbox_messages[:10]:
+            read_marker = "read" if getattr(m, "read_at", None) else "unread"
+            mtype = getattr(m, "type", "chat") or "chat"
+            mprio = getattr(m, "priority", "normal") or "normal"
+            subject = getattr(m, "subject", "") or "(no subject)"
+            sent = getattr(m, "sent_at", "")
+            sender = getattr(m, "from_user", "(unknown)")
+            lines.append(
+                f"  - [{sent}] {sender} — {subject} "
+                f"[{mprio}, {mtype}, {read_marker}]"
+            )
+        if len(inbox_messages) > 10:
+            lines.append(f"  (... {len(inbox_messages) - 10} more)")
+
+    if team_summary is not None:
+        lines.append("")
+        lines.append(f"Team: {team_summary['total']} active session(s) from others")
+        for repo, n in sorted(team_summary['by_repo'].items()):
+            lines.append(f"  - {repo}: {n}")
+
+    return "\n".join(lines)
+
+
+def build_get_recent_activity_tool(
+    *,
+    inbox: Inbox,
+    runner_client,
+) -> Tool:
+    """Build the get_recent_activity MCP tool.
+
+    Read-only aggregation: caller's recent inbox + team session snapshot.
+    Window is hours-back from now (default 24, max 168 = 1 week). Returns
+    both a structuredContent block (for programmatic use) and a
+    pre-formatted text summary (for the LLM to relay verbatim or condense).
+
+    Privacy: only ever reads the caller's own inbox (ctx.user_id). Team
+    section returns counts per repo, no message content from others.
+    The runner snapshot is the same data list_team_sessions returns,
+    just aggregated by repo.
+
+    Identity-required (caller's inbox is keyed by ctx.user_id); loopback
+    bearer rejected at HTTP layer via IDENTITY_REQUIRED_TOOLS.
+    """
+
+    def handler(args: dict, ctx: CallContext) -> dict:
+        if not ctx.user_id:
+            return _mcp_error(
+                "caller identity required (loopback bearer has no user identity)"
+            )
+
+        hours = args.get("hours", 24)
+        if not isinstance(hours, int) or isinstance(hours, bool):
+            return _mcp_error("hours must be a positive integer")
+        if hours < 1 or hours > 168:
+            return _mcp_error("hours must be 1..168 (max 1 week)")
+
+        limit = args.get("limit", 50)
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            return _mcp_error("limit must be a positive integer")
+        if limit < 1 or limit > 200:
+            return _mcp_error("limit must be 1..200")
+
+        include_team = bool(args.get("include_team_sessions", True))
+
+        since = _iso_since_hours_ago(hours)
+        try:
+            messages = inbox.list_messages(
+                ctx.user_id,
+                unread_only=False,
+                since=since,
+                limit=limit,
+            )
+        except ValueError as exc:
+            return _mcp_error(f"inbox query failed: {exc}")
+
+        inbox_summary = _summarize_messages(messages)
+
+        team_summary: dict | None = None
+        team_error: str | None = None
+        if include_team:
+            try:
+                sessions = runner_client.list_sessions() or []
+                team_summary = _summarize_team_sessions(
+                    sessions, exclude_user_id=ctx.user_id,
+                )
+            except RunnerUnreachableError as exc:
+                team_error = f"runner unreachable: {exc}"
+            except RunnerAuthError as exc:
+                team_error = f"runner auth failed: {exc}"
+            except Exception as exc:  # noqa: BLE001
+                team_error = f"runner error: {exc}"
+
+        text = _format_recent_activity(
+            window_hours=hours,
+            inbox_summary=inbox_summary,
+            inbox_messages=messages,
+            team_summary=team_summary,
+        )
+        if team_error:
+            text += f"\n\nTeam snapshot unavailable: {team_error}"
+
+        structured: dict = {
+            "window_hours": hours,
+            "since": since,
+            "user_id": ctx.user_id,
+            "inbox": {
+                **inbox_summary,
+                "messages": [
+                    {
+                        "id": getattr(m, "id", ""),
+                        "from_user": getattr(m, "from_user", ""),
+                        "subject": getattr(m, "subject", ""),
+                        "type": getattr(m, "type", "chat") or "chat",
+                        "priority": getattr(m, "priority", "normal") or "normal",
+                        "sent_at": getattr(m, "sent_at", ""),
+                        "read": getattr(m, "read_at", None) is not None,
+                    }
+                    for m in messages
+                ],
+            },
+        }
+        if team_summary is not None:
+            structured["team"] = team_summary
+        if team_error:
+            structured["team_error"] = team_error
+
+        return {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": structured,
+        }
+
+    return Tool(
+        name="get_recent_activity",
+        description=(
+            "Aggregate the caller's recent team activity: their inbox "
+            "messages within a window (default last 24h) plus a snapshot "
+            "of teammates' active sessions by repo. Read-only. Useful "
+            "for stand-ups and 'what's the team up to right now'."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 168,
+                    "default": 24,
+                    "description": "Look-back window in hours (1..168, default 24).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "default": 50,
+                    "description": "Max number of inbox messages to return.",
+                },
+                "include_team_sessions": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If false, skip the team-session snapshot.",
                 },
             },
         },
