@@ -33,6 +33,14 @@ class RunnerAuthError(RuntimeError):
     """Runner returned 401 -- bearer token in endpoint file is stale."""
 
 
+class SessionNotFoundError(RuntimeError):
+    """Runner returned 404 from /kill -- session_id not in the active registry.
+
+    Distinguished from RunnerUnreachableError because the caller can tell
+    the user "no such session" instead of a generic "runner failed".
+    """
+
+
 class RunnerClient:
     """Read-only client for the runner's loopback HTTP API."""
 
@@ -120,9 +128,58 @@ class RunnerClient:
         return sessions
 
 
+    def kill_session(self, session_id: str) -> None:
+        """Call runner POST /kill with the given session_id.
+
+        Returns silently on 204 (session stopped). Raises:
+        - SessionNotFoundError on 404 (no such session in the registry)
+        - RunnerAuthError on 401 (stale bearer)
+        - RunnerUnreachableError on network/HTTP failures
+
+        Note: the runner authenticates the bridge's loopback bearer here
+        and trusts that the bridge has already authorized the caller.
+        The bridge's MCP tool (build_kill_session_for_user_tool) enforces
+        the otaman:admin role check before calling this method.
+        """
+        if not session_id or not isinstance(session_id, str):
+            raise ValueError("session_id must be a non-empty string")
+        host, port, token = self._read_endpoint()
+        url = f"http://{host}:{port}/kill"
+        body = json.dumps({"session_id": session_id}).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with self._opener.open(req, timeout=self.timeout) as resp:
+                _ = resp.read()  # drain
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                raise RunnerAuthError(
+                    "runner rejected loopback bearer (HTTP 401) -- token may be stale"
+                ) from exc
+            if exc.code == 404:
+                raise SessionNotFoundError(
+                    f"session not found: {session_id}"
+                ) from exc
+            raise RunnerUnreachableError(
+                f"runner returned HTTP {exc.code} on {url}"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise RunnerUnreachableError(
+                f"runner unreachable at {url}: {exc}"
+            ) from exc
+
+
 __all__ = [
     "DEFAULT_RUNNER_ENDPOINT",
     "RunnerUnreachableError",
     "RunnerAuthError",
+    "SessionNotFoundError",
     "RunnerClient",
 ]
