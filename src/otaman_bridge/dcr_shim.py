@@ -86,6 +86,12 @@ class IdpConfig:
     # Cache TTL for the upstream AS metadata fetch (seconds).
     metadata_cache_seconds: int = 300
 
+    # Cleanup sweep: delete shim-managed apps older than ``cleanup_ttl_seconds``.
+    # ``cleanup_sweep_interval_seconds`` = 0 disables the background sweep
+    # (manual cleanup via the `dcr-cleanup` CLI command still works).
+    cleanup_sweep_interval_seconds: int = 3600     # 1h default
+    cleanup_ttl_seconds: int = 30 * 24 * 3600      # 30d default
+
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> IdpConfig | None:
         """Build from environment, or return None when shim is disabled.
@@ -128,6 +134,24 @@ class IdpConfig:
         host_default = ""
         if mgmt.startswith(("http://", "https://")):
             host_default = mgmt.split("://", 1)[1].split("/", 1)[0]
+        # Cleanup config (D6). Durations accept Ns / Nm / Nh / Nd, default
+        # to compiled-in values. 0 / "0s" / "disabled" disables the
+        # background sweep entirely (manual CLI still works).
+        def _parse_duration(s: str, default: int) -> int:
+            s = s.strip().lower()
+            if s in ("", "disabled"):
+                return default
+            try:
+                return parse_duration_seconds(s)
+            except ValueError:
+                _log.warning("invalid duration %r, using default %ds", s, default)
+                return default
+        sweep_interval = _parse_duration(
+            e.get("OTAMAN_DCR_SHIM_SWEEP_INTERVAL", ""), 3600,
+        )
+        cleanup_ttl = _parse_duration(
+            e.get("OTAMAN_DCR_SHIM_TTL", ""), 30 * 24 * 3600,
+        )
         return cls(
             type=e.get("OTAMAN_DCR_SHIM_TYPE", "zitadel").strip().lower() or "zitadel",
             dcr_shim=True,
@@ -144,6 +168,8 @@ class IdpConfig:
             ),
             registration_trust=trust,
             metadata_cache_seconds=max(1, cache_secs),
+            cleanup_sweep_interval_seconds=sweep_interval,
+            cleanup_ttl_seconds=cleanup_ttl,
         )
 
 
@@ -594,6 +620,41 @@ class ZitadelMgmtClient:
             body=payload,
         )
 
+    def list_apps_with_prefix(self, *, project_id: str, name_prefix: str) -> list[dict]:
+        """Return all apps whose name STARTS WITH the given prefix.
+
+        Used by the cleanup sweep to find shim-managed apps without
+        touching bootstrap-created apps (otaman-runner / -bridge / -web /
+        -cli / -bridge-web have static names without the prefix).
+        """
+        r = self._mgmt_request(
+            "POST",
+            f"/management/v1/projects/{project_id}/apps/_search",
+            body={
+                "queries": [
+                    {"nameQuery": {
+                        "name": name_prefix,
+                        "method": "TEXT_QUERY_METHOD_STARTS_WITH",
+                    }}
+                ],
+            },
+        )
+        return r.get("result") or []
+
+    def delete_app(self, *, project_id: str, app_id: str) -> None:
+        """Delete an OIDC app. Idempotent at the API level (returns 404 if gone)."""
+        try:
+            self._mgmt_request(
+                "DELETE",
+                f"/management/v1/projects/{project_id}/apps/{app_id}",
+            )
+        except ZitadelMgmtError as exc:
+            # Treat 404 as "already gone" — sweep can race with manual deletes.
+            if exc.status == 404:
+                _log.debug("delete_app %s: already gone (404)", app_id)
+                return
+            raise
+
 
 # ---------------------------------------------------------------------------
 # DCR orchestration (find-or-create) + response shaping
@@ -723,6 +784,165 @@ def to_rfc7591_response(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Cleanup sweep (D6)
+
+
+def parse_duration_seconds(s: str) -> int:
+    """Parse a duration string like '30d' / '1h' / '15m' / '90s' to seconds.
+
+    Suffix-driven: ``s`` (seconds), ``m`` (minutes), ``h`` (hours),
+    ``d`` (days). Bare integers are treated as seconds for compat.
+    Negative or zero values are returned as-is (caller decides if 0
+    means "disabled"). Raises ValueError on malformed input.
+    """
+    s = s.strip()
+    if not s:
+        raise ValueError("empty duration")
+    suffix = s[-1].lower()
+    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if suffix in multipliers:
+        try:
+            n = int(s[:-1])
+        except ValueError as exc:
+            raise ValueError(f"invalid duration number in {s!r}") from exc
+        return n * multipliers[suffix]
+    # Bare integer fallback.
+    try:
+        return int(s)
+    except ValueError as exc:
+        raise ValueError(f"unknown duration suffix in {s!r}; expected s/m/h/d") from exc
+
+
+def is_managed_app(app: dict, name_prefix: str) -> bool:
+    """True iff app's name starts with the shim's managed-name prefix.
+
+    Belt-and-braces sanity check before any delete — bootstrap apps
+    (otaman-runner / -bridge / -web / -cli / -bridge-web) have static
+    names without the prefix and must NEVER be swept.
+    """
+    if not name_prefix:
+        return False
+    return str(app.get("name", "")).startswith(name_prefix)
+
+
+def app_age_seconds(app: dict, *, now: float | None = None) -> int | None:
+    """Compute the age (in seconds) of a Zitadel app from its creationDate.
+
+    Returns None when the app record is missing details / creationDate
+    (caller should skip rather than assume stale or fresh).
+
+    Zitadel exposes ``details.creationDate`` (RFC 3339, UTC); no
+    ``lastUsedAt`` field is available on app records (verified
+    2026-05-18 against v2.64.1). So we TTL on creation age — fingerprint
+    reuse covers "same client returns" without needing extension-on-use.
+    """
+    import datetime
+    iso = ((app.get("details") or {}).get("creationDate") or "").strip()
+    if not iso:
+        return None
+    try:
+        # Zitadel returns "Z"; datetime.fromisoformat needs "+00:00" in 3.10.
+        if iso.endswith("Z"):
+            iso_norm = iso[:-1] + "+00:00"
+        else:
+            iso_norm = iso
+        dt = datetime.datetime.fromisoformat(iso_norm)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    now_dt = (
+        datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)
+        if now is not None
+        else datetime.datetime.now(tz=datetime.timezone.utc)
+    )
+    return int((now_dt - dt).total_seconds())
+
+
+@dataclass(frozen=True)
+class SweepReport:
+    """Outcome of a sweep run — what was found, what was deleted, what failed."""
+    found: int = 0          # total shim-managed apps inspected
+    eligible: int = 0       # passed age + name-prefix checks
+    deleted: int = 0        # actually removed (or would-have if dry_run)
+    failed: int = 0         # delete attempted but raised
+    deleted_ids: tuple[str, ...] = ()
+    failed_ids: tuple[str, ...] = ()
+
+
+def sweep_orphans(
+    *,
+    mgmt_client: ZitadelMgmtClient,
+    project_id: str,
+    name_prefix: str,
+    ttl_seconds: int,
+    dry_run: bool = False,
+    now: float | None = None,
+) -> SweepReport:
+    """Delete shim-managed apps older than ``ttl_seconds``.
+
+    Two safety belts:
+    1. Only operates on apps whose name starts with ``name_prefix`` —
+       bootstrap-created apps (static names) are never touched.
+    2. Skips apps with missing/malformed creationDate (logs warn) rather
+       than treating them as stale.
+
+    ``dry_run=True`` reports what would be deleted without actually
+    calling DELETE. Useful for the CLI's --dry-run flag.
+
+    Failures on individual deletes don't abort the sweep — the report
+    surfaces failed_ids for follow-up.
+    """
+    if ttl_seconds <= 0:
+        _log.debug("sweep skipped: ttl_seconds=%d not positive", ttl_seconds)
+        return SweepReport()
+    apps = mgmt_client.list_apps_with_prefix(
+        project_id=project_id, name_prefix=name_prefix,
+    )
+    found = 0
+    eligible: list[tuple[str, str]] = []  # (app_id, name)
+    for app in apps:
+        if not is_managed_app(app, name_prefix):
+            # Belt-and-braces — list_apps_with_prefix should already filter.
+            continue
+        found += 1
+        age = app_age_seconds(app, now=now)
+        if age is None:
+            _log.warning(
+                "sweep skipping app %s — no parsable creationDate",
+                app.get("id"),
+            )
+            continue
+        if age <= ttl_seconds:
+            continue
+        eligible.append((app.get("id", ""), app.get("name", "")))
+    deleted: list[str] = []
+    failed: list[str] = []
+    for app_id, name in eligible:
+        if not app_id:
+            continue
+        if dry_run:
+            deleted.append(app_id)
+            _log.info("dry-run: would delete %s (%s)", app_id, name)
+            continue
+        try:
+            mgmt_client.delete_app(project_id=project_id, app_id=app_id)
+            deleted.append(app_id)
+            _log.info("swept stale shim app %s (%s)", app_id, name)
+        except ZitadelMgmtError as exc:
+            failed.append(app_id)
+            _log.warning("sweep failed to delete %s (%s): %s", app_id, name, exc)
+    return SweepReport(
+        found=found,
+        eligible=len(eligible),
+        deleted=len(deleted),
+        failed=len(failed),
+        deleted_ids=tuple(deleted),
+        failed_ids=tuple(failed),
+    )
+
+
 __all__ = [
     "ALLOWED_GRANT_TYPES",
     "ALLOWED_RESPONSE_TYPES",
@@ -734,14 +954,19 @@ __all__ = [
     "MetadataCache",
     "MetadataFetchError",
     "RegisterRequest",
+    "SweepReport",
     "ZitadelMgmtClient",
     "ZitadelMgmtError",
+    "app_age_seconds",
     "build_zitadel_oidc_payload",
     "compute_fingerprint",
     "derive_registration_endpoint",
     "fetch_upstream_metadata",
     "find_or_create_client",
+    "is_managed_app",
     "overlay_metadata",
+    "parse_duration_seconds",
     "parse_register_request",
+    "sweep_orphans",
     "to_rfc7591_response",
 ]

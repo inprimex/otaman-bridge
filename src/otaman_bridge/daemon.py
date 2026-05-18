@@ -651,6 +651,18 @@ class BridgeDaemon:
                 self.idle_auto_afk_minutes,
             )
 
+        # DCR shim cleanup sweep (D6). Background task that periodically
+        # prunes shim-managed apps older than ``cleanup_ttl_seconds``. Off
+        # when shim disabled or sweep_interval=0 (manual cleanup via the
+        # `maestro bridge dcr-cleanup` CLI command still works).
+        self._dcr_sweep_future = None
+        if (
+            self.idp_config is not None
+            and self.idp_config.dcr_shim
+            and self.idp_config.cleanup_sweep_interval_seconds > 0
+        ):
+            self._dcr_sweep_future = self._async.submit(self._dcr_cleanup_sweep_loop())
+
         _log.info(
             "bridge daemon listening on %s:%d (account=%s, transport=%s)",
             self.host, assigned_port, self.account, self.transport.name,
@@ -1282,6 +1294,50 @@ class BridgeDaemon:
             still_pending = self._pending.get(request_id)
             if still_pending is pending:
                 still_pending.handle = new_handle
+
+    async def _dcr_cleanup_sweep_loop(self):
+        """Background task that periodically prunes stale shim-managed apps.
+
+        Run when both ``idp_config.dcr_shim`` and ``cleanup_sweep_interval_seconds > 0``.
+        Each iteration sleeps for the interval first, then sweeps; this lets
+        the daemon finish startup before the first sweep request to Zitadel.
+        Failures are logged but never abort the loop.
+        """
+        from otaman_bridge.dcr_shim import sweep_orphans
+        cfg = self.idp_config
+        interval = cfg.cleanup_sweep_interval_seconds
+        _log.info(
+            "DCR shim cleanup loop started "
+            "(interval=%ds ttl=%ds prefix=%s project=%s)",
+            interval, cfg.cleanup_ttl_seconds, cfg.managed_name_prefix, cfg.project_id,
+        )
+        while True:
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                _log.debug("DCR cleanup loop cancelled — daemon shutting down")
+                return
+            mgmt_client = self.get_or_build_dcr_mgmt_client()
+            if mgmt_client is None:
+                _log.debug("DCR cleanup skipped — mgmt client unavailable")
+                continue
+            try:
+                report = await asyncio.to_thread(
+                    sweep_orphans,
+                    mgmt_client=mgmt_client,
+                    project_id=cfg.project_id,
+                    name_prefix=cfg.managed_name_prefix,
+                    ttl_seconds=cfg.cleanup_ttl_seconds,
+                )
+                if report.deleted or report.failed:
+                    _log.info(
+                        "DCR sweep: found=%d eligible=%d deleted=%d failed=%d",
+                        report.found, report.eligible, report.deleted, report.failed,
+                    )
+                else:
+                    _log.debug("DCR sweep: nothing to delete (found=%d)", report.found)
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("DCR sweep iteration failed: %s", exc)
 
     def get_or_build_dcr_mgmt_client(self):
         """Lazy-construct the Zitadel mgmt API client for the DCR shim.
