@@ -46,6 +46,7 @@ IDENTITY_REQUIRED_TOOLS: frozenset[str] = frozenset({
     "send_message_to_user",
     "check_messages",
     "mark_message_read",
+    "request_review",
 })
 
 
@@ -299,6 +300,203 @@ def build_send_message_to_user_tool(
                     "enum": ["chat", "review-request", "task-handoff", "approval-request"],
                     "default": "chat",
                     "description": "Message category. Default chat; richer types are for tools that wrap send_message_to_user.",
+                },
+            },
+        },
+        handler=handler,
+    )
+
+
+def _compose_review_body(
+    *,
+    summary: str,
+    repo: str | None,
+    branch: str | None,
+    pr_url: str | None,
+    checklist: list[str] | None,
+) -> str:
+    """Build the structured markdown body for a review request.
+
+    Fields are emitted only when provided — clean output even with
+    minimal inputs (summary alone). Kept as a pure function for tests.
+    """
+    parts: list[str] = [summary.strip()]
+    meta_lines: list[str] = []
+    if repo:
+        meta_lines.append(f"**Repo:** {repo}")
+    if branch:
+        meta_lines.append(f"**Branch:** `{branch}`")
+    if pr_url:
+        meta_lines.append(f"**PR / link:** {pr_url}")
+    if meta_lines:
+        parts.append("\n".join(meta_lines))
+    if checklist:
+        clean = [item.strip() for item in checklist if item and item.strip()]
+        if clean:
+            parts.append(
+                "**Please check:**\n" + "\n".join(f"- {item}" for item in clean)
+            )
+    return "\n\n".join(parts)
+
+
+def _compose_review_subject(
+    *,
+    summary: str,
+    repo: str | None,
+    branch: str | None,
+) -> str:
+    """Auto-generate a subject line from inputs.
+
+    Priority: repo+branch > repo > first 60 chars of summary.
+    """
+    if repo and branch:
+        return f"Review: {repo} / {branch}"
+    if repo:
+        return f"Review: {repo}"
+    head = summary.strip().splitlines()[0] if summary.strip() else "request"
+    if len(head) > 60:
+        head = head[:57].rstrip() + "..."
+    return f"Review: {head}"
+
+
+def build_request_review_tool(
+    *,
+    inbox: Inbox,
+    session_store: SessionStore,
+) -> Tool:
+    """Build the request_review MCP tool.
+
+    Higher-level wrapper around inbox.write_message that emits a
+    structured review request: takes (target_user_id, summary) plus
+    optional repo / branch / pr_url / urgency / checklist, composes a
+    well-formatted markdown body, auto-generates a subject, and writes
+    the message with type=review-request so the recipient's
+    check_messages output can distinguish it visually.
+
+    Same identity model as send_message_to_user — requires a real
+    OIDC bearer (ctx.user_id non-empty); loopback bearer is gated at
+    the HTTP layer via IDENTITY_REQUIRED_TOOLS.
+    """
+
+    def handler(args: dict, ctx: CallContext) -> dict:
+        target_user_id = args.get("target_user_id")
+        summary = args.get("summary")
+        if not target_user_id or not isinstance(target_user_id, str):
+            return _mcp_error("missing or invalid target_user_id")
+        if not summary or not isinstance(summary, str) or not summary.strip():
+            return _mcp_error("missing or empty summary")
+        if not ctx.user_id:
+            return _mcp_error(
+                "sender identity required but call is unauthenticated"
+                " (loopback-bearer calls have no user identity)"
+            )
+
+        repo = args.get("repo")
+        branch = args.get("branch")
+        pr_url = args.get("pr_url")
+        urgency = args.get("urgency", "normal")
+        if urgency not in ("low", "normal", "high"):
+            return _mcp_error(
+                f"invalid urgency {urgency!r}: must be low / normal / high"
+            )
+        checklist = args.get("checklist")
+        if checklist is not None and not isinstance(checklist, list):
+            return _mcp_error("checklist must be an array of strings")
+        if isinstance(checklist, list):
+            for item in checklist:
+                if not isinstance(item, str):
+                    return _mcp_error("checklist must be an array of strings")
+
+        for field_name, value in (
+            ("repo", repo), ("branch", branch), ("pr_url", pr_url),
+        ):
+            if value is not None and not isinstance(value, str):
+                return _mcp_error(f"{field_name} must be a string")
+
+        body = _compose_review_body(
+            summary=summary, repo=repo, branch=branch, pr_url=pr_url,
+            checklist=checklist,
+        )
+        subject = args.get("subject") or _compose_review_subject(
+            summary=summary, repo=repo, branch=branch,
+        )
+
+        try:
+            sent = inbox.write_message(
+                from_user=ctx.user_id,
+                from_email=ctx.user_email,
+                to_user=target_user_id,
+                subject=subject,
+                body=body,
+                in_reply_to=None,
+                priority=urgency,
+                msg_type="review-request",
+            )
+        except ValueError as exc:
+            return _mcp_error(f"invalid message: {exc}")
+
+        return {
+            "content": [{"type": "text", "text": (
+                f"Review request sent to {target_user_id} "
+                f"(subject: {sent.subject!r}, id: {sent.id})."
+            )}],
+            "structuredContent": {
+                "message_id": sent.id,
+                "to_user": sent.to_user,
+                "subject": sent.subject,
+                "sent_at": sent.sent_at,
+                "urgency": urgency,
+                "type": "review-request",
+            },
+        }
+
+    return Tool(
+        name="request_review",
+        description=(
+            "Ask a teammate to review your code. Composes a structured "
+            "review-request message with repo / branch / PR / checklist "
+            "context. Use list_team_sessions first to find the reviewer's "
+            "user_id. The recipient sees it via check_messages tagged as "
+            "type=review-request."
+        ),
+        input_schema={
+            "type": "object",
+            "required": ["target_user_id", "summary"],
+            "properties": {
+                "target_user_id": {
+                    "type": "string",
+                    "description": "Zitadel sub of the reviewer (from list_team_sessions)",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "What you want reviewed and why (markdown OK)",
+                },
+                "repo": {
+                    "type": "string",
+                    "description": "Optional: repo name (e.g. 'auth-service')",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Optional: branch name (e.g. 'wip/jwt-rotation')",
+                },
+                "pr_url": {
+                    "type": "string",
+                    "description": "Optional: PR / MR URL or other link to the code",
+                },
+                "urgency": {
+                    "type": "string",
+                    "enum": ["low", "normal", "high"],
+                    "default": "normal",
+                    "description": "Maps to message priority.",
+                },
+                "checklist": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional: specific items the reviewer should check.",
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Optional: override the auto-generated subject line.",
                 },
             },
         },
