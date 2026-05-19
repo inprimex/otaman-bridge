@@ -503,6 +503,15 @@ class BridgeDaemon:
         providers.append(LoopbackAuthProvider(token=self.token))
         self.auth_provider = CompositeAuthProvider(providers=tuple(providers))
 
+        # EE DCR routes (/oauth/register + /.well-known/* overlay). When
+        # EE is absent, the handler is None and the daemon's do_POST /
+        # do_GET fall through to the catch-all 404.
+        try:
+            from otaman_bridge_ee.routes_dcr import try_handle as _ee_dcr_try_handle
+            self._ee_dcr_try_handle = _ee_dcr_try_handle
+        except ImportError:
+            self._ee_dcr_try_handle = None
+
         # MCP server: tool registry for the team-mode v0 cross-user
         # visibility flow. Always built (even when web_login_flow is
         # None) -- some tools may not need web auth. Privacy mode is
@@ -1576,6 +1585,11 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:  # noqa: N802 — stdlib name
             import urllib.parse as _u_parse_post
             route = _u_parse_post.urlparse(self.path).path.rstrip("/")
+            # EE-DCR routes first (Phase 2c). When EE is absent, handler
+            # is None — falls through to CE's own route table.
+            if daemon._ee_dcr_try_handle is not None:
+                if daemon._ee_dcr_try_handle(self, daemon, "POST", route):
+                    return
             if route == "/mcp":
                 # MCP JSON-RPC endpoint. Auth via the standard three-path
                 # _auth_identify; tools see the caller via CallContext.
@@ -1664,82 +1678,6 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     status, resp = 404, {"error": "unknown route"}
                 self._reply_json(status, resp)
                 return
-            if route == "/oauth/register":
-                # DCR endpoint (RFC 7591). Validates the request, looks
-                # up an existing app by deterministic fingerprint name
-                # (reuse path), and creates a new Zitadel OIDC app when
-                # not found. Returns the resulting client_id in RFC 7591
-                # client_information_response shape.
-                if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
-                    self._reply_error(404, "DCR shim not enabled")
-                    return
-                # Trust gate (design §4.1):
-                #   open      — accept any caller
-                #   protected — require an authenticated user (real OIDC
-                #               bearer; loopback bearer's empty user_id is
-                #               not enough)
-                if daemon.idp_config.registration_trust == "protected":
-                    ctx = self._auth_identify()
-                    if ctx is None or not getattr(ctx, "user_id", ""):
-                        self._reply_unauthenticated(
-                            error="invalid_token",
-                            description="DCR shim requires authenticated user when trust=protected",
-                        )
-                        return
-                body = self._read_body()
-                if body is None:
-                    self._reply_json(400, {
-                        "error": "invalid_client_metadata",
-                        "error_description": "request body is not valid JSON",
-                    })
-                    return
-                from otaman_bridge_ee.dcr_shim import (
-                    DCRError,
-                    ZitadelMgmtError,
-                    find_or_create_client,
-                    parse_register_request,
-                    to_rfc7591_response,
-                )
-                try:
-                    request = parse_register_request(body)
-                except DCRError as exc:
-                    self._reply_json(exc.http_status, {
-                        "error": exc.error,
-                        "error_description": exc.description,
-                    })
-                    return
-                # Lazy-build the mgmt client (idempotent — once per daemon).
-                mgmt_client = daemon.get_or_build_dcr_mgmt_client()
-                if mgmt_client is None:
-                    self._reply_json(503, {
-                        "error": "server_error",
-                        "error_description": (
-                            "DCR shim enabled but management API credentials "
-                            "(client_id/client_secret/org_id) are not configured."
-                        ),
-                    })
-                    return
-                try:
-                    client_id = find_or_create_client(
-                        mgmt_client=mgmt_client,
-                        project_id=daemon.idp_config.project_id,
-                        request=request,
-                        name_prefix=daemon.idp_config.managed_name_prefix,
-                    )
-                except ZitadelMgmtError as exc:
-                    _log.warning("DCR mgmt API failure: %s", exc)
-                    self._reply_json(502, {
-                        "error": "server_error",
-                        "error_description": f"upstream IdP rejected: {exc}",
-                    })
-                    return
-                import time as _t
-                self._reply_json(201, to_rfc7591_response(
-                    request=request,
-                    client_id=client_id,
-                    now_unix=int(_t.time()),
-                ))
-                return
             self._reply_error(404, f"unknown route: {self.path}")
 
         def _render_root_html(self, daemon) -> str:
@@ -1791,73 +1729,16 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             # falls through to the 404 handler for any URL with a query.
             import urllib.parse as _u_parse
             route = _u_parse.urlparse(self.path).path.rstrip("/")
+            # EE-DCR routes (/.well-known/* metadata overlays). When EE
+            # is absent, handler is None and we fall through to CE's
+            # own route table.
+            if daemon._ee_dcr_try_handle is not None:
+                if daemon._ee_dcr_try_handle(self, daemon, "GET", route):
+                    return
             if route == "/status":
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
                 self._reply_json(status, resp)
-                return
-            if route == "/.well-known/oauth-protected-resource":
-                # RFC 9728 Protected Resource Metadata. Unauthenticated by
-                # design — MCP clients fetch this to discover the OIDC
-                # issuer before they have a token. If OIDC isn't enabled
-                # on this daemon, there's no protected resource to describe.
-                if daemon.oidc_validator is None:
-                    self._reply_error(404, "OIDC not configured on this bridge")
-                    return
-                resource = _resolve_public_resource_url(self.headers.get("Host", ""))
-                # With the DCR shim enabled (D3+), advertise the bridge
-                # itself as the authorization server so MCP clients fetch
-                # the AS metadata overlay (with injected registration_endpoint)
-                # from us. Without the shim, point clients at the real
-                # OIDC issuer URL directly (chunk B behavior).
-                if daemon.idp_config is not None and daemon.idp_config.dcr_shim:
-                    authorization_server = resource
-                else:
-                    authorization_server = daemon.oidc_validator.config.issuer
-                metadata = _build_protected_resource_metadata(
-                    issuer=authorization_server,
-                    resource=resource,
-                )
-                self._reply_json(200, metadata)
-                return
-            if route in (
-                "/.well-known/oauth-authorization-server",
-                "/.well-known/openid-configuration",
-            ):
-                # AS metadata overlay (mcp-oauth chunk D3). Only served
-                # when the DCR shim is enabled — without it, MCP clients
-                # are routed directly to the IdP's own metadata URL by
-                # /.well-known/oauth-protected-resource above. Same payload
-                # for both paths (different MCP clients prefer different
-                # ones; serve both).
-                if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
-                    self._reply_error(404, "DCR shim not enabled on this bridge")
-                    return
-                from otaman_bridge_ee.dcr_shim import (
-                    MetadataFetchError,
-                    derive_registration_endpoint,
-                    fetch_upstream_metadata,
-                    overlay_metadata,
-                )
-                cached = daemon._idp_metadata_cache.get()
-                if cached is None:
-                    try:
-                        cached = fetch_upstream_metadata(
-                            daemon.idp_config.management_base_url,
-                        )
-                    except MetadataFetchError as exc:
-                        _log.warning("AS metadata upstream fetch failed: %s", exc)
-                        self._reply_error(502, f"upstream metadata unavailable: {exc}")
-                        return
-                    daemon._idp_metadata_cache.put(cached)
-                bridge_url = _resolve_public_resource_url(self.headers.get("Host", ""))
-                overlaid = overlay_metadata(
-                    cached,
-                    registration_endpoint=derive_registration_endpoint(
-                        bridge_public_url=bridge_url,
-                    ),
-                )
-                self._reply_json(200, overlaid)
                 return
             if route == "" or route == "/":
                 # Minimal landing page so a browser landing here after
