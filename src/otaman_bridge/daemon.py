@@ -467,6 +467,33 @@ class BridgeDaemon:
                 pending_store=self.web_login_flow.store,
             )
 
+        # Auth provider seam (Phase 1 of CE/EE split per
+        # otaman-meta/strategy/bridge-ce-ee-split.md §5). Composes the same
+        # OIDC → session-cookie → loopback chain that lived inline in
+        # _auth_identify/_reply_unauthenticated. Phase 2 swaps in
+        # SimpleAuthProvider as the CE default and moves OIDCAuthProvider
+        # to the proprietary EE repo.
+        #
+        # OIDCAuthProvider is always in the chain — its activity is gated
+        # on validator_getter() returning non-None at call time. This lets
+        # tests reassign daemon.oidc_validator / session_store /
+        # session_cookie at runtime and have the auth chain track those
+        # changes without rebuilding the composite.
+        from otaman_bridge.auth import (
+            CompositeAuthProvider,
+            LoopbackAuthProvider,
+            OIDCAuthProvider,
+        )
+        self.auth_provider = CompositeAuthProvider(providers=(
+            OIDCAuthProvider(
+                validator_getter=lambda d=self: d.oidc_validator,
+                session_store_getter=lambda d=self: d.session_store,
+                session_cookie_getter=lambda d=self: d.session_cookie,
+                resource_url_fn=_resolve_public_resource_url,
+            ),
+            LoopbackAuthProvider(token=self.token),
+        ))
+
         # MCP server: tool registry for the team-mode v0 cross-user
         # visibility flow. Always built (even when web_login_flow is
         # None) -- some tools may not need web auth. Privacy mode is
@@ -1418,68 +1445,24 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                        fmt % args)
 
         def _auth_identify(self):
-            """Identify the caller across all three auth paths.
+            """Identify the caller via the daemon's configured AuthProvider.
 
-            Returns a CallContext for OIDC bearer / session cookie /
-            loopback bearer, or None if all paths reject. Mirrors
-            _auth_ok's three-way logic but surfaces the user identity
-            so MCP tool handlers can attribute the request.
+            Delegates to ``daemon.auth_provider.identify(self.headers)``.
+            The provider chain composes OIDC bearer + session cookie +
+            loopback bearer when OIDC is configured; loopback alone
+            otherwise. See ``otaman_bridge.auth`` for the seam design.
             """
-            from otaman_bridge.mcp_server import CallContext
-            header = self.headers.get("Authorization", "")
-            if daemon.oidc_validator is not None and header.startswith("Bearer "):
-                result = daemon.oidc_validator.validate(header)
-                if result.ok:
-                    return CallContext(
-                        user_id=result.user_id or "",
-                        user_email=result.email,
-                        roles=tuple(result.roles),
-                    )
-            if daemon.session_store is not None and daemon.session_cookie is not None:
-                cookie_header = self.headers.get("Cookie", "")
-                sid = daemon.session_cookie.parse(cookie_header)
-                if sid is not None:
-                    sess = daemon.session_store.get(sid)
-                    if sess is not None:
-                        return CallContext(
-                            user_id=sess.user_id,
-                            user_email=sess.email,
-                            roles=tuple(sess.roles),
-                        )
-            if header.startswith("Bearer "):
-                supplied = header[len("Bearer "):].strip()
-                if _secrets.compare_digest(supplied, daemon.token):
-                    # Loopback bearer = same-host CLI; no user identity
-                    return CallContext(user_id="", user_email=None, roles=())
-            return None
+            return daemon.auth_provider.identify(self.headers)
 
         def _auth_ok(self) -> bool:
-            # When OIDC is configured, try it first. Fall back to the
-            # loopback bearer for local same-host clients (CLI
-            # introspection, `maestro bridge status`, etc.).
-            header = self.headers.get("Authorization", "")
-            if daemon.oidc_validator is not None and header.startswith("Bearer "):
-                result = daemon.oidc_validator.validate(header)
-                if result.ok:
-                    _log.debug("OIDC auth ok: user_id=%s roles=%s", result.user_id, result.roles)
-                    return True
-                # OIDC failed; fall through to loopback bearer (don't 401
-                # yet — same-host CLI may be using the loopback token).
-            # session cookie auth path: try the browser session cookie
-            # before falling back to loopback bearer
-            if daemon.session_store is not None and daemon.session_cookie is not None:
-                cookie_header = self.headers.get("Cookie", "")
-                sid = daemon.session_cookie.parse(cookie_header)
-                if sid is not None:
-                    sess = daemon.session_store.get(sid)
-                    if sess is not None:
-                        _log.debug("session cookie auth ok: user_id=%s", sess.user_id)
-                        return True
-                    # Unknown / expired cookie; fall through to loopback
-            if not header.startswith("Bearer "):
-                return False
-            supplied = header[len("Bearer "):].strip()
-            return _secrets.compare_digest(supplied, daemon.token)
+            """Authorize a request without caring about user identity.
+
+            Delegates to ``daemon.auth_provider.identify`` — any
+            non-None CallContext means the request is authorized for
+            non-identity-requiring routes. Identity-requiring routes
+            use ``_auth_identify`` directly to surface the user.
+            """
+            return daemon.auth_provider.identify(self.headers) is not None
 
         def _drain_body(self) -> None:
             """Consume the request body so Windows doesn't RST on close.
@@ -1534,11 +1517,21 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
         ) -> None:
             """Send 401 with a WWW-Authenticate challenge per RFC 6750 + 9728.
 
-            The header lets MCP clients (Claude Code) discover this
-            bridge's OIDC issuer and run the auth_code+PKCE flow without
-            any preconfigured token. Falls back to a plain 401 without
-            the challenge when OIDC isn't configured on this daemon —
-            there's no authorization server to point at anyway.
+            Delegates challenge construction to the configured
+            ``AuthProvider``. When the provider chain includes an
+            ``OIDCAuthProvider``, the 401 carries a Bearer challenge
+            pointing at the bridge's protected-resource-metadata
+            endpoint so MCP clients (Claude Code) can discover the
+            issuer and run auth_code+PKCE. CE-style providers (loopback
+            / simple) return None and the 401 ships without a challenge
+            header — there's no authorization server to point at.
+
+            ``error`` lets callers send ``insufficient_scope`` instead
+            of the default ``invalid_token`` when the caller IS
+            authenticated (loopback bearer) but lacks user identity for
+            an identity-required MCP tool. This signals to MCP clients
+            that they should upgrade to an OIDC bearer rather than
+            retry the same auth.
             """
             try:
                 self._drain_body()
@@ -1549,12 +1542,18 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Connection", "close")
-            if daemon.oidc_validator is not None:
-                rm_url = (
-                    f"{_resolve_public_resource_url(self.headers.get('Host', ''))}"
-                    f"/.well-known/oauth-protected-resource"
-                )
-                challenge = f'Bearer resource_metadata="{rm_url}", error="{error}"'
+            host = self.headers.get("Host", "")
+            # Prefer OIDC's challenge_with_error so the error code can
+            # be overridden (insufficient_scope vs invalid_token). Fall
+            # back to the generic challenge() for providers that don't
+            # have a per-error variant.
+            from otaman_bridge.auth import OIDCAuthProvider
+            oidc = daemon.auth_provider.first_of_type(OIDCAuthProvider)
+            if oidc is not None:
+                challenge = oidc.challenge_with_error(host, error)
+            else:
+                challenge = daemon.auth_provider.challenge(host)
+            if challenge is not None:
                 self.send_header("WWW-Authenticate", challenge)
             self.end_headers()
             self.wfile.write(payload)
