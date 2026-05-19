@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from otaman_bridge.daemon import BridgeDaemon, read_endpoint_file
-from otaman_bridge.dcr_shim import IdpConfig, MetadataCache
+from otaman_bridge_ee.dcr_shim import IdpConfig, MetadataCache
 from otaman_bridge.transports.null import NullTransport
 
 
@@ -132,7 +132,7 @@ class TestASMetadataOverlay:
             "token_endpoint": "http://idp.example/oauth/v2/token",
             "jwks_uri": "http://idp.example/oauth/v2/keys",
         }
-        from otaman_bridge import dcr_shim
+        from otaman_bridge_ee import dcr_shim
         monkeypatch.setattr(
             dcr_shim, "fetch_upstream_metadata",
             lambda base_url, **kw: upstream,
@@ -172,7 +172,7 @@ class TestASMetadataOverlay:
             fetch_count["n"] += 1
             return upstream
 
-        from otaman_bridge import dcr_shim
+        from otaman_bridge_ee import dcr_shim
         monkeypatch.setattr(dcr_shim, "fetch_upstream_metadata", _counting_fetch)
 
         # First call: fetch upstream.
@@ -190,7 +190,7 @@ class TestASMetadataOverlay:
 
     def test_502_when_upstream_unreachable(self, daemon_with_shim, monkeypatch):
         daemon, endpoint = daemon_with_shim
-        from otaman_bridge import dcr_shim
+        from otaman_bridge_ee import dcr_shim
 
         def _fail(base_url, **kw):
             raise dcr_shim.MetadataFetchError("simulated upstream unreachable")
@@ -205,7 +205,7 @@ class TestASMetadataOverlay:
     def test_unauthenticated_route(self, daemon_with_shim, monkeypatch):
         """Metadata endpoints are public per OAuth spec — no auth headers needed."""
         daemon, endpoint = daemon_with_shim
-        from otaman_bridge import dcr_shim
+        from otaman_bridge_ee import dcr_shim
         monkeypatch.setattr(
             dcr_shim, "fetch_upstream_metadata",
             lambda base_url, **kw: {"issuer": "http://idp.example"},

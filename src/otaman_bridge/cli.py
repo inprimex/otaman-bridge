@@ -405,13 +405,20 @@ def cmd_dcr_cleanup(args: argparse.Namespace) -> int:
     or for one-off cleanup outside the daemon's sweep cadence. The
     daemon's background sweep covers the steady state.
     """
-    from otaman_bridge.dcr_shim import (
-        IdpConfig,
-        ZitadelMgmtClient,
-        ZitadelMgmtError,
-        parse_duration_seconds,
-        sweep_orphans,
-    )
+    try:
+        from otaman_bridge_ee.dcr_shim import (
+            IdpConfig,
+            ZitadelMgmtClient,
+            ZitadelMgmtError,
+            parse_duration_seconds,
+            sweep_orphans,
+        )
+    except ImportError:
+        print(
+            "DCR shim cleanup requires otaman-bridge-ee (Enterprise Edition).",
+            file=sys.stderr,
+        )
+        return 2
 
     cfg = IdpConfig.from_env()
     if cfg is None:

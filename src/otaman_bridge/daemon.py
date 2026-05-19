@@ -426,13 +426,20 @@ class BridgeDaemon:
         # daemon serves AS metadata overlay routes pointing at itself,
         # so MCP clients (Claude Code) can do RFC 7591 against Zitadel
         # which lacks native DCR. None = inert.
-        from otaman_bridge.dcr_shim import IdpConfig, MetadataCache
-        self.idp_config = IdpConfig.from_env()
-        self._idp_metadata_cache = (
-            MetadataCache(ttl_seconds=self.idp_config.metadata_cache_seconds)
-            if self.idp_config is not None
-            else None
-        )
+        #
+        # DCR shim is EE-only (Phase 2b). CE-only builds (EE absent) skip
+        # idp_config entirely — no DCR routes, no metadata overlay.
+        self.idp_config = None
+        self._idp_metadata_cache = None
+        try:
+            from otaman_bridge_ee.dcr_shim import IdpConfig, MetadataCache
+            self.idp_config = IdpConfig.from_env()
+            if self.idp_config is not None:
+                self._idp_metadata_cache = MetadataCache(
+                    ttl_seconds=self.idp_config.metadata_cache_seconds
+                )
+        except ImportError:
+            _log.debug("EE package absent; DCR shim disabled")
         if self.idp_config is not None:
             _log.info(
                 "DCR shim enabled (type=%s mgmt=%s trust=%s cache=%ds)",
@@ -1346,7 +1353,7 @@ class BridgeDaemon:
         the daemon finish startup before the first sweep request to Zitadel.
         Failures are logged but never abort the loop.
         """
-        from otaman_bridge.dcr_shim import sweep_orphans
+        from otaman_bridge_ee.dcr_shim import sweep_orphans
         cfg = self.idp_config
         interval = cfg.cleanup_sweep_interval_seconds
         _log.info(
@@ -1399,7 +1406,7 @@ class BridgeDaemon:
         has_client_creds = bool(cfg.machine_user_client_id and cfg.machine_user_client_secret)
         if not cfg.org_id or not (has_pat or has_client_creds):
             return None
-        from otaman_bridge.dcr_shim import ZitadelMgmtClient
+        from otaman_bridge_ee.dcr_shim import ZitadelMgmtClient
         # token endpoint is the standard OIDC location on the mgmt host.
         token_url = f"{cfg.management_base_url}/oauth/v2/token"
         self._dcr_mgmt_client_cached = ZitadelMgmtClient(
@@ -1686,7 +1693,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                         "error_description": "request body is not valid JSON",
                     })
                     return
-                from otaman_bridge.dcr_shim import (
+                from otaman_bridge_ee.dcr_shim import (
                     DCRError,
                     ZitadelMgmtError,
                     find_or_create_client,
@@ -1826,7 +1833,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
                     self._reply_error(404, "DCR shim not enabled on this bridge")
                     return
-                from otaman_bridge.dcr_shim import (
+                from otaman_bridge_ee.dcr_shim import (
                     MetadataFetchError,
                     derive_registration_endpoint,
                     fetch_upstream_metadata,
