@@ -1,4 +1,4 @@
-"""Pluggable identity layer for the bridge's HTTP daemon.
+"""Pluggable identity layer for the bridge's HTTP daemon (CE-only).
 
 This module introduces the seam between CE-style "trust the caller's
 self-declared identity" and EE-style "validate via OIDC + session cookie".
@@ -6,29 +6,24 @@ The daemon's HTTP handler doesn't know which mode is wired; it just asks
 its ``AuthProvider`` to identify each request and to build the 401
 challenge when no identity is found.
 
-Phase 1 of the CE/EE split (per
-``otaman-meta/strategy/bridge-ce-ee-split.md`` §5) only introduces the
-abstraction. No behavior change: the daemon composes the same provider
-chain it had inline (OIDC → session-cookie → loopback when OIDC is
-configured; loopback alone otherwise). Phase 2 extracts
-``OIDCAuthProvider`` to the proprietary EE repo and wires
-``SimpleAuthProvider`` as the CE default.
-
-The four providers:
+CE providers (this file):
 
 - ``LoopbackAuthProvider`` — validates the loopback bearer token stored
   in ``~/.maestro/bridge-<account>.endpoint`` for same-host CLI traffic.
   Returns a ``CallContext`` with an empty ``user_id`` (loopback has no
   user identity), so MCP tools that require a user reject it via the
-  ``IDENTITY_REQUIRED_TOOLS`` gate. Ships in CE.
+  ``IDENTITY_REQUIRED_TOOLS`` gate.
 - ``SimpleAuthProvider`` — trusts whatever the request declares. Reads
   ``X-Otaman-User`` header first, falls back to ``OTAMAN_USER`` env at
-  provider construction. Used as CE's default identity source (Phase 2).
-- ``OIDCAuthProvider`` — validates Bearer JWT against an
-  ``otaman_core.auth_oidc.OIDCValidator``, then session cookies for the
-  browser flow. Moves to the EE repo in Phase 2.
+  provider construction. Used as CE's default identity source.
 - ``CompositeAuthProvider`` — first non-None identify() wins; first
   non-None challenge() wins.
+
+EE providers (``otaman_bridge_ee.auth_oidc``):
+
+- ``OIDCAuthProvider`` — validates Bearer JWT against an
+  ``otaman_core.auth_oidc.OIDCValidator``, then session cookies for the
+  browser web-login flow.
 
 All providers are frozen dataclasses so they're cheap to compare in
 tests and trivially threadsafe (no mutation after construction).
@@ -38,7 +33,7 @@ from __future__ import annotations
 
 import os
 import secrets as _secrets
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol
 
 from otaman_bridge.mcp_server import CallContext
@@ -47,7 +42,6 @@ __all__ = [
     "AuthProvider",
     "CompositeAuthProvider",
     "LoopbackAuthProvider",
-    "OIDCAuthProvider",
     "SimpleAuthProvider",
 ]
 
@@ -138,97 +132,8 @@ class SimpleAuthProvider:
         return None
 
 
-# ---------------------------------------------------------------------------
-# OIDC (EE — moves to otaman-bridge-ee in Phase 2)
-
-
-@dataclass(frozen=True)
-class OIDCAuthProvider:
-    """Validates Bearer JWTs + session cookies against an OIDC issuer.
-
-    Tries two paths in order:
-
-    1. ``Authorization: Bearer <jwt>`` — passes the full header to the
-       validator (an ``otaman_core.auth_oidc.OIDCValidator``).
-    2. ``Cookie: <session_cookie>`` — parses via ``session_cookie``,
-       looks up in ``session_store``. Browser web-login flow only;
-       both are optional (None when web-login is disabled).
-
-    Builds an RFC 6750 ``WWW-Authenticate: Bearer`` challenge pointing
-    at the bridge's RFC 9728 protected-resource-metadata endpoint so
-    MCP clients (Claude Code) can discover the authorization server
-    and run the auth_code+PKCE flow without preconfigured tokens.
-
-    Dependencies are passed as **getters** rather than direct references
-    so the provider tracks the daemon's mutable state. The daemon's
-    ``oidc_validator`` / ``session_store`` / ``session_cookie``
-    attributes can be reassigned at runtime (some tests do this) and
-    the provider sees the new values without rebuilding the composite.
-    When ``validator_getter()`` returns ``None`` the provider is inert:
-    ``identify`` returns ``None`` and ``challenge`` returns ``None``,
-    so the daemon falls back to plain 401 without a challenge.
-
-    This provider will move to ``otaman_bridge_ee/auth_oidc.py`` in
-    Phase 2 (the vendored CE copy in EE will use a thin
-    ``EEAuthProvider`` that wraps this one alongside the OIDC role
-    gate).
-    """
-
-    validator_getter: Callable[[], Any]
-    session_store_getter: Callable[[], Any] = field(default=lambda: None)
-    session_cookie_getter: Callable[[], Any] = field(default=lambda: None)
-    resource_url_fn: Callable[[str], str] = field(
-        default=lambda host: f"http://{(host or '127.0.0.1').strip()}"
-    )
-
-    def identify(self, headers: Mapping[str, str]) -> CallContext | None:
-        validator = self.validator_getter()
-        header = headers.get("Authorization", "")
-        if validator is not None and header.startswith("Bearer "):
-            result = validator.validate(header)
-            if result.ok:
-                return CallContext(
-                    user_id=result.user_id or "",
-                    user_email=result.email,
-                    roles=tuple(result.roles),
-                )
-        session_store = self.session_store_getter()
-        session_cookie = self.session_cookie_getter()
-        if session_store is not None and session_cookie is not None:
-            cookie_header = headers.get("Cookie", "")
-            sid = session_cookie.parse(cookie_header)
-            if sid is not None:
-                sess = session_store.get(sid)
-                if sess is not None:
-                    return CallContext(
-                        user_id=sess.user_id,
-                        user_email=sess.email,
-                        roles=tuple(sess.roles),
-                    )
-        return None
-
-    def challenge(self, host: str) -> str | None:
-        if self.validator_getter() is None:
-            return None
-        rm_url = f"{self.resource_url_fn(host)}/.well-known/oauth-protected-resource"
-        return f'Bearer resource_metadata="{rm_url}", error="invalid_token"'
-
-    def challenge_with_error(self, host: str, error: str) -> str | None:
-        """Like ``challenge`` but lets callers override the error code.
-
-        Used by ``IDENTITY_REQUIRED_TOOLS`` rejection path, which sends
-        ``error="insufficient_scope"`` instead of ``invalid_token``
-        because the caller IS authenticated (loopback bearer) but the
-        tool requires a user identity. This signals to MCP clients
-        that they should upgrade to an OIDC bearer rather than retry.
-
-        Returns ``None`` when the OIDC validator is unset — daemon
-        falls back to plain 401 without a challenge.
-        """
-        if self.validator_getter() is None:
-            return None
-        rm_url = f"{self.resource_url_fn(host)}/.well-known/oauth-protected-resource"
-        return f'Bearer resource_metadata="{rm_url}", error="{error}"'
+# OIDCAuthProvider lives in otaman_bridge_ee.auth_oidc (Phase 2 of the
+# CE/EE split, 2026-05-19). The daemon imports it conditionally.
 
 
 # ---------------------------------------------------------------------------

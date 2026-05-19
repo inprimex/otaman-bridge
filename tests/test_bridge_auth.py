@@ -16,10 +16,10 @@ import pytest
 from otaman_bridge.auth import (
     CompositeAuthProvider,
     LoopbackAuthProvider,
-    OIDCAuthProvider,
     SimpleAuthProvider,
 )
 from otaman_bridge.mcp_server import CallContext
+from otaman_bridge_ee.auth_oidc import OIDCAuthProvider
 
 
 # ---------------------------------------------------------------------------

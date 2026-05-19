@@ -467,32 +467,34 @@ class BridgeDaemon:
                 pending_store=self.web_login_flow.store,
             )
 
-        # Auth provider seam (Phase 1 of CE/EE split per
-        # otaman-meta/strategy/bridge-ce-ee-split.md §5). Composes the same
-        # OIDC → session-cookie → loopback chain that lived inline in
-        # _auth_identify/_reply_unauthenticated. Phase 2 swaps in
-        # SimpleAuthProvider as the CE default and moves OIDCAuthProvider
-        # to the proprietary EE repo.
+        # Auth provider seam (CE/EE split per
+        # otaman-meta/strategy/bridge-ce-ee-split.md §5).
+        # Phase 1: introduced the Protocol + CE providers in otaman_bridge.auth.
+        # Phase 2a: OIDCAuthProvider moved to otaman_bridge_ee.auth_oidc.
         #
-        # OIDCAuthProvider is always in the chain — its activity is gated
-        # on validator_getter() returning non-None at call time. This lets
-        # tests reassign daemon.oidc_validator / session_store /
-        # session_cookie at runtime and have the auth chain track those
-        # changes without rebuilding the composite.
-        from otaman_bridge.auth import (
-            CompositeAuthProvider,
-            LoopbackAuthProvider,
-            OIDCAuthProvider,
-        )
-        self.auth_provider = CompositeAuthProvider(providers=(
-            OIDCAuthProvider(
+        # The EE provider is imported conditionally so the CE-only build
+        # (no EE package installed) falls back to a loopback-only chain.
+        # When EE IS installed, OIDCAuthProvider is in the chain — its
+        # activity is gated on validator_getter() returning non-None at
+        # call time, so tests can reassign daemon.oidc_validator /
+        # session_store / session_cookie at runtime and have the auth
+        # chain track changes without rebuilding the composite.
+        from otaman_bridge.auth import CompositeAuthProvider, LoopbackAuthProvider
+        providers: list = []
+        try:
+            from otaman_bridge_ee.auth_oidc import OIDCAuthProvider
+        except ImportError:
+            _log.info("EE package not installed; CE-only auth chain (loopback only)")
+            OIDCAuthProvider = None  # type: ignore[assignment]
+        if OIDCAuthProvider is not None:
+            providers.append(OIDCAuthProvider(
                 validator_getter=lambda d=self: d.oidc_validator,
                 session_store_getter=lambda d=self: d.session_store,
                 session_cookie_getter=lambda d=self: d.session_cookie,
                 resource_url_fn=_resolve_public_resource_url,
-            ),
-            LoopbackAuthProvider(token=self.token),
-        ))
+            ))
+        providers.append(LoopbackAuthProvider(token=self.token))
+        self.auth_provider = CompositeAuthProvider(providers=tuple(providers))
 
         # MCP server: tool registry for the team-mode v0 cross-user
         # visibility flow. Always built (even when web_login_flow is
@@ -1546,9 +1548,13 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             # Prefer OIDC's challenge_with_error so the error code can
             # be overridden (insufficient_scope vs invalid_token). Fall
             # back to the generic challenge() for providers that don't
-            # have a per-error variant.
-            from otaman_bridge.auth import OIDCAuthProvider
-            oidc = daemon.auth_provider.first_of_type(OIDCAuthProvider)
+            # have a per-error variant. OIDCAuthProvider lives in the
+            # EE package (Phase 2a); CE-only builds skip this path.
+            try:
+                from otaman_bridge_ee.auth_oidc import OIDCAuthProvider
+                oidc = daemon.auth_provider.first_of_type(OIDCAuthProvider)
+            except ImportError:
+                oidc = None
             if oidc is not None:
                 challenge = oidc.challenge_with_error(host, error)
             else:

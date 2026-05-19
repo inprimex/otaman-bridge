@@ -20,7 +20,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/otaman_bridge"]
+# Phase 2 of CE/EE split: both packages ship from the same repo while
+# everything is private + proprietary. When CE goes public AGPL,
+# otaman_bridge_ee gets extracted via strategy/ce-ee-prep/sync-ce.sh.
+packages = ["src/otaman_bridge", "src/otaman_bridge_ee"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
