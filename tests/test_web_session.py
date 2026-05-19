@@ -1,4 +1,4 @@
-"""Tests for otaman_bridge.web_session -- session store + cookie helper.
+"""Tests for otaman_bridge_ee.web_session -- session store + cookie helper.
 
 Pure data-structure tests, no HTTP, no Zitadel.
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from otaman_bridge.web_session import (
+from otaman_bridge_ee.web_session import (
     DEFAULT_SESSION_TTL,
     SESSION_COOKIE_NAME,
     Session,

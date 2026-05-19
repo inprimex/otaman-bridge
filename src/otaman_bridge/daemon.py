@@ -369,7 +369,11 @@ def _build_web_login_flow_from_env():
             bool(issuer), bool(client_id), bool(redirect_uri),
         )
         return None
-    from otaman_bridge.web_auth import LoginFlow, PendingLoginStore, WebAuthConfig
+    try:
+        from otaman_bridge_ee.web_auth import LoginFlow, PendingLoginStore, WebAuthConfig
+    except ImportError:
+        _log.info("EE package absent; web-login flow disabled")
+        return None
     cfg = WebAuthConfig(
         issuer=issuer,
         client_id=client_id,
@@ -459,8 +463,11 @@ class BridgeDaemon:
         self.session_cookie = None
         self.login_completer = None
         if self.web_login_flow is not None:
-            from otaman_bridge.web_auth import LoginCompleter, TokenExchanger
-            from otaman_bridge.web_session import SessionCookie, SessionStore
+            # web_login_flow is only ever non-None when EE imports succeeded
+            # in _build_web_login_flow_from_env, so these imports always
+            # resolve here.
+            from otaman_bridge_ee.web_auth import LoginCompleter, TokenExchanger
+            from otaman_bridge_ee.web_session import SessionCookie, SessionStore
             self.session_store = SessionStore()
             # Cookie Secure flag derived from the registered redirect_uri
             # scheme (https -> Secure, http -> not). Production always
@@ -1784,7 +1791,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     self._reply_error(503, "web login flow not configured")
                     return
                 import urllib.parse as _u
-                from otaman_bridge.web_auth import LoginCompleteError, TokenExchangeError
+                from otaman_bridge_ee.web_auth import LoginCompleteError, TokenExchangeError
                 qs = _u.urlparse(self.path).query
                 params = dict(_u.parse_qsl(qs))
                 if "error" in params:

@@ -12,7 +12,7 @@ the MCP spec's tool handler shape.
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from otaman_bridge.mcp_server import CallContext, Tool
 from otaman_bridge.runner_client import (
@@ -21,7 +21,13 @@ from otaman_bridge.runner_client import (
     RunnerUnreachableError,
     SessionNotFoundError,
 )
-from otaman_bridge.web_session import SessionStore
+
+if TYPE_CHECKING:
+    # Type-only — keeps CE runtime clean of EE imports while preserving
+    # the annotation. Phase 2d-2 moved SessionStore to EE; in CE-only
+    # builds session_store args will be None and the email-decoration
+    # branch is skipped.
+    from otaman_bridge_ee.web_session import SessionStore
 
 _log = logging.getLogger("otaman.bridge.mcp.tools")
 

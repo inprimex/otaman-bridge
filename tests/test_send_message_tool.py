@@ -7,7 +7,7 @@ import pytest
 from otaman_bridge.inbox import Inbox
 from otaman_bridge.mcp_server import CallContext
 from otaman_bridge.mcp_tools import build_send_message_to_user_tool
-from otaman_bridge.web_session import SessionStore
+from otaman_bridge_ee.web_session import SessionStore
 
 
 @pytest.fixture

@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import pytest
 
-from otaman_bridge.web_auth import (
+from otaman_bridge_ee.web_auth import (
     LoginCompleteError,
     LoginCompleter,
     PendingLoginStore,
     TokenExchangeError,
     TokenResponse,
 )
-from otaman_bridge.web_session import SessionStore
+from otaman_bridge_ee.web_session import SessionStore
 
 
 # ---- Helpers -----------------------------------------------------------
