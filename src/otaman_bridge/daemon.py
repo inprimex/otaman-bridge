@@ -570,7 +570,15 @@ class BridgeDaemon:
         self.mcp_server.register(build_get_recent_activity_tool(
             inbox=self.inbox, runner_client=self._runner_client,
         ))
-        self.mcp_server.register(build_kill_session_for_user_tool(
+        # Pick the admin-gated EE builder when EE is installed; else CE's
+        # un-gated builder (Q2 (a) decision: CE = mutual-trust small team).
+        try:
+            from otaman_bridge_ee.mcp_tools_admin import (
+                build_kill_session_for_user_tool_admin as _build_kill_session,
+            )
+        except ImportError:
+            _build_kill_session = build_kill_session_for_user_tool
+        self.mcp_server.register(_build_kill_session(
             runner_client=self._runner_client,
         ))
         _log.info("MCP: messaging tools registered (inbox=%s)", self.inbox.root)

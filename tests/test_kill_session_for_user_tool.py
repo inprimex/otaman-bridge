@@ -3,6 +3,12 @@
 Two-layer auth:
 - Identity (added to IDENTITY_REQUIRED_TOOLS; HTTP-layer 401 for loopback).
 - Role (handler checks ctx.roles for ADMIN_ROLE; returns isError otherwise).
+
+Per the CE/EE split design (Q2 (a) decision), CE's builder is un-gated.
+The role-gate is supplied by EE's mcp_tools_admin wrapper. These tests
+import the EE-gated builder so they continue to assert the
+admin-required behavior. CE-only behavior (no role gate) is covered in
+test_kill_session_for_user_tool_ce_open.py.
 """
 
 from __future__ import annotations
@@ -10,10 +16,10 @@ from __future__ import annotations
 import pytest
 
 from otaman_bridge.mcp_server import CallContext
-from otaman_bridge.mcp_tools import (
+from otaman_bridge.mcp_tools import IDENTITY_REQUIRED_TOOLS
+from otaman_bridge_ee.mcp_tools_admin import (
     ADMIN_ROLE,
-    IDENTITY_REQUIRED_TOOLS,
-    build_kill_session_for_user_tool,
+    build_kill_session_for_user_tool_admin as build_kill_session_for_user_tool,
 )
 from otaman_bridge.runner_client import (
     RunnerAuthError,
@@ -71,7 +77,12 @@ def tool():
 
 
 def _runner_of(tool):
-    return tool.handler.__closure__[0].cell_contents
+    # Look up the runner_client cell by name — robust to free-var ordering
+    # changes (e.g., when build_kill_session_for_user_tool's require_role
+    # parameter creates an extra closure cell, the runner cell may not be [0]).
+    fn = tool.handler
+    idx = fn.__code__.co_freevars.index("runner_client")
+    return fn.__closure__[idx].cell_contents
 
 
 # ---- role gate ------------------------------------------------------

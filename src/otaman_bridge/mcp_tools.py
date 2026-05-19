@@ -52,11 +52,9 @@ IDENTITY_REQUIRED_TOOLS: frozenset[str] = frozenset({
     "kill_session_for_user",
 })
 
-# Role name that the kill_session_for_user tool checks for in ctx.roles.
-# Aligns with the project's existing role hierarchy (otaman:admin /
-# otaman:approver / otaman:developer / otaman:viewer — see
-# zitadel-bootstrap.py).
-ADMIN_ROLE = "otaman:admin"
+# ADMIN_ROLE moved to otaman_bridge_ee.mcp_tools_admin in Phase 2d:
+# CE's builder is un-gated by default (Q2 (a) decision); EE provides
+# the admin-gated wrapper that owns the role name.
 
 
 def build_list_team_sessions_tool(
@@ -770,28 +768,28 @@ def build_get_recent_activity_tool(
 def build_kill_session_for_user_tool(
     *,
     runner_client,
+    require_role: str | None = None,
 ) -> Tool:
-    """Build the kill_session_for_user MCP tool (v0++ admin).
+    """Build the kill_session_for_user MCP tool.
 
     Forcibly terminates another user's otaman session via the runner's
-    POST /kill. Two-layer auth:
+    POST /kill. Two layers of access control:
 
-    1. **Identity** (HTTP layer): added to IDENTITY_REQUIRED_TOOLS so
-       loopback-bearer callers get 401 + WWW-Authenticate. Real OIDC
-       bearer required.
-    2. **Role** (handler): caller's JWT must include
-       ``otaman:admin`` in the roles claim. Without it, returns
-       isError with a clear "needs admin role" message so the LLM can
-       relay an actionable explanation.
+    1. **Identity** (HTTP layer): the tool is in IDENTITY_REQUIRED_TOOLS
+       so loopback-bearer callers get 401 + WWW-Authenticate. Real
+       authenticated caller required (CE: SimpleAuthProvider; EE: OIDC).
+    2. **Role** (handler, OPTIONAL): when ``require_role`` is set, the
+       caller's roles must include it. Without the required role, the
+       tool returns isError with a clear message.
+
+    Per the CE/EE split design (Q2 (a) decision), CE registers the tool
+    without ``require_role`` — small-team mutual trust. EE wraps the
+    builder with ``require_role="otaman:admin"`` via
+    ``otaman_bridge_ee.mcp_tools_admin.build_kill_session_for_user_tool_admin``.
 
     Inputs:
     - session_id (required): UUID from list_team_sessions / runner.
-    - reason (optional): free-text for the bridge-side audit log; not
-      currently sent to the runner (runner has its own audit on kill).
-
-    The runner authenticates the bridge's loopback bearer and trusts
-    the bridge has authorized the caller. Future hardening: pass the
-    caller's identity to the runner so it can double-check the role.
+    - reason (optional): free-text for the bridge-side audit log.
     """
 
     def handler(args: dict, ctx: CallContext) -> dict:
@@ -801,12 +799,13 @@ def build_kill_session_for_user_tool(
             return _mcp_error(
                 "caller identity required (loopback bearer has no user identity)"
             )
-        roles = getattr(ctx, "roles", ()) or ()
-        if ADMIN_ROLE not in roles:
-            return _mcp_error(
-                f"kill_session_for_user requires the {ADMIN_ROLE!r} role; "
-                f"caller has roles: {list(roles) or 'none'}"
-            )
+        if require_role is not None:
+            roles = getattr(ctx, "roles", ()) or ()
+            if require_role not in roles:
+                return _mcp_error(
+                    f"kill_session_for_user requires the {require_role!r} role; "
+                    f"caller has roles: {list(roles) or 'none'}"
+                )
 
         session_id = args.get("session_id")
         if not session_id or not isinstance(session_id, str):
