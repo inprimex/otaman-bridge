@@ -88,10 +88,13 @@ class TestDetectSystem:
 class TestSystemdUnit:
     def test_render_contains_all_fields(self, target):
         unit = render_systemd_unit(target)
-        assert "Description=Maestro remote-approval bridge" in unit
+        assert "Description=Otaman bridge daemon" in unit
         assert "After=network-online.target" in unit
         assert f"WorkingDirectory={target.working_dir}" in unit
-        assert f'MAESTRO_PYTHON={target.python}' in unit
+        assert f'OTAMAN_PYTHON={target.python}' in unit
+        # Endpoint files land in ~/.otaman/ via the OTAMAN_BRIDGE_DIR env
+        # var the unit exports; legacy daemons keep using ~/.maestro/.
+        assert 'OTAMAN_BRIDGE_DIR=%h/.otaman' in unit
         # watch_bus defaults to True, so the ExecStart ends with --watch-bus.
         assert (
             f"ExecStart={target.maestro_cli} bridge run --account %i --watch-bus"
@@ -121,16 +124,16 @@ class TestSystemdUnit:
         unit = render_systemd_unit(target)
         # The ExecStart and Description reference %i (systemd instance marker)
         # rather than the literal account name, so a single unit file
-        # handles every account (maestro-bridge@personal, @riseapps, etc.).
+        # handles every account (otaman-bridge@personal, @riseapps, etc.).
         assert "%i" in unit
 
 
 class TestInstallSystemd:
     def test_writes_unit_file_if_missing(self, sandbox_home, target, fake_runner):
         msgs = install_systemd(target, runner=fake_runner)
-        unit = sandbox_home / ".config" / "systemd" / "user" / "maestro-bridge@.service"
+        unit = sandbox_home / ".config" / "systemd" / "user" / "otaman-bridge@.service"
         assert unit.is_file()
-        assert "MAESTRO_PYTHON=" in unit.read_text(encoding="utf-8")
+        assert "OTAMAN_PYTHON=" in unit.read_text(encoding="utf-8")
         assert any("Wrote:" in m for m in msgs)
 
     def test_skips_write_when_content_identical(
@@ -154,7 +157,7 @@ class TestInstallSystemd:
         """Default path: `systemctl --user enable --now`."""
         install_systemd(target, enable=True, start=True, runner=fake_runner)
         cmds = fake_runner.calls
-        service = "maestro-bridge@personal.service"
+        service = "otaman-bridge@personal.service"
         assert any(
             cmd == ["systemctl", "--user", "enable", "--now", service]
             for cmd in cmds
@@ -164,7 +167,7 @@ class TestInstallSystemd:
         install_systemd(target, enable=True, start=False, runner=fake_runner)
         cmds = fake_runner.calls
         assert any(
-            cmd == ["systemctl", "--user", "enable", "maestro-bridge@personal.service"]
+            cmd == ["systemctl", "--user", "enable", "otaman-bridge@personal.service"]
             for cmd in cmds
         )
         assert not any("start" in cmd for cmd in cmds if "--user" in cmd)
@@ -173,7 +176,7 @@ class TestInstallSystemd:
         install_systemd(target, enable=False, start=True, runner=fake_runner)
         cmds = fake_runner.calls
         assert any(
-            cmd == ["systemctl", "--user", "start", "maestro-bridge@personal.service"]
+            cmd == ["systemctl", "--user", "start", "otaman-bridge@personal.service"]
             for cmd in cmds
         )
         # Shouldn't have called enable
@@ -202,6 +205,22 @@ class TestUninstallSystemd:
         msgs = uninstall_systemd("personal", runner=fake_runner)
         cmds = fake_runner.calls
         assert any(
+            cmd == ["systemctl", "--user", "stop", "otaman-bridge@personal.service"]
+            for cmd in cmds
+        )
+        assert any(
+            cmd == ["systemctl", "--user", "disable", "otaman-bridge@personal.service"]
+            for cmd in cmds
+        )
+        assert any("Stopped" in m for m in msgs)
+
+    def test_also_stops_legacy_maestro_bridge_unit(self, fake_runner):
+        """Phase B-0a-3: uninstall covers BOTH otaman-bridge@ and the
+        legacy maestro-bridge@ unit so a clean migration removes the
+        pre-rename systemd state for a given account."""
+        uninstall_systemd("personal", runner=fake_runner)
+        cmds = fake_runner.calls
+        assert any(
             cmd == ["systemctl", "--user", "stop", "maestro-bridge@personal.service"]
             for cmd in cmds
         )
@@ -209,7 +228,6 @@ class TestUninstallSystemd:
             cmd == ["systemctl", "--user", "disable", "maestro-bridge@personal.service"]
             for cmd in cmds
         )
-        assert any("Stopped" in m for m in msgs)
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +238,7 @@ class TestLaunchdPlist:
     def test_render_contains_all_fields(self, target):
         target.system = "macos-launchd"
         plist = render_launchd_plist(target)
-        assert "<string>com.maestro.bridge.personal</string>" in plist
+        assert "<string>com.otaman.bridge.personal</string>" in plist
         assert f"<string>{target.maestro_cli}</string>" in plist
         assert "<string>bridge</string>" in plist
         assert "<string>run</string>" in plist
@@ -264,17 +282,17 @@ class TestInstallLaunchd:
     def test_writes_plist_and_loads(self, sandbox_home, target, fake_runner):
         target.system = "macos-launchd"
         msgs = install_launchd(target, runner=fake_runner)
-        plist = sandbox_home / "Library" / "LaunchAgents" / "com.maestro.bridge.personal.plist"
+        plist = sandbox_home / "Library" / "LaunchAgents" / "com.otaman.bridge.personal.plist"
         assert plist.is_file()
         content = plist.read_text(encoding="utf-8")
-        assert "com.maestro.bridge.personal" in content
+        assert "com.otaman.bridge.personal" in content
 
         cmds = fake_runner.calls
         # Should unload (even if not loaded) then load, then start
         assert any(cmd[:2] == ["launchctl", "unload"] for cmd in cmds)
         assert any(cmd[:2] == ["launchctl", "load"] for cmd in cmds)
         assert any(
-            cmd == ["launchctl", "start", "com.maestro.bridge.personal"]
+            cmd == ["launchctl", "start", "com.otaman.bridge.personal"]
             for cmd in cmds
         )
         assert any("Wrote:" in m for m in msgs)
@@ -287,7 +305,7 @@ class TestInstallLaunchd:
         cmds = fake_runner.calls
         assert any(cmd[:2] == ["launchctl", "load"] for cmd in cmds)
         assert not any(
-            cmd == ["launchctl", "start", "com.maestro.bridge.personal"]
+            cmd == ["launchctl", "start", "com.otaman.bridge.personal"]
             for cmd in cmds
         )
 
@@ -296,7 +314,7 @@ class TestUninstallLaunchd:
     def test_unloads_and_removes_plist(self, sandbox_home, target, fake_runner):
         target.system = "macos-launchd"
         install_launchd(target, runner=fake_runner)
-        plist = sandbox_home / "Library" / "LaunchAgents" / "com.maestro.bridge.personal.plist"
+        plist = sandbox_home / "Library" / "LaunchAgents" / "com.otaman.bridge.personal.plist"
         assert plist.is_file()
 
         msgs = uninstall_launchd("personal", runner=fake_runner)
