@@ -114,10 +114,37 @@ class TestEndpointFile:
         mode = stat.S_IMODE(path.stat().st_mode)
         assert mode == 0o600
 
-    def test_endpoint_path_default(self):
+    def test_endpoint_path_default(self, monkeypatch):
+        # No override env vars set → default to ~/.maestro/ (back-compat)
+        monkeypatch.delenv("OTAMAN_BRIDGE_DIR", raising=False)
+        monkeypatch.delenv("MAESTRO_BRIDGE_DIR", raising=False)
         p = endpoint_path("personal")
         assert p.name == "bridge-personal.endpoint"
         assert p.parent.name == ".maestro"
+
+    def test_endpoint_path_otaman_override(self, monkeypatch, tmp_path):
+        # OTAMAN_BRIDGE_DIR pointing at a custom dir → endpoint lands there.
+        # This is how otaman-native deployments redirect to ~/.otaman/.
+        target = tmp_path / "alt-bridge-dir"
+        monkeypatch.setenv("OTAMAN_BRIDGE_DIR", str(target))
+        monkeypatch.delenv("MAESTRO_BRIDGE_DIR", raising=False)
+        p = endpoint_path("otaman-dev")
+        assert p == target / "bridge-otaman-dev.endpoint"
+
+    def test_endpoint_path_maestro_legacy_alias(self, monkeypatch, tmp_path):
+        # MAESTRO_BRIDGE_DIR is the legacy alias — works but lower precedence.
+        monkeypatch.delenv("OTAMAN_BRIDGE_DIR", raising=False)
+        monkeypatch.setenv("MAESTRO_BRIDGE_DIR", str(tmp_path / "legacy"))
+        p = endpoint_path("personal")
+        assert p.parent == tmp_path / "legacy"
+
+    def test_endpoint_path_otaman_wins_over_maestro(self, monkeypatch, tmp_path):
+        # When both set, OTAMAN_BRIDGE_DIR wins (matches the env-var
+        # priority pattern in otaman_core/_resolve.py).
+        monkeypatch.setenv("OTAMAN_BRIDGE_DIR", str(tmp_path / "otaman"))
+        monkeypatch.setenv("MAESTRO_BRIDGE_DIR", str(tmp_path / "maestro"))
+        p = endpoint_path("personal")
+        assert p.parent == tmp_path / "otaman"
 
 
 # ---------------------------------------------------------------------------

@@ -329,7 +329,10 @@ def _post_info_to_daemon(
     account = _resolve_account_for_notify()
     if not account:
         return False
-    endpoint_file = Path.home() / ".maestro" / f"bridge-{account}.endpoint"
+    # Use the shared endpoint_path resolver so OTAMAN_BRIDGE_DIR override
+    # works consistently (otaman-native deploys point at ~/.otaman/).
+    from otaman_bridge.daemon import endpoint_path as _endpoint_path
+    endpoint_file = _endpoint_path(account)
     if not endpoint_file.is_file():
         return False
     try:

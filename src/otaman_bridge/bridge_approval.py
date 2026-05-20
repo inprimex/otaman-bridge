@@ -98,8 +98,11 @@ def _derive_account(project_root: Path) -> str | None:
 
 
 def _endpoint_file(account: str) -> Path:
-    """Standard endpoint file path (same as bridge/daemon.py)."""
-    return Path.home() / ".maestro" / f"bridge-{account}.endpoint"
+    """Standard endpoint file path — delegates to the shared resolver so
+    ``OTAMAN_BRIDGE_DIR`` override applies here too.
+    """
+    from otaman_bridge.daemon import endpoint_path
+    return endpoint_path(account)
 
 
 def _read_endpoint(account: str) -> tuple[int, str] | None:

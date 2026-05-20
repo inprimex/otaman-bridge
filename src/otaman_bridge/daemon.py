@@ -76,8 +76,30 @@ _log = logging.getLogger("maestro.bridge.daemon")
 
 
 def endpoint_path(account: str, *, home: Path | None = None) -> Path:
-    """Standard location for the endpoint file."""
-    base = (home or Path.home()) / ".maestro"
+    """Standard location for the endpoint file.
+
+    Resolution order:
+      1. ``$OTAMAN_BRIDGE_DIR`` env var — absolute path to the directory
+         holding endpoint files. Use this for otaman-native deployments
+         pointing at ``~/.otaman/``.
+      2. ``$MAESTRO_BRIDGE_DIR`` env var — legacy alias.
+      3. ``<home>/.maestro/`` — default, kept for back-compat with
+         running daemons + tooling that doesn't know about the new path.
+
+    Per the CE/EE workspace migration, otaman-native deployments should
+    set ``OTAMAN_BRIDGE_DIR=$HOME/.otaman`` so endpoint files land
+    alongside the runner's ``~/.otaman/runner.endpoint``. Legacy
+    deployments (greenbin, personal, manual-test) continue to write to
+    ``~/.maestro/`` until each is migrated.
+    """
+    h = home or Path.home()
+    override = os.environ.get("OTAMAN_BRIDGE_DIR") or os.environ.get("MAESTRO_BRIDGE_DIR")
+    if override:
+        base = Path(override)
+        if not base.is_absolute():
+            base = h / base
+    else:
+        base = h / ".maestro"
     return base / f"bridge-{account}.endpoint"
 
 
