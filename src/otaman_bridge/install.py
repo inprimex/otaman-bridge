@@ -164,6 +164,10 @@ WorkingDirectory={workdir}
 # Lock the Python interpreter used at install time — survives PATH/conda/nvm
 # drift. Override with `systemctl --user edit` if needed.
 Environment="OTAMAN_PYTHON={python}"
+# Legacy MAESTRO_PYTHON alias for the otaman-cli/cli/maestro.sh wrapper,
+# which today still reads MAESTRO_PYTHON. Removed when maestro.sh learns
+# OTAMAN_PYTHON (task #52 follow-up).
+Environment="MAESTRO_PYTHON={python}"
 # Point endpoint files at ~/.otaman/ for otaman-native deployments;
 # legacy daemons (still using the maestro-bridge@.service unit) keep
 # writing to ~/.maestro/ via the default in endpoint_path().
