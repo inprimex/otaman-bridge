@@ -24,7 +24,7 @@ from otaman_bridge.core import (
     register_transport,
 )
 
-_log = logging.getLogger("maestro.bridge.null")
+_log = logging.getLogger("maestro.bridge.null")  # legacy: logger renamed at otaman-core 1.0
 
 
 @dataclass

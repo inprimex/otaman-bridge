@@ -1,23 +1,24 @@
-"""maestro afk — toggle the remote-approval "Away From Keyboard" mode.
+"""otaman afk — toggle the remote-approval "Away From Keyboard" mode.
 
 When AFK is on, the PreToolUse bridge hook (``hooks/bridge-approval.sh``)
 forwards permission prompts to the daemon instead of blocking on the
 terminal. When off (default on local sessions), Claude Code's native
 prompt shows and the daemon receives a fire-and-forget notification only.
 
-State is persisted to ``<maestro-root>/.maestro/afk`` — a tiny YAML file
+State is persisted to ``<workspace-root>/.otaman/afk`` — a tiny YAML file
 with TTL support so it survives restarts, sleep/wake, and reconnects
 without needing a background timer. Expired entries are deleted lazily
 on read.
 
-Duration grammar (``maestro afk on [DURATION]``):
+Duration grammar (``otaman afk on [DURATION]``):
     30s 15m 8h 2d 1w                # single unit
     1h30m 2d4h 1w3d                 # compound (sum of units)
     (no arg)                        # indefinite — clear with `afk off`
 
 Sources (``source:`` field in the file):
-    manual     — set by ``maestro afk on``
-    unattended — auto-set by SessionStart when MAESTRO_UNATTENDED=1
+    manual     — set by ``otaman afk on``
+    unattended — auto-set by SessionStart when OTAMAN_UNATTENDED=1
+                 (legacy: MAESTRO_UNATTENDED=1 accepted until otaman-core 1.0)
     ssh-auto   — legacy alias for ``unattended`` (older AFK files)
     idle-auto  — set by the daemon's IdleAFKMonitor after N min of no input
 
@@ -25,8 +26,9 @@ Notifications (cmd_on / cmd_off):
     Best-effort POST to the bridge daemon's ``/notify`` endpoint so the
     user gets a Telegram heads-up when AFK changes. Silent on any
     failure (daemon down, no account resolvable, etc.) — the CLI must
-    work without the daemon. Set ``MAESTRO_AFK_NO_NOTIFY=1`` to suppress
+    work without the daemon. Set ``OTAMAN_AFK_NO_NOTIFY=1`` to suppress
     in tests / scripted batches.
+    (legacy: MAESTRO_AFK_NO_NOTIFY=1 accepted until otaman-core 1.0)
 """
 
 from __future__ import annotations
@@ -52,7 +54,7 @@ except ImportError:
     )
     sys.exit(1)
 
-from otaman_core._resolve import find_maestro_root, active_routing_env  # noqa: E402
+from otaman_core._resolve import find_maestro_root, active_routing_env  # legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0  # noqa: E402
 
 
 AFK_FILENAME = "afk"
@@ -140,7 +142,7 @@ def format_remaining(delta: timedelta) -> str:
 
 @dataclass
 class AfkState:
-    """Parsed contents of ``.maestro/afk``."""
+    """Parsed contents of ``.otaman/afk``."""
 
     enabled_at: datetime
     expires_at: datetime | None
@@ -202,16 +204,37 @@ def _parse_iso(value: Any) -> datetime | None:
 
 
 def afk_path(maestro_root: Path) -> Path:
-    return maestro_root / ".maestro" / AFK_FILENAME
+    """Return the write path for the AFK file (always under .otaman/)."""
+    return maestro_root / ".otaman" / AFK_FILENAME
+
+
+def _afk_path_legacy(maestro_root: Path) -> Path:
+    return maestro_root / ".maestro" / AFK_FILENAME  # legacy: read-fallback until otaman-core 1.0
+
+
+_warned_legacy_afk: bool = False
 
 
 def read_afk(maestro_root: Path) -> AfkState | None:
     """Read the AFK file. Returns None if absent, unreadable, or expired.
 
+    Prefers .otaman/afk; falls back to .maestro/afk for legacy workspaces.
     Expired entries are deleted lazily — this is why the SessionStart
     hook doesn't need a background timer.
     """
+    global _warned_legacy_afk
     path = afk_path(maestro_root)
+    if not path.is_file():
+        legacy = _afk_path_legacy(maestro_root)
+        if legacy.is_file():
+            if not _warned_legacy_afk:
+                import logging as _logging
+                _logging.getLogger("maestro.bridge.afk").warning(  # legacy: logger renamed at 1.0
+                    "legacy: found afk file under .maestro/; "
+                    "rename directory to .otaman/ before otaman-core 1.0"
+                )
+                _warned_legacy_afk = True
+            path = legacy
     if not path.is_file():
         return None
     try:
@@ -234,7 +257,7 @@ def read_afk(maestro_root: Path) -> AfkState | None:
 
 
 def write_afk(maestro_root: Path, state: AfkState) -> Path:
-    """Write the AFK file, creating ``.maestro/`` if needed."""
+    """Write the AFK file, creating ``.otaman/`` if needed."""
     path = afk_path(maestro_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -246,14 +269,15 @@ def write_afk(maestro_root: Path, state: AfkState) -> Path:
 
 def clear_afk(maestro_root: Path) -> bool:
     """Remove the AFK file. Returns True if something was deleted."""
-    path = afk_path(maestro_root)
-    if path.exists():
-        try:
-            path.unlink()
-            return True
-        except OSError:
-            return False
-    return False
+    deleted = False
+    for path in (afk_path(maestro_root), _afk_path_legacy(maestro_root)):
+        if path.exists():
+            try:
+                path.unlink()
+                deleted = True
+            except OSError:
+                pass
+    return deleted
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +294,7 @@ def _resolve_account_for_notify() -> str | None:
     """Mirror of ``bridge_approval.py:_derive_account``.
 
     Priority: ``$OTAMAN_ACTIVE_ROUTING`` → ``CLAUDE_CONFIG_DIR`` basename →
-    ``.maestro`` marker's ``expected_account`` field. Returns None if
+    ``.otaman`` marker's ``expected_account`` field. Returns None if
     nothing resolves (caller should skip notifying).
     """
     env_account = active_routing_env()
@@ -324,7 +348,8 @@ def _post_info_to_daemon(
     maestro_root: Path, *, title: str, body: str, severity: str = "info",
 ) -> bool:
     """POST an InfoMessage to the local daemon. Returns True on success."""
-    if os.environ.get("MAESTRO_AFK_NO_NOTIFY") == "1":
+    # legacy: MAESTRO_AFK_NO_NOTIFY accepted until otaman-core 1.0
+    if os.environ.get("OTAMAN_AFK_NO_NOTIFY") == "1" or os.environ.get("MAESTRO_AFK_NO_NOTIFY") == "1":
         return False
     account = _resolve_account_for_notify()
     if not account:
@@ -350,7 +375,7 @@ def _post_info_to_daemon(
         "severity": severity,
         "title": title,
         "body": body,
-        "source_agent": "maestro-afk",
+        "source_agent": "otaman-afk",
         "bus_message_id": "",
     }
     data = json.dumps(payload).encode("utf-8")
@@ -378,7 +403,7 @@ def notify_afk_enabled(
             f"(at {state.expires_at.astimezone().strftime('%H:%M %Z')})."
         )
     else:
-        parts.append("No expiry — clear with `maestro afk off` or by "
+        parts.append("No expiry — clear with `otaman afk off` or by "
                      "starting a new Claude session.")
     if reason:
         parts.append(f"Note: {reason}")
@@ -467,7 +492,7 @@ def cmd_send_event(args: argparse.Namespace) -> int:
     directly (the bash hook keeps the diagnostic ``signal:`` line that
     cmd_on doesn't emit). Always exits 0; a failed notify is fine.
     """
-    root = find_maestro_root()
+    root = find_maestro_root()  # legacy: renamed find_otaman_root at otaman-core 1.0
     if root is None:
         return 0
     if args.event == "enabled":
@@ -504,11 +529,12 @@ def cmd_status(args: argparse.Namespace) -> int:  # noqa: ARG001
 
 
 def _require_root() -> Path:
-    root = find_maestro_root()
+    root = find_maestro_root()  # legacy: renamed find_otaman_root at otaman-core 1.0
     if root is None:
         print(
-            "ERROR: no maestro folder found. Run from inside a managed repo, "
-            "set MAESTRO_ROOT, or create a .maestro marker.",
+            "ERROR: no otaman workspace found. Run from inside a managed repo, "
+            "set OTAMAN_ROOT, or create a .otaman marker.",
+            # legacy: MAESTRO_ROOT and .maestro marker also accepted until otaman-core 1.0
             file=sys.stderr,
         )
         sys.exit(1)
@@ -517,7 +543,7 @@ def _require_root() -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="maestro afk",
+        prog="otaman afk",
         description="Toggle remote-approval AFK mode",
     )
     subs = parser.add_subparsers(dest="subcommand", required=True)

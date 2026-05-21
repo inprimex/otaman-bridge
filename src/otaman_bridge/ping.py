@@ -1,11 +1,11 @@
-"""maestro ping — explicitly surface a message to Telegram via the bridge.
+"""otaman ping — explicitly surface a message to Telegram via the bridge.
 
 Use when Claude (or the human) wants to proactively get the user's
 attention on their phone, outside the normal PreToolUse / Stop-hook
 paths. Posts a /notify to the daemon with the provided message.
 
-    maestro ping "something's blocked and I need input"
-    maestro ping --account riseapps "urgent: deploy failed"
+    otaman ping "something's blocked and I need input"
+    otaman ping --account riseapps "urgent: deploy failed"
 
 Behaves like the Stop hook's notification path but:
   - No transcript read; user provides the body directly.
@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # noqa: E402
+from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0  # noqa: E402
 
 
 def _derive_account(project_root: Path) -> str | None:
@@ -44,7 +44,8 @@ def _derive_account(project_root: Path) -> str | None:
 
 
 def _read_endpoint(account: str) -> tuple[int, str] | None:
-    path = Path.home() / ".maestro" / f"bridge-{account}.endpoint"
+    from otaman_bridge.daemon import endpoint_path  # noqa: PLC0415
+    path = endpoint_path(account)  # respects OTAMAN_BRIDGE_DIR / MAESTRO_BRIDGE_DIR
     if not path.is_file():
         return None
     try:
@@ -111,12 +112,12 @@ def ping(
         print("ERROR: message is required", file=sys.stderr)
         return 2
 
-    root = project_root or find_maestro_root()
+    root = project_root or find_maestro_root()  # legacy: renamed find_otaman_root at otaman-core 1.0
     resolved_account = account or _derive_account(root or Path.cwd())
     if not resolved_account:
         print(
             "ERROR: cannot determine account. Pass --account NAME, or run from "
-            "a maestro workspace with a .maestro marker.",
+            "an otaman workspace with a .otaman marker.",
             file=sys.stderr,
         )
         return 1
@@ -125,7 +126,7 @@ def ping(
     if endpoint is None:
         print(
             f"ERROR: daemon endpoint missing for account {resolved_account!r}. "
-            f"Start it with: maestro bridge run --account {resolved_account}",
+            f"Start it with: otaman bridge run --account {resolved_account}",
             file=sys.stderr,
         )
         return 1
@@ -165,7 +166,7 @@ def ping(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="maestro ping",
+        prog="otaman ping",
         description="Post a notification to the bridge (Telegram, etc.)",
     )
     parser.add_argument("message", nargs="+", help="Message body")

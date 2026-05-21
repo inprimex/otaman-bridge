@@ -14,7 +14,7 @@ from otaman_bridge.transports.null import NullTransport  # noqa: F401
 
 # TelegramTransport import is soft — if python-telegram-bot isn't installed,
 # the module raises ImportError only at constructor time, not import time.
-# This lets maestro bridge run --transport null work without the dep.
+# This lets otaman bridge run --transport null work without the dep.
 try:
     from otaman_bridge.transports.telegram import TelegramTransport  # noqa: F401
     _HAS_TELEGRAM = True

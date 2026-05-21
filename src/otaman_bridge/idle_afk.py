@@ -1,7 +1,7 @@
 """Idle-based auto-AFK — flip AFK on when the human goes quiet.
 
 Runs inside the bridge daemon's async loop as a periodic task. Watches
-``<maestro-root>/.maestro/last-user-activity`` (written by the
+``<workspace-root>/.otaman/last-user-activity`` (written by the
 UserPromptSubmit hook ``hooks/user-activity.sh``) and compares its
 mtime to ``now``.
 
@@ -29,7 +29,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-_log = logging.getLogger("maestro.bridge.idle_afk")
+_log = logging.getLogger("maestro.bridge.idle_afk")  # legacy: logger renamed at otaman-core 1.0
 
 
 AFK_FILENAME = "afk"
@@ -40,18 +40,37 @@ DEFAULT_POLL_SECONDS = 60.0
 MIN_IDLE_MINUTES = 1
 
 _IDLE_SOURCE = "idle-auto"
+_warned_legacy: set[str] = set()  # filenames already warned about
 
 
 def _state_dir(project_root: Path) -> Path:
-    return project_root / ".maestro"
+    return project_root / ".otaman"
+
+
+def _resolve_state_file(project_root: Path, filename: str) -> Path:
+    """Return the path for a state file, preferring .otaman/ over .maestro/."""
+    preferred = _state_dir(project_root) / filename
+    if preferred.is_file():
+        return preferred
+    legacy = project_root / ".maestro" / filename  # legacy: fallback until otaman-core 1.0
+    if legacy.is_file():
+        if filename not in _warned_legacy:
+            _log.warning(
+                "legacy: found %s under .maestro/; rename directory to .otaman/ "
+                "before otaman-core 1.0",
+                filename,
+            )
+            _warned_legacy.add(filename)
+        return legacy
+    return preferred  # neither exists yet; return preferred path (will be created on write)
 
 
 def _afk_file(project_root: Path) -> Path:
-    return _state_dir(project_root) / AFK_FILENAME
+    return _resolve_state_file(project_root, AFK_FILENAME)
 
 
 def _activity_file(project_root: Path) -> Path:
-    return _state_dir(project_root) / ACTIVITY_FILENAME
+    return _resolve_state_file(project_root, ACTIVITY_FILENAME)
 
 
 def _read_afk_source(path: Path) -> str | None:

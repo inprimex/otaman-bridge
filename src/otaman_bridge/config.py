@@ -164,7 +164,7 @@ def load_account_config(
         account: Account name (must match a key under ``accounts:`` in
             ``launch-settings.yaml``).
         settings_path: Path to ``launch-settings.yaml``.
-        maestro_root: Maestro folder path (for ``.maestro/secrets.env``
+        maestro_root: Workspace folder path (for ``.otaman/secrets.env``
             resolution). Defaults to ``settings_path.parent``.
         resolve_secrets: When False, leaves SecretRefs unresolved and
             reports them in ``unresolved_secrets``. Useful for tests

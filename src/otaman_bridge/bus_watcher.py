@@ -11,7 +11,7 @@ For each new message the surface policy approves:
     to write the appropriate bus response files.
 
 Deduplication: message IDs we've already surfaced are persisted to
-``<maestro-root>/.maestro/bus-surfaced.state`` — JSON dict of
+``<workspace-root>/.otaman/bus-surfaced.state`` — JSON dict of
 ``{msg_stem: timestamp}``. Pruned after 7 days so the file can't grow
 unbounded (archived messages stop appearing on disk anyway).
 """
@@ -35,21 +35,38 @@ from otaman_bridge.bus_surface import (
 )
 from otaman_bridge.core import ApprovalRequest, InfoMessage
 
-_log = logging.getLogger("maestro.bridge.bus_watcher")
+_log = logging.getLogger("maestro.bridge.bus_watcher")  # legacy: logger renamed at otaman-core 1.0
 
 
 POLL_INTERVAL_SECONDS = 2.0      # how often we re-scan the bus
 PRUNE_OLDER_THAN_SECONDS = 7 * 24 * 60 * 60   # drop state entries older than this
 STATE_FILENAME = "bus-surfaced.state"
 
+_warned_legacy_state: bool = False
+
 
 def _state_path(project_root: Path) -> Path:
-    return project_root / ".maestro" / STATE_FILENAME
+    return project_root / ".otaman" / STATE_FILENAME
+
+
+def _state_path_legacy(project_root: Path) -> Path:
+    return project_root / ".maestro" / STATE_FILENAME  # legacy: read-fallback until otaman-core 1.0
 
 
 def _load_state(project_root: Path) -> dict[str, float]:
     """Return ``{msg_stem: surfaced_at_unix_ts}``. Empty dict if absent/corrupt."""
+    global _warned_legacy_state
     path = _state_path(project_root)
+    if not path.is_file():
+        legacy = _state_path_legacy(project_root)
+        if legacy.is_file():
+            if not _warned_legacy_state:
+                _log.warning(
+                    "legacy: found bus-surfaced.state under .maestro/; "
+                    "rename to .otaman/ before otaman-core 1.0"
+                )
+                _warned_legacy_state = True
+            path = legacy
     if not path.is_file():
         return {}
     try:

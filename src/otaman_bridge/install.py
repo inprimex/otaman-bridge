@@ -1,17 +1,20 @@
 """Service-install helpers for the bridge daemon.
 
+Service-install helpers for the bridge daemon.
+
 Writes a system-appropriate init file (systemd --user on Linux, launchd
 on macOS; Windows stubbed) so the daemon survives logout and auto-
-restarts on crash. Called from `maestro bridge install`.
+restarts on crash. Called from `otaman bridge install`.
 
 Design §5.7:
-    Linux/WSL:  systemd --user — ~/.config/systemd/user/maestro-bridge@.service
+    Linux/WSL:  systemd --user — ~/.config/systemd/user/otaman-bridge@.service
+                (legacy: maestro-bridge@.service units also supported for back-compat)
     macOS:      launchd agent — ~/Library/LaunchAgents/com.otaman.bridge.<account>.plist
     Windows:    NSSM / Scheduled Task (stubbed for v1)
 
 The generated unit locks the Python interpreter used at install time
 (``MAESTRO_PYTHON`` env var) so the service keeps working even if the
-user's shell PATH / conda env / nvm state drifts later.
+user's shell PATH / conda env / nvm state drifts later.  # legacy: MAESTRO_PYTHON env var renamed at otaman-core 1.0
 """
 
 from __future__ import annotations
@@ -41,12 +44,12 @@ def detect_system() -> str:
 
 
 def resolve_maestro_cli() -> Path:
-    """Locate the maestro/otaman CLI wrapper (``cli/maestro.sh``).
+    """Locate the otaman CLI wrapper (``cli/maestro.sh``).
 
     Resolution chain (post-Step-1 carve):
     1. Sibling otaman-cli checkout: ../otaman-cli/cli/maestro.sh
-    2. Sibling legacy maestro-plugin checkout: ../maestro-plugin/cli/maestro.sh
-    3. \maestro\ on PATH (fallback)
+    2. Sibling legacy maestro-plugin checkout: ../maestro-plugin/cli/maestro.sh  # legacy: until maestro-plugin is retired
+    3. ``otaman`` / ``maestro`` on PATH (legacy: maestro alias removed at otaman-core 1.0)
     """
     here = Path(__file__).resolve()
     # src/otaman_bridge/install.py → otaman-bridge/ → otaman/
@@ -62,12 +65,12 @@ def resolve_maestro_cli() -> Path:
         candidate2 = project_root / sibling / rel
         if candidate2.is_file():
             return candidate2
-    found = shutil.which("maestro") or shutil.which("otaman")
+    found = shutil.which("otaman") or shutil.which("maestro")  # legacy: maestro alias removed at otaman-core 1.0
     if found:
         return Path(found).resolve()
     raise RuntimeError(
-        "could not locate maestro/otaman CLI wrapper (expected "
-        "otaman-cli/cli/maestro.sh, maestro-plugin/cli/maestro.sh, or `maestro`/`otaman` on PATH)"
+        "could not locate otaman CLI wrapper (expected "
+        "otaman-cli/cli/maestro.sh, or `otaman` on PATH)"
     )
 
 
@@ -76,14 +79,14 @@ def resolve_working_dir(override: Path | str | None = None) -> Path:
 
     Falls back through:
       1. Explicit ``override`` (from --working-dir).
-      2. ``find_maestro_root()`` from the current process's cwd.
+      2. ``find_maestro_root()`` from the current process's cwd.  # legacy: renamed find_otaman_root at otaman-core 1.0
       3. Current cwd.
     """
     if override:
         return Path(override).expanduser().resolve()
     try:
-        # Lazy import so this module stays usable outside a maestro workspace.
-        from otaman_core._resolve import find_maestro_root
+        # Lazy import so this module stays usable outside an otaman workspace.
+        from otaman_core._resolve import find_maestro_root  # legacy: renamed find_otaman_root at otaman-core 1.0
         root = find_maestro_root()
         if root is not None:
             return root
@@ -426,9 +429,9 @@ class WindowsInstallNotSupported(RuntimeError):
 def install_windows(target: InstallTarget, **_kwargs) -> list[str]:  # noqa: ARG001
     raise WindowsInstallNotSupported(
         "Windows service install is not yet implemented. Options:\n"
-        "  - Run `maestro bridge run --account <name>` in a dedicated terminal\n"
+        "  - Run `otaman bridge run --account <name>` in a dedicated terminal\n"
         "  - Install NSSM (https://nssm.cc/) and wrap the daemon manually\n"
-        "  - Use Task Scheduler with trigger At log on, action = maestro.sh\n"
+        "  - Use Task Scheduler with trigger At log on, action = maestro.sh\n"  # legacy: maestro.sh renamed at otaman-core 1.0
         "Tracking: design §5.7 scopes this for a future release."
     )
 

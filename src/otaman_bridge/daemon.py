@@ -4,7 +4,7 @@ Design rationale (§5.3 / §9):
 - Loopback HTTP everywhere (not unix sockets / named pipes) so one
   implementation works on Linux, macOS, WSL, and Windows, and a future
   local UI reuses the same endpoint.
-- Bearer token stored in ``~/.maestro/bridge-<account>.endpoint`` (mode
+- Bearer token stored in ``~/.otaman/bridge-<account>.endpoint`` (mode
   0600). Token rotates on every daemon restart.
 - Same-user processes can impersonate — accepted, matches unix-socket
   trust boundary.
@@ -19,7 +19,7 @@ Routes:
     POST /shutdown   — graceful stop, removes endpoint file
 
 All routes require ``Authorization: Bearer <token>`` except ``GET /status``
-which returns sanitized info without auth (intentional: lets `maestro bridge
+which returns sanitized info without auth (intentional: lets `otaman bridge
 status` introspect a daemon it doesn't own the token for).
 """
 
@@ -68,7 +68,7 @@ _ACTION_TO_DECISION: dict[str, str] = {
 # as a module-level name so tests can monkeypatch it down to sub-second.
 SNOOZE_SECONDS = 15 * 60
 
-_log = logging.getLogger("maestro.bridge.daemon")
+_log = logging.getLogger("maestro.bridge.daemon")  # legacy: logger renamed at otaman-core 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -83,14 +83,15 @@ def endpoint_path(account: str, *, home: Path | None = None) -> Path:
          holding endpoint files. Use this for otaman-native deployments
          pointing at ``~/.otaman/``.
       2. ``$MAESTRO_BRIDGE_DIR`` env var — legacy alias.
-      3. ``<home>/.maestro/`` — default, kept for back-compat with
+      3. ``<home>/.maestro/`` — legacy: default kept for back-compat with
          running daemons + tooling that doesn't know about the new path.
+         Will be changed to ``~/.otaman/`` as the default at otaman-core 1.0.
 
     Per the CE/EE workspace migration, otaman-native deployments should
     set ``OTAMAN_BRIDGE_DIR=$HOME/.otaman`` so endpoint files land
     alongside the runner's ``~/.otaman/runner.endpoint``. Legacy
     deployments (greenbin, personal, manual-test) continue to write to
-    ``~/.maestro/`` until each is migrated.
+    ``~/.maestro/`` until each is migrated.  # legacy: remove default at otaman-core 1.0
     """
     h = home or Path.home()
     override = os.environ.get("OTAMAN_BRIDGE_DIR") or os.environ.get("MAESTRO_BRIDGE_DIR")
@@ -99,7 +100,7 @@ def endpoint_path(account: str, *, home: Path | None = None) -> Path:
         if not base.is_absolute():
             base = h / base
     else:
-        base = h / ".maestro"
+        base = h / ".maestro"  # legacy: default changes to ~/.otaman/ at otaman-core 1.0
     return base / f"bridge-{account}.endpoint"
 
 
@@ -431,8 +432,8 @@ class BridgeDaemon:
         self.endpoint_file = endpoint_file or endpoint_path(account)
         # T2d: optional bus watcher. When provided, the daemon drains
         # .agents/bus/active/ at a polling interval and surfaces matching
-        # messages via the transport. bus_watcher_root is the maestro
-        # folder to watch; bus_watcher_project is the project name for
+        # messages via the transport. bus_watcher_root is the otaman
+        # workspace to watch; bus_watcher_project is the project name for
         # Telegram titles (defaults to root.name if empty).
         self.bus_watcher_root = bus_watcher_root
         self.bus_watcher_project = bus_watcher_project
@@ -645,7 +646,7 @@ class BridgeDaemon:
                 raise RuntimeError(
                     f"endpoint file already exists and a daemon IS running on "
                     f"port {existing.get('port')}: {self.endpoint_file} "
-                    f"(run `maestro bridge stop --account {self.account}` first)"
+                    f"(run `otaman bridge stop --account {self.account}` first)"
                 )
             _log.info(
                 "found stale endpoint file (port %s unreachable); replacing it",
@@ -713,8 +714,8 @@ class BridgeDaemon:
             )
 
         # Idle-auto-AFK monitor: enabled when idle_auto_afk_minutes > 0
-        # AND a maestro root is configured (shares bus_watcher_root since
-        # last-user-activity lives in the same .maestro/ directory).
+        # AND an otaman workspace is configured (shares bus_watcher_root since
+        # last-user-activity lives in the same .otaman/ directory).
         if (self.idle_auto_afk_minutes > 0
                 and self.bus_watcher_root is not None):
             from otaman_bridge.bus_surface import resolve_project_name  # noqa: PLC0415
@@ -750,7 +751,7 @@ class BridgeDaemon:
         # DCR shim cleanup sweep (D6). Background task that periodically
         # prunes shim-managed apps older than ``cleanup_ttl_seconds``. Off
         # when shim disabled or sweep_interval=0 (manual cleanup via the
-        # `maestro bridge dcr-cleanup` CLI command still works).
+        # `otaman bridge dcr-cleanup` CLI command still works).
         self._dcr_sweep_future = None
         if (
             self.idp_config is not None
@@ -847,7 +848,7 @@ class BridgeDaemon:
         """Graceful shutdown — remove endpoint file, cancel pending approvals.
 
         Ordering matters: we delete the endpoint file *before* the slow
-        async teardown so ``maestro bridge stop`` — which polls the
+        async teardown so ``otaman bridge stop`` — which polls the
         endpoint file as its primary "daemon gone" signal — doesn't
         block for the full transport.close()/async-drain budget. Once
         the HTTP server is shut down the daemon can't serve any more
@@ -876,7 +877,7 @@ class BridgeDaemon:
             # (fresh daemon reads state from disk but bus messages that
             # were surfaced but un-decided stay idempotent: ack absent,
             # watcher's state says "already surfaced" — user taps land
-            # empty until `/maestro:approve` locally resolves them).
+            # empty until `/otaman:approve` locally resolves them).
             self._pending_bus.clear()
 
         if self._server is not None:
@@ -884,9 +885,9 @@ class BridgeDaemon:
             self._server.server_close()
             self._server = None
 
-        # Drop the endpoint file NOW so `maestro bridge stop` returns
+        # Drop the endpoint file NOW so `otaman bridge stop` returns
         # promptly. The remaining async-loop cancellation below happens
-        # in the background; a concurrent `maestro bridge run` is free
+        # in the background; a concurrent `otaman bridge run` is free
         # to start a new daemon at this point.
         try:
             self.endpoint_file.unlink(missing_ok=True)
@@ -1861,7 +1862,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
 
 
 # ---------------------------------------------------------------------------
-# Client helpers — tests + `maestro bridge` CLI call these.
+# Client helpers — tests + `otaman bridge` CLI call these.
 
 
 def daemon_url(port: int, host: str = "127.0.0.1") -> str:

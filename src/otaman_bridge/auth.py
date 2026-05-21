@@ -9,7 +9,7 @@ challenge when no identity is found.
 CE providers (this file):
 
 - ``LoopbackAuthProvider`` — validates the loopback bearer token stored
-  in ``~/.maestro/bridge-<account>.endpoint`` for same-host CLI traffic.
+  in ``~/.otaman/bridge-<account>.endpoint`` for same-host CLI traffic.
   Returns a ``CallContext`` with an empty ``user_id`` (loopback has no
   user identity), so MCP tools that require a user reject it via the
   ``IDENTITY_REQUIRED_TOOLS`` gate.
@@ -70,7 +70,7 @@ class LoopbackAuthProvider:
     """Validates the daemon's loopback bearer token.
 
     The token is generated at daemon startup and written to the
-    per-account endpoint file. CLI introspection (``maestro bridge
+    per-account endpoint file. CLI introspection (``otaman bridge
     status`` etc.) reads it from there. Loopback callers have no
     user identity — the returned ``CallContext.user_id`` is empty,
     which causes MCP tools requiring a user to reject via the

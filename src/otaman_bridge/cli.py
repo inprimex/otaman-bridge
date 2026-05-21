@@ -1,4 +1,4 @@
-"""maestro bridge — daemon lifecycle CLI.
+"""otaman bridge — daemon lifecycle CLI.
 
 Subcommands:
     run     Start the daemon in the foreground for an account.
@@ -56,9 +56,9 @@ def _iter_account_names(settings_path: Path) -> list[str]:
 
 
 def _resolve_settings_path() -> Path:
-    """Find launch-settings.yaml via the maestro-root resolver."""
-    from otaman_core._resolve import find_maestro_root  # lazy import — keeps CLI faster
-    root = find_maestro_root()
+    """Find launch-settings.yaml via the otaman workspace resolver."""
+    from otaman_core._resolve import find_maestro_root  # legacy: renamed find_otaman_root at otaman-core 1.0  # lazy import
+    root = find_maestro_root()  # legacy: renamed find_otaman_root at otaman-core 1.0
     if root is None:
         return Path.cwd() / "launch-settings.yaml"
     return root / "launch-settings.yaml"
@@ -100,7 +100,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     print(
                         f"ERROR: unresolved secrets for account {args.account!r}: "
                         f"{sorted(account_cfg.unresolved_secrets)}. "
-                        f"Populate via env / .maestro/secrets.env / keychain.",
+                        f"Populate via env / .otaman/secrets.env / keychain.",
                         file=sys.stderr,
                     )
                     return 1
@@ -147,14 +147,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             # Explicit path provided.
             bus_watcher_root = Path(args.watch_bus).expanduser().resolve()
         else:
-            # Auto-resolve via the maestro-root resolver.
-            from otaman_core._resolve import find_maestro_root  # noqa: PLC0415
-            resolved = find_maestro_root()
+            # Auto-resolve via the otaman workspace resolver.
+            from otaman_core._resolve import find_maestro_root  # legacy: renamed find_otaman_root at otaman-core 1.0  # noqa: PLC0415
+            resolved = find_maestro_root()  # legacy: renamed find_otaman_root at otaman-core 1.0
             if resolved is None:
                 print(
-                    "ERROR: --watch-bus requested but no maestro folder found. "
-                    "Pass --watch-bus /path/to/maestro explicitly or cd into "
-                    "a maestro-managed directory.",
+                    "ERROR: --watch-bus requested but no otaman workspace found. "
+                    "Pass --watch-bus /path/to/workspace explicitly or cd into "
+                    "an otaman-managed directory.",
                     file=sys.stderr,
                 )
                 return 1
@@ -190,7 +190,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     print(
-        f"maestro bridge: account={args.account} "
+        f"otaman bridge: account={args.account} "
         f"transport={transport_name} "
         f"port={daemon.port} "
         f"endpoint={daemon.endpoint_file}"
@@ -205,7 +205,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         #                         handle_shutdown's background thread)
         # Without the second condition, /shutdown tears down the HTTP
         # server + transport but leaves cmd_run idling forever, which
-        # looks like a zombie daemon to `maestro bridge stop` callers.
+        # looks like a zombie daemon to `otaman bridge stop` callers.
         while not stop_event.is_set() and not daemon._shutdown_requested.is_set():
             stop_event.wait(timeout=0.5)
     finally:
@@ -294,7 +294,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
     A "stale" endpoint file means the prior daemon crashed or was killed
     without getting through its cleanup path (Ctrl-C interrupted too hard,
-    OOM, power loss). The next `maestro bridge run` would then fail with
+    OOM, power loss). The next `otaman bridge run` would then fail with
     "endpoint file already exists". This command handles that case by
     detecting the connection-refused → stale signal and cleaning up
     automatically.
@@ -327,14 +327,14 @@ def cmd_stop(args: argparse.Namespace) -> int:
     except urllib.error.URLError as e:
         # Connection refused / timeout typically means the daemon process
         # already died but left the endpoint file behind. Auto-clean so the
-        # user can `maestro bridge run` again without manual `rm`.
+        # user can `otaman bridge run` again without manual `rm`.
         reason = str(e).lower()
         if any(s in reason for s in ("refused", "timeout", "timed out", "no route")):
             print(f"Daemon on port {port} not responding — process appears dead, "
                   f"cleaning up stale endpoint file.")
             try:
                 endpoint_file.unlink()
-                print(f"Stale endpoint removed. Run `maestro bridge run "
+                print(f"Stale endpoint removed. Run `otaman bridge run "
                       f"--account {args.account}` to start a fresh daemon.")
                 return 0
             except OSError as ue:
@@ -370,7 +370,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
             f"after 5s — shutdown is hung. Try SIGTERM directly:\n"
             f"  kill -TERM {data.get('pid')}\n"
             f"Or, if installed as a systemd service:\n"
-            f"  systemctl --user stop maestro-bridge@{args.account}",
+            f"  systemctl --user stop otaman-bridge@{args.account}",
             file=sys.stderr,
         )
         return 1
@@ -507,7 +507,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     if system == "windows-nssm":
         print(
             "ERROR: Windows service install is not yet supported.\n"
-            "  Run `maestro bridge run` in a dedicated terminal instead.\n"
+            "  Run `otaman bridge run` in a dedicated terminal instead.\n"
             "  (See design §5.7 — scoped for a future release.)",
             file=sys.stderr,
         )
@@ -560,12 +560,12 @@ def cmd_install(args: argparse.Namespace) -> int:
     print(f"Installed {len(accounts)} service(s). Check status with:")
     if system == "linux-systemd":
         for a in accounts:
-            print(f"  systemctl --user status maestro-bridge@{a}")
-            print(f"  journalctl --user -u maestro-bridge@{a} -f")
+            print(f"  systemctl --user status otaman-bridge@{a}")
+            print(f"  journalctl --user -u otaman-bridge@{a} -f")
     elif system == "macos-launchd":
         for a in accounts:
-            print(f"  launchctl list | grep com.maestro.bridge.{a}")
-            print(f"  tail -f ~/Library/Logs/maestro-bridge/maestro-bridge-{a}.log")
+            print(f"  launchctl list | grep com.otaman.bridge.{a}")
+            print(f"  tail -f ~/Library/Logs/otaman-bridge/otaman-bridge-{a}.log")
     return 0
 
 
@@ -611,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
     # httpx/httpcore print every request URL — and the Telegram Bot API
     # puts the token in the path (`/bot<TOKEN>/getUpdates`), so an INFO
     # log line leaks the whole secret. Drop them to WARNING; only errors
-    # surface. Maestro's own `maestro.bridge.*` loggers stay at INFO.
+    # surface. Legacy `maestro.bridge.*` loggers stay at INFO (renamed at otaman-core 1.0).
     for noisy in (
         "httpx",
         "httpcore",
@@ -622,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     parser = argparse.ArgumentParser(
-        prog="maestro bridge",
+        prog="otaman bridge",
         description="Remote-approval bridge daemon lifecycle",
     )
     subs = parser.add_subparsers(dest="subcommand", required=True)
@@ -641,19 +641,19 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument(
         "--watch-bus", nargs="?", const="-", default=None,
         help="Poll .agents/bus/active/ and surface new messages to the "
-             "transport. Pass a path to the maestro folder to watch, or use "
-             "bare --watch-bus to auto-resolve via the maestro-root finder.",
+             "transport. Pass a path to the otaman workspace to watch, or use "
+             "bare --watch-bus to auto-resolve via the workspace finder.",
     )
     p_run.add_argument(
         "--watch-bus-project", default="",
         help="Project name used in surfaced message titles (defaults to "
-             "the maestro folder name).",
+             "the workspace folder name).",
     )
     p_run.add_argument(
         "--idle-auto-afk-minutes", type=int, default=0,
         help="Minutes of UserPromptSubmit inactivity before auto-enabling "
              "AFK (0 = disabled). Needs --watch-bus (shares the same "
-             "maestro root). Clears the auto-entry when you come back.",
+             "otaman workspace root). Clears the auto-entry when you come back.",
     )
     p_run.set_defaults(func=cmd_run)
 
@@ -696,7 +696,7 @@ def main(argv: list[str] | None = None) -> int:
                            choices=["linux-systemd", "macos-launchd", "windows-nssm"],
                            help="Override auto-detected platform (mostly for testing)")
     p_install.add_argument("--working-dir",
-                           help="Override WorkingDirectory (default: resolved maestro root)")
+                           help="Override WorkingDirectory (default: resolved otaman workspace root)")
     p_install.add_argument("--no-enable", action="store_true",
                            help="Linux only — skip `systemctl enable` (won't autostart on boot)")
     p_install.add_argument("--no-start", action="store_true",
@@ -714,7 +714,7 @@ def main(argv: list[str] | None = None) -> int:
     p_install.add_argument(
         "--idle-auto-afk-minutes", type=int, default=0,
         help="Auto-enable AFK after N minutes of UserPromptSubmit inactivity "
-             "(0 = disabled). The daemon watches .maestro/last-user-activity "
+             "(0 = disabled). The daemon watches .otaman/last-user-activity "
              "and flips AFK on/off based on human presence.",
     )
     p_install.add_argument("--dry-run", action="store_true",
