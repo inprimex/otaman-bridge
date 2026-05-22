@@ -17,14 +17,14 @@ import pytest
 
 from otaman_bridge.daemon import BridgeDaemon, read_endpoint_file
 from otaman_bridge.transports.null import NullTransport
-from otaman_bridge.web_auth import (
+from otaman_bridge_ee.web_auth import (
     LoginCompleteError,
     LoginFlow,
     PendingLoginStore,
     TokenExchangeError,
     WebAuthConfig,
 )
-from otaman_bridge.web_session import Session, SessionCookie, SessionStore
+from otaman_bridge_ee.web_session import Session, SessionCookie, SessionStore
 
 
 @pytest.fixture

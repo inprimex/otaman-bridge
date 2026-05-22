@@ -49,7 +49,7 @@ class TestBuildWebLoginFlowFromEnv:
         assert _build_web_login_flow_from_env() is None
 
     def test_returns_pair_when_fully_configured(self, monkeypatch):
-        from otaman_bridge.web_auth import LoginFlow, PendingLoginStore
+        from otaman_bridge_ee.web_auth import LoginFlow, PendingLoginStore
         monkeypatch.setenv("OTAMAN_AUTH_MODE", "oidc")
         monkeypatch.setenv("OIDC_ISSUER", "https://otaman.example/auth")
         monkeypatch.setenv("OIDC_AUDIENCE_BRIDGE", "bridge-client-id")

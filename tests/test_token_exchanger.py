@@ -11,7 +11,7 @@ import urllib.parse
 
 import pytest
 
-from otaman_bridge.web_auth import (
+from otaman_bridge_ee.web_auth import (
     TokenExchanger,
     TokenExchangeError,
     TokenResponse,

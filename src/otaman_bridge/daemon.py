@@ -4,7 +4,7 @@ Design rationale (§5.3 / §9):
 - Loopback HTTP everywhere (not unix sockets / named pipes) so one
   implementation works on Linux, macOS, WSL, and Windows, and a future
   local UI reuses the same endpoint.
-- Bearer token stored in ``~/.maestro/bridge-<account>.endpoint`` (mode
+- Bearer token stored in ``~/.otaman/bridge-<account>.endpoint`` (mode
   0600). Token rotates on every daemon restart.
 - Same-user processes can impersonate — accepted, matches unix-socket
   trust boundary.
@@ -19,7 +19,7 @@ Routes:
     POST /shutdown   — graceful stop, removes endpoint file
 
 All routes require ``Authorization: Bearer <token>`` except ``GET /status``
-which returns sanitized info without auth (intentional: lets `maestro bridge
+which returns sanitized info without auth (intentional: lets `otaman bridge
 status` introspect a daemon it doesn't own the token for).
 """
 
@@ -68,7 +68,7 @@ _ACTION_TO_DECISION: dict[str, str] = {
 # as a module-level name so tests can monkeypatch it down to sub-second.
 SNOOZE_SECONDS = 15 * 60
 
-_log = logging.getLogger("maestro.bridge.daemon")
+_log = logging.getLogger("maestro.bridge.daemon")  # legacy: logger renamed at otaman-core 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -76,8 +76,31 @@ _log = logging.getLogger("maestro.bridge.daemon")
 
 
 def endpoint_path(account: str, *, home: Path | None = None) -> Path:
-    """Standard location for the endpoint file."""
-    base = (home or Path.home()) / ".maestro"
+    """Standard location for the endpoint file.
+
+    Resolution order:
+      1. ``$OTAMAN_BRIDGE_DIR`` env var — absolute path to the directory
+         holding endpoint files. Use this for otaman-native deployments
+         pointing at ``~/.otaman/``.
+      2. ``$MAESTRO_BRIDGE_DIR`` env var — legacy alias.
+      3. ``<home>/.maestro/`` — legacy: default kept for back-compat with
+         running daemons + tooling that doesn't know about the new path.
+         Will be changed to ``~/.otaman/`` as the default at otaman-core 1.0.
+
+    Per the CE/EE workspace migration, otaman-native deployments should
+    set ``OTAMAN_BRIDGE_DIR=$HOME/.otaman`` so endpoint files land
+    alongside the runner's ``~/.otaman/runner.endpoint``. Legacy
+    deployments (greenbin, personal, manual-test) continue to write to
+    ``~/.maestro/`` until each is migrated.  # legacy: remove default at otaman-core 1.0
+    """
+    h = home or Path.home()
+    override = os.environ.get("OTAMAN_BRIDGE_DIR") or os.environ.get("MAESTRO_BRIDGE_DIR")
+    if override:
+        base = Path(override)
+        if not base.is_absolute():
+            base = h / base
+    else:
+        base = h / ".maestro"  # legacy: default changes to ~/.otaman/ at otaman-core 1.0
     return base / f"bridge-{account}.endpoint"
 
 
@@ -369,7 +392,11 @@ def _build_web_login_flow_from_env():
             bool(issuer), bool(client_id), bool(redirect_uri),
         )
         return None
-    from otaman_bridge.web_auth import LoginFlow, PendingLoginStore, WebAuthConfig
+    try:
+        from otaman_bridge_ee.web_auth import LoginFlow, PendingLoginStore, WebAuthConfig
+    except ImportError:
+        _log.info("EE package absent; web-login flow disabled")
+        return None
     cfg = WebAuthConfig(
         issuer=issuer,
         client_id=client_id,
@@ -405,8 +432,8 @@ class BridgeDaemon:
         self.endpoint_file = endpoint_file or endpoint_path(account)
         # T2d: optional bus watcher. When provided, the daemon drains
         # .agents/bus/active/ at a polling interval and surfaces matching
-        # messages via the transport. bus_watcher_root is the maestro
-        # folder to watch; bus_watcher_project is the project name for
+        # messages via the transport. bus_watcher_root is the otaman
+        # workspace to watch; bus_watcher_project is the project name for
         # Telegram titles (defaults to root.name if empty).
         self.bus_watcher_root = bus_watcher_root
         self.bus_watcher_project = bus_watcher_project
@@ -426,13 +453,20 @@ class BridgeDaemon:
         # daemon serves AS metadata overlay routes pointing at itself,
         # so MCP clients (Claude Code) can do RFC 7591 against Zitadel
         # which lacks native DCR. None = inert.
-        from otaman_bridge.dcr_shim import IdpConfig, MetadataCache
-        self.idp_config = IdpConfig.from_env()
-        self._idp_metadata_cache = (
-            MetadataCache(ttl_seconds=self.idp_config.metadata_cache_seconds)
-            if self.idp_config is not None
-            else None
-        )
+        #
+        # DCR shim is EE-only (Phase 2b). CE-only builds (EE absent) skip
+        # idp_config entirely — no DCR routes, no metadata overlay.
+        self.idp_config = None
+        self._idp_metadata_cache = None
+        try:
+            from otaman_bridge_ee.dcr_shim import IdpConfig, MetadataCache
+            self.idp_config = IdpConfig.from_env()
+            if self.idp_config is not None:
+                self._idp_metadata_cache = MetadataCache(
+                    ttl_seconds=self.idp_config.metadata_cache_seconds
+                )
+        except ImportError:
+            _log.debug("EE package absent; DCR shim disabled")
         if self.idp_config is not None:
             _log.info(
                 "DCR shim enabled (type=%s mgmt=%s trust=%s cache=%ds)",
@@ -452,8 +486,11 @@ class BridgeDaemon:
         self.session_cookie = None
         self.login_completer = None
         if self.web_login_flow is not None:
-            from otaman_bridge.web_auth import LoginCompleter, TokenExchanger
-            from otaman_bridge.web_session import SessionCookie, SessionStore
+            # web_login_flow is only ever non-None when EE imports succeeded
+            # in _build_web_login_flow_from_env, so these imports always
+            # resolve here.
+            from otaman_bridge_ee.web_auth import LoginCompleter, TokenExchanger
+            from otaman_bridge_ee.web_session import SessionCookie, SessionStore
             self.session_store = SessionStore()
             # Cookie Secure flag derived from the registered redirect_uri
             # scheme (https -> Secure, http -> not). Production always
@@ -466,6 +503,44 @@ class BridgeDaemon:
                 session_store=self.session_store,
                 pending_store=self.web_login_flow.store,
             )
+
+        # Auth provider seam (CE/EE split per
+        # otaman-meta/strategy/bridge-ce-ee-split.md §5).
+        # Phase 1: introduced the Protocol + CE providers in otaman_bridge.auth.
+        # Phase 2a: OIDCAuthProvider moved to otaman_bridge_ee.auth_oidc.
+        #
+        # The EE provider is imported conditionally so the CE-only build
+        # (no EE package installed) falls back to a loopback-only chain.
+        # When EE IS installed, OIDCAuthProvider is in the chain — its
+        # activity is gated on validator_getter() returning non-None at
+        # call time, so tests can reassign daemon.oidc_validator /
+        # session_store / session_cookie at runtime and have the auth
+        # chain track changes without rebuilding the composite.
+        from otaman_bridge.auth import CompositeAuthProvider, LoopbackAuthProvider
+        providers: list = []
+        try:
+            from otaman_bridge_ee.auth_oidc import OIDCAuthProvider
+        except ImportError:
+            _log.info("EE package not installed; CE-only auth chain (loopback only)")
+            OIDCAuthProvider = None  # type: ignore[assignment]
+        if OIDCAuthProvider is not None:
+            providers.append(OIDCAuthProvider(
+                validator_getter=lambda d=self: d.oidc_validator,
+                session_store_getter=lambda d=self: d.session_store,
+                session_cookie_getter=lambda d=self: d.session_cookie,
+                resource_url_fn=_resolve_public_resource_url,
+            ))
+        providers.append(LoopbackAuthProvider(token=self.token))
+        self.auth_provider = CompositeAuthProvider(providers=tuple(providers))
+
+        # EE DCR routes (/oauth/register + /.well-known/* overlay). When
+        # EE is absent, the handler is None and the daemon's do_POST /
+        # do_GET fall through to the catch-all 404.
+        try:
+            from otaman_bridge_ee.routes_dcr import try_handle as _ee_dcr_try_handle
+            self._ee_dcr_try_handle = _ee_dcr_try_handle
+        except ImportError:
+            self._ee_dcr_try_handle = None
 
         # MCP server: tool registry for the team-mode v0 cross-user
         # visibility flow. Always built (even when web_login_flow is
@@ -525,7 +600,15 @@ class BridgeDaemon:
         self.mcp_server.register(build_get_recent_activity_tool(
             inbox=self.inbox, runner_client=self._runner_client,
         ))
-        self.mcp_server.register(build_kill_session_for_user_tool(
+        # Pick the admin-gated EE builder when EE is installed; else CE's
+        # un-gated builder (Q2 (a) decision: CE = mutual-trust small team).
+        try:
+            from otaman_bridge_ee.mcp_tools_admin import (
+                build_kill_session_for_user_tool_admin as _build_kill_session,
+            )
+        except ImportError:
+            _build_kill_session = build_kill_session_for_user_tool
+        self.mcp_server.register(_build_kill_session(
             runner_client=self._runner_client,
         ))
         _log.info("MCP: messaging tools registered (inbox=%s)", self.inbox.root)
@@ -563,7 +646,7 @@ class BridgeDaemon:
                 raise RuntimeError(
                     f"endpoint file already exists and a daemon IS running on "
                     f"port {existing.get('port')}: {self.endpoint_file} "
-                    f"(run `maestro bridge stop --account {self.account}` first)"
+                    f"(run `otaman bridge stop --account {self.account}` first)"
                 )
             _log.info(
                 "found stale endpoint file (port %s unreachable); replacing it",
@@ -631,8 +714,8 @@ class BridgeDaemon:
             )
 
         # Idle-auto-AFK monitor: enabled when idle_auto_afk_minutes > 0
-        # AND a maestro root is configured (shares bus_watcher_root since
-        # last-user-activity lives in the same .maestro/ directory).
+        # AND an otaman workspace is configured (shares bus_watcher_root since
+        # last-user-activity lives in the same .otaman/ directory).
         if (self.idle_auto_afk_minutes > 0
                 and self.bus_watcher_root is not None):
             from otaman_bridge.bus_surface import resolve_project_name  # noqa: PLC0415
@@ -668,7 +751,7 @@ class BridgeDaemon:
         # DCR shim cleanup sweep (D6). Background task that periodically
         # prunes shim-managed apps older than ``cleanup_ttl_seconds``. Off
         # when shim disabled or sweep_interval=0 (manual cleanup via the
-        # `maestro bridge dcr-cleanup` CLI command still works).
+        # `otaman bridge dcr-cleanup` CLI command still works).
         self._dcr_sweep_future = None
         if (
             self.idp_config is not None
@@ -765,7 +848,7 @@ class BridgeDaemon:
         """Graceful shutdown — remove endpoint file, cancel pending approvals.
 
         Ordering matters: we delete the endpoint file *before* the slow
-        async teardown so ``maestro bridge stop`` — which polls the
+        async teardown so ``otaman bridge stop`` — which polls the
         endpoint file as its primary "daemon gone" signal — doesn't
         block for the full transport.close()/async-drain budget. Once
         the HTTP server is shut down the daemon can't serve any more
@@ -794,7 +877,7 @@ class BridgeDaemon:
             # (fresh daemon reads state from disk but bus messages that
             # were surfaced but un-decided stay idempotent: ack absent,
             # watcher's state says "already surfaced" — user taps land
-            # empty until `/maestro:approve` locally resolves them).
+            # empty until `/otaman:approve` locally resolves them).
             self._pending_bus.clear()
 
         if self._server is not None:
@@ -802,9 +885,9 @@ class BridgeDaemon:
             self._server.server_close()
             self._server = None
 
-        # Drop the endpoint file NOW so `maestro bridge stop` returns
+        # Drop the endpoint file NOW so `otaman bridge stop` returns
         # promptly. The remaining async-loop cancellation below happens
-        # in the background; a concurrent `maestro bridge run` is free
+        # in the background; a concurrent `otaman bridge run` is free
         # to start a new daemon at this point.
         try:
             self.endpoint_file.unlink(missing_ok=True)
@@ -1317,7 +1400,7 @@ class BridgeDaemon:
         the daemon finish startup before the first sweep request to Zitadel.
         Failures are logged but never abort the loop.
         """
-        from otaman_bridge.dcr_shim import sweep_orphans
+        from otaman_bridge_ee.dcr_shim import sweep_orphans
         cfg = self.idp_config
         interval = cfg.cleanup_sweep_interval_seconds
         _log.info(
@@ -1370,7 +1453,7 @@ class BridgeDaemon:
         has_client_creds = bool(cfg.machine_user_client_id and cfg.machine_user_client_secret)
         if not cfg.org_id or not (has_pat or has_client_creds):
             return None
-        from otaman_bridge.dcr_shim import ZitadelMgmtClient
+        from otaman_bridge_ee.dcr_shim import ZitadelMgmtClient
         # token endpoint is the standard OIDC location on the mgmt host.
         token_url = f"{cfg.management_base_url}/oauth/v2/token"
         self._dcr_mgmt_client_cached = ZitadelMgmtClient(
@@ -1418,68 +1501,24 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                        fmt % args)
 
         def _auth_identify(self):
-            """Identify the caller across all three auth paths.
+            """Identify the caller via the daemon's configured AuthProvider.
 
-            Returns a CallContext for OIDC bearer / session cookie /
-            loopback bearer, or None if all paths reject. Mirrors
-            _auth_ok's three-way logic but surfaces the user identity
-            so MCP tool handlers can attribute the request.
+            Delegates to ``daemon.auth_provider.identify(self.headers)``.
+            The provider chain composes OIDC bearer + session cookie +
+            loopback bearer when OIDC is configured; loopback alone
+            otherwise. See ``otaman_bridge.auth`` for the seam design.
             """
-            from otaman_bridge.mcp_server import CallContext
-            header = self.headers.get("Authorization", "")
-            if daemon.oidc_validator is not None and header.startswith("Bearer "):
-                result = daemon.oidc_validator.validate(header)
-                if result.ok:
-                    return CallContext(
-                        user_id=result.user_id or "",
-                        user_email=result.email,
-                        roles=tuple(result.roles),
-                    )
-            if daemon.session_store is not None and daemon.session_cookie is not None:
-                cookie_header = self.headers.get("Cookie", "")
-                sid = daemon.session_cookie.parse(cookie_header)
-                if sid is not None:
-                    sess = daemon.session_store.get(sid)
-                    if sess is not None:
-                        return CallContext(
-                            user_id=sess.user_id,
-                            user_email=sess.email,
-                            roles=tuple(sess.roles),
-                        )
-            if header.startswith("Bearer "):
-                supplied = header[len("Bearer "):].strip()
-                if _secrets.compare_digest(supplied, daemon.token):
-                    # Loopback bearer = same-host CLI; no user identity
-                    return CallContext(user_id="", user_email=None, roles=())
-            return None
+            return daemon.auth_provider.identify(self.headers)
 
         def _auth_ok(self) -> bool:
-            # When OIDC is configured, try it first. Fall back to the
-            # loopback bearer for local same-host clients (CLI
-            # introspection, `maestro bridge status`, etc.).
-            header = self.headers.get("Authorization", "")
-            if daemon.oidc_validator is not None and header.startswith("Bearer "):
-                result = daemon.oidc_validator.validate(header)
-                if result.ok:
-                    _log.debug("OIDC auth ok: user_id=%s roles=%s", result.user_id, result.roles)
-                    return True
-                # OIDC failed; fall through to loopback bearer (don't 401
-                # yet — same-host CLI may be using the loopback token).
-            # session cookie auth path: try the browser session cookie
-            # before falling back to loopback bearer
-            if daemon.session_store is not None and daemon.session_cookie is not None:
-                cookie_header = self.headers.get("Cookie", "")
-                sid = daemon.session_cookie.parse(cookie_header)
-                if sid is not None:
-                    sess = daemon.session_store.get(sid)
-                    if sess is not None:
-                        _log.debug("session cookie auth ok: user_id=%s", sess.user_id)
-                        return True
-                    # Unknown / expired cookie; fall through to loopback
-            if not header.startswith("Bearer "):
-                return False
-            supplied = header[len("Bearer "):].strip()
-            return _secrets.compare_digest(supplied, daemon.token)
+            """Authorize a request without caring about user identity.
+
+            Delegates to ``daemon.auth_provider.identify`` — any
+            non-None CallContext means the request is authorized for
+            non-identity-requiring routes. Identity-requiring routes
+            use ``_auth_identify`` directly to surface the user.
+            """
+            return daemon.auth_provider.identify(self.headers) is not None
 
         def _drain_body(self) -> None:
             """Consume the request body so Windows doesn't RST on close.
@@ -1534,11 +1573,21 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
         ) -> None:
             """Send 401 with a WWW-Authenticate challenge per RFC 6750 + 9728.
 
-            The header lets MCP clients (Claude Code) discover this
-            bridge's OIDC issuer and run the auth_code+PKCE flow without
-            any preconfigured token. Falls back to a plain 401 without
-            the challenge when OIDC isn't configured on this daemon —
-            there's no authorization server to point at anyway.
+            Delegates challenge construction to the configured
+            ``AuthProvider``. When the provider chain includes an
+            ``OIDCAuthProvider``, the 401 carries a Bearer challenge
+            pointing at the bridge's protected-resource-metadata
+            endpoint so MCP clients (Claude Code) can discover the
+            issuer and run auth_code+PKCE. CE-style providers (loopback
+            / simple) return None and the 401 ships without a challenge
+            header — there's no authorization server to point at.
+
+            ``error`` lets callers send ``insufficient_scope`` instead
+            of the default ``invalid_token`` when the caller IS
+            authenticated (loopback bearer) but lacks user identity for
+            an identity-required MCP tool. This signals to MCP clients
+            that they should upgrade to an OIDC bearer rather than
+            retry the same auth.
             """
             try:
                 self._drain_body()
@@ -1549,12 +1598,22 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Connection", "close")
-            if daemon.oidc_validator is not None:
-                rm_url = (
-                    f"{_resolve_public_resource_url(self.headers.get('Host', ''))}"
-                    f"/.well-known/oauth-protected-resource"
-                )
-                challenge = f'Bearer resource_metadata="{rm_url}", error="{error}"'
+            host = self.headers.get("Host", "")
+            # Prefer OIDC's challenge_with_error so the error code can
+            # be overridden (insufficient_scope vs invalid_token). Fall
+            # back to the generic challenge() for providers that don't
+            # have a per-error variant. OIDCAuthProvider lives in the
+            # EE package (Phase 2a); CE-only builds skip this path.
+            try:
+                from otaman_bridge_ee.auth_oidc import OIDCAuthProvider
+                oidc = daemon.auth_provider.first_of_type(OIDCAuthProvider)
+            except ImportError:
+                oidc = None
+            if oidc is not None:
+                challenge = oidc.challenge_with_error(host, error)
+            else:
+                challenge = daemon.auth_provider.challenge(host)
+            if challenge is not None:
                 self.send_header("WWW-Authenticate", challenge)
             self.end_headers()
             self.wfile.write(payload)
@@ -1564,6 +1623,11 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:  # noqa: N802 — stdlib name
             import urllib.parse as _u_parse_post
             route = _u_parse_post.urlparse(self.path).path.rstrip("/")
+            # EE-DCR routes first (Phase 2c). When EE is absent, handler
+            # is None — falls through to CE's own route table.
+            if daemon._ee_dcr_try_handle is not None:
+                if daemon._ee_dcr_try_handle(self, daemon, "POST", route):
+                    return
             if route == "/mcp":
                 # MCP JSON-RPC endpoint. Auth via the standard three-path
                 # _auth_identify; tools see the caller via CallContext.
@@ -1652,82 +1716,6 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     status, resp = 404, {"error": "unknown route"}
                 self._reply_json(status, resp)
                 return
-            if route == "/oauth/register":
-                # DCR endpoint (RFC 7591). Validates the request, looks
-                # up an existing app by deterministic fingerprint name
-                # (reuse path), and creates a new Zitadel OIDC app when
-                # not found. Returns the resulting client_id in RFC 7591
-                # client_information_response shape.
-                if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
-                    self._reply_error(404, "DCR shim not enabled")
-                    return
-                # Trust gate (design §4.1):
-                #   open      — accept any caller
-                #   protected — require an authenticated user (real OIDC
-                #               bearer; loopback bearer's empty user_id is
-                #               not enough)
-                if daemon.idp_config.registration_trust == "protected":
-                    ctx = self._auth_identify()
-                    if ctx is None or not getattr(ctx, "user_id", ""):
-                        self._reply_unauthenticated(
-                            error="invalid_token",
-                            description="DCR shim requires authenticated user when trust=protected",
-                        )
-                        return
-                body = self._read_body()
-                if body is None:
-                    self._reply_json(400, {
-                        "error": "invalid_client_metadata",
-                        "error_description": "request body is not valid JSON",
-                    })
-                    return
-                from otaman_bridge.dcr_shim import (
-                    DCRError,
-                    ZitadelMgmtError,
-                    find_or_create_client,
-                    parse_register_request,
-                    to_rfc7591_response,
-                )
-                try:
-                    request = parse_register_request(body)
-                except DCRError as exc:
-                    self._reply_json(exc.http_status, {
-                        "error": exc.error,
-                        "error_description": exc.description,
-                    })
-                    return
-                # Lazy-build the mgmt client (idempotent — once per daemon).
-                mgmt_client = daemon.get_or_build_dcr_mgmt_client()
-                if mgmt_client is None:
-                    self._reply_json(503, {
-                        "error": "server_error",
-                        "error_description": (
-                            "DCR shim enabled but management API credentials "
-                            "(client_id/client_secret/org_id) are not configured."
-                        ),
-                    })
-                    return
-                try:
-                    client_id = find_or_create_client(
-                        mgmt_client=mgmt_client,
-                        project_id=daemon.idp_config.project_id,
-                        request=request,
-                        name_prefix=daemon.idp_config.managed_name_prefix,
-                    )
-                except ZitadelMgmtError as exc:
-                    _log.warning("DCR mgmt API failure: %s", exc)
-                    self._reply_json(502, {
-                        "error": "server_error",
-                        "error_description": f"upstream IdP rejected: {exc}",
-                    })
-                    return
-                import time as _t
-                self._reply_json(201, to_rfc7591_response(
-                    request=request,
-                    client_id=client_id,
-                    now_unix=int(_t.time()),
-                ))
-                return
             self._reply_error(404, f"unknown route: {self.path}")
 
         def _render_root_html(self, daemon) -> str:
@@ -1779,73 +1767,16 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             # falls through to the 404 handler for any URL with a query.
             import urllib.parse as _u_parse
             route = _u_parse.urlparse(self.path).path.rstrip("/")
+            # EE-DCR routes (/.well-known/* metadata overlays). When EE
+            # is absent, handler is None and we fall through to CE's
+            # own route table.
+            if daemon._ee_dcr_try_handle is not None:
+                if daemon._ee_dcr_try_handle(self, daemon, "GET", route):
+                    return
             if route == "/status":
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
                 self._reply_json(status, resp)
-                return
-            if route == "/.well-known/oauth-protected-resource":
-                # RFC 9728 Protected Resource Metadata. Unauthenticated by
-                # design — MCP clients fetch this to discover the OIDC
-                # issuer before they have a token. If OIDC isn't enabled
-                # on this daemon, there's no protected resource to describe.
-                if daemon.oidc_validator is None:
-                    self._reply_error(404, "OIDC not configured on this bridge")
-                    return
-                resource = _resolve_public_resource_url(self.headers.get("Host", ""))
-                # With the DCR shim enabled (D3+), advertise the bridge
-                # itself as the authorization server so MCP clients fetch
-                # the AS metadata overlay (with injected registration_endpoint)
-                # from us. Without the shim, point clients at the real
-                # OIDC issuer URL directly (chunk B behavior).
-                if daemon.idp_config is not None and daemon.idp_config.dcr_shim:
-                    authorization_server = resource
-                else:
-                    authorization_server = daemon.oidc_validator.config.issuer
-                metadata = _build_protected_resource_metadata(
-                    issuer=authorization_server,
-                    resource=resource,
-                )
-                self._reply_json(200, metadata)
-                return
-            if route in (
-                "/.well-known/oauth-authorization-server",
-                "/.well-known/openid-configuration",
-            ):
-                # AS metadata overlay (mcp-oauth chunk D3). Only served
-                # when the DCR shim is enabled — without it, MCP clients
-                # are routed directly to the IdP's own metadata URL by
-                # /.well-known/oauth-protected-resource above. Same payload
-                # for both paths (different MCP clients prefer different
-                # ones; serve both).
-                if daemon.idp_config is None or not daemon.idp_config.dcr_shim:
-                    self._reply_error(404, "DCR shim not enabled on this bridge")
-                    return
-                from otaman_bridge.dcr_shim import (
-                    MetadataFetchError,
-                    derive_registration_endpoint,
-                    fetch_upstream_metadata,
-                    overlay_metadata,
-                )
-                cached = daemon._idp_metadata_cache.get()
-                if cached is None:
-                    try:
-                        cached = fetch_upstream_metadata(
-                            daemon.idp_config.management_base_url,
-                        )
-                    except MetadataFetchError as exc:
-                        _log.warning("AS metadata upstream fetch failed: %s", exc)
-                        self._reply_error(502, f"upstream metadata unavailable: {exc}")
-                        return
-                    daemon._idp_metadata_cache.put(cached)
-                bridge_url = _resolve_public_resource_url(self.headers.get("Host", ""))
-                overlaid = overlay_metadata(
-                    cached,
-                    registration_endpoint=derive_registration_endpoint(
-                        bridge_public_url=bridge_url,
-                    ),
-                )
-                self._reply_json(200, overlaid)
                 return
             if route == "" or route == "/":
                 # Minimal landing page so a browser landing here after
@@ -1883,7 +1814,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     self._reply_error(503, "web login flow not configured")
                     return
                 import urllib.parse as _u
-                from otaman_bridge.web_auth import LoginCompleteError, TokenExchangeError
+                from otaman_bridge_ee.web_auth import LoginCompleteError, TokenExchangeError
                 qs = _u.urlparse(self.path).query
                 params = dict(_u.parse_qsl(qs))
                 if "error" in params:
@@ -1931,7 +1862,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
 
 
 # ---------------------------------------------------------------------------
-# Client helpers — tests + `maestro bridge` CLI call these.
+# Client helpers — tests + `otaman bridge` CLI call these.
 
 
 def daemon_url(port: int, host: str = "127.0.0.1") -> str:

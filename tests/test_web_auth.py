@@ -1,4 +1,4 @@
-"""Tests for otaman_bridge.web_auth -- PKCE login-flow helper.
+"""Tests for otaman_bridge_ee.web_auth -- PKCE login-flow helper.
 
 Pure data-structure + URL-construction tests. No HTTP, no Zitadel.
 """
@@ -11,7 +11,7 @@ import urllib.parse
 
 import pytest
 
-from otaman_bridge.web_auth import (
+from otaman_bridge_ee.web_auth import (
     DEFAULT_PENDING_TTL,
     DEFAULT_SCOPES,
     LoginFlow,

@@ -30,7 +30,7 @@ import pytest
 
 from otaman_bridge.daemon import BridgeDaemon, read_endpoint_file
 from otaman_bridge.transports.null import NullTransport
-from otaman_bridge.web_session import SessionCookie, SessionStore
+from otaman_bridge_ee.web_session import SessionCookie, SessionStore
 
 
 def _fake_oidc_validator(issuer: str = "https://zitadel.example") -> object:

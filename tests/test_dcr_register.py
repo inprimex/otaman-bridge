@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from otaman_bridge.daemon import BridgeDaemon, read_endpoint_file
-from otaman_bridge.dcr_shim import (
+from otaman_bridge_ee.dcr_shim import (
     ALLOWED_GRANT_TYPES,
     ALLOWED_RESPONSE_TYPES,
     DCRError,

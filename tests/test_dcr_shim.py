@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from otaman_bridge.dcr_shim import (
+from otaman_bridge_ee.dcr_shim import (
     IdpConfig,
     MetadataCache,
     MetadataFetchError,

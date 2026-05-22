@@ -2,24 +2,24 @@
 
 When the user taps Approve or Reject on a bus ``spec-change-request``
 card, the daemon has to record the decision in the same places a local
-``/maestro:approve`` run would:
+``/otaman:approve`` run would:
 
 1. Write the per-agent ack file at
    ``.agents/bus/active/acks/{msg-stem}.human.ack`` with body
    ``approved`` or ``rejected``.
 2. Broadcast a ``spec-change-approved`` (to: all) or
    ``spec-change-rejected`` (to: original proposer) message into the
-   active bus so all agents pick it up on their next ``/maestro:check``.
+   active bus so all agents pick it up on their next ``/otaman:check``.
 
 This module is deliberately self-contained — no transport, no asyncio,
-just file I/O — so it can also be reused by a future ``maestro bus
+just file I/O — so it can also be reused by a future ``otaman bus
 decide`` CLI or by tests.
 
 **Scope note**: T2d-3 does NOT invoke the OpenSpec CLI from the daemon
-itself. The broadcast message points humans at ``/maestro:approve`` /
+itself. The broadcast message points humans at ``/otaman:approve`` /
 ``openspec new change`` for the actual spec creation. The daemon's
 job is to durably record the *decision*; executing it stays in
-``cli/maestro.py`` (which has the OpenSpec-detection code path).
+``cli/maestro.py`` (which has the OpenSpec-detection code path).  # legacy: cli/maestro.py renamed at otaman-core 1.0
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from pathlib import Path
 
 from otaman_bridge.bus_surface import BusMessage
 
-_log = logging.getLogger("maestro.bridge.bus_decision")
+_log = logging.getLogger("maestro.bridge.bus_decision")  # legacy: logger renamed at otaman-core 1.0
 
 
 def _now_ts() -> tuple[str, str]:
@@ -41,7 +41,7 @@ def _now_ts() -> tuple[str, str]:
 
 
 def _slug(text: str) -> str:
-    """Lowercase slug for filenames — same shape as cli/maestro.py uses."""
+    """Lowercase slug for filenames — same shape as cli/maestro.py uses."""  # legacy: cli/maestro.py renamed at otaman-core 1.0
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:30] or "decision"
 
 
@@ -75,9 +75,9 @@ def broadcast_decision(
 ) -> Path:
     """Write a ``spec-change-{approved,rejected}`` message to the active bus.
 
-    Mirrors the format emitted by ``/maestro:approve`` locally (see
-    ``cli/maestro.py``), so downstream agents running
-    ``/maestro:check`` can't tell whether the decision came from
+    Mirrors the format emitted by ``/otaman:approve`` locally (see
+    ``cli/maestro.py``), so downstream agents running  # legacy: cli/maestro.py renamed at otaman-core 1.0
+    ``/otaman:check`` can't tell whether the decision came from
     Telegram or the terminal.
     """
     if decision not in ("approved", "rejected"):
@@ -115,7 +115,7 @@ The spec-change-request from **{proposer}** has been **approved** via the remote
 2. All agents will be notified when specs are committed (via post-commit hook)
 3. Affected agents should review updated specs and adapt implementation
 
-Use `/maestro:check` to track updates.
+Use `/otaman:check` to track updates.
 """
     else:  # rejected
         out_file = active / f"{ts_file}-human-to-{proposer}-spec-change-rejected.md"
@@ -179,7 +179,7 @@ def write_reply_message(
     Used when the user replies via Telegram (or an equivalent
     channel) to a bus card. The reply surfaces on the bus as a
     regular message ``from: human, to: <original proposer>`` so
-    the addressed agent picks it up on its next ``/maestro:check``.
+    the addressed agent picks it up on its next ``/otaman:check``.
 
     Unlike approve/reject, a reply does NOT resolve a
     spec-change-request's decision — the user may still follow up

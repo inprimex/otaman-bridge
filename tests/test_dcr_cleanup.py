@@ -16,7 +16,7 @@ import urllib.request
 
 import pytest
 
-from otaman_bridge.dcr_shim import (
+from otaman_bridge_ee.dcr_shim import (
     SweepReport,
     ZitadelMgmtClient,
     ZitadelMgmtError,

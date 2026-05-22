@@ -11,7 +11,7 @@ from otaman_bridge.mcp_tools import (
     build_list_team_sessions_tool,
 )
 from otaman_bridge.runner_client import RunnerAuthError, RunnerUnreachableError
-from otaman_bridge.web_session import SessionStore
+from otaman_bridge_ee.web_session import SessionStore
 
 
 # ---- Stubs ------------------------------------------------------------

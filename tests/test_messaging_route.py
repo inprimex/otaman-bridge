@@ -128,7 +128,7 @@ class TestEndToEnd:
         """
         daemon, endpoint = running_daemon
         # Inject a session for user-B so cookie auth works for check
-        from otaman_bridge.web_session import SessionStore, SessionCookie
+        from otaman_bridge_ee.web_session import SessionStore, SessionCookie
         daemon.session_store = SessionStore()
         daemon.session_cookie = SessionCookie(secure=False)
         sess = daemon.session_store.create(

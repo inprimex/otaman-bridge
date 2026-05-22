@@ -76,7 +76,7 @@ from otaman_bridge.core import (
     register_transport,
 )
 
-_log = logging.getLogger("maestro.bridge.telegram")
+_log = logging.getLogger("maestro.bridge.telegram")  # legacy: logger renamed at otaman-core 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ class TelegramTransport:
         if not bot_token:
             raise ValueError(
                 "TelegramTransport: bot_token is required (resolve via "
-                "env / .maestro/secrets.env / keychain — see bridge/config.py)"
+                "env / .otaman/secrets.env / keychain — see bridge/config.py)"
             )
         group_id = config.get("group_id")
         if group_id is None:
@@ -192,14 +192,15 @@ class TelegramTransport:
         self.auto_create_topics: bool = bool(
             config.get("auto_create_topics", True),
         )
-        # Per-account topic cache; defaults to ~/.maestro/bridge-<account>-topics.json.
+        # Per-account topic cache; defaults to ~/.otaman/bridge-<account>-topics.json.
         cache_file = config.get("topic_cache_file")
         if cache_file:
             self.topic_cache_file: Path = Path(cache_file).expanduser()
         else:
             account = config.get("account_name") or "default"
+            from otaman_bridge.daemon import endpoint_path as _ep  # noqa: PLC0415
             self.topic_cache_file = (
-                Path.home() / ".maestro" / f"bridge-{account}-topics.json"
+                _ep(account).parent / f"bridge-{account}-topics.json"
             )
 
         self._bot = Bot(token=self.bot_token)
@@ -360,7 +361,7 @@ class TelegramTransport:
 
         Order:
           1. Explicit ``topic_map[project]`` (from launch-settings.yaml).
-          2. Per-account cache (``.maestro/bridge-<account>-topics.json``).
+          2. Per-account cache (``.otaman/bridge-<account>-topics.json``).
           3. Auto-create via ``Bot.create_forum_topic`` if
              ``auto_create_topics`` is enabled; write result to cache.
           4. ``default_topic_id`` (catch-all fallback).

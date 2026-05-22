@@ -17,7 +17,7 @@ import pytest
 
 from otaman_bridge.daemon import BridgeDaemon
 from otaman_bridge.transports.null import NullTransport
-from otaman_bridge.web_auth import LoginFlow, PendingLoginStore, WebAuthConfig
+from otaman_bridge_ee.web_auth import LoginFlow, PendingLoginStore, WebAuthConfig
 
 
 @pytest.fixture

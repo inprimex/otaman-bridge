@@ -34,13 +34,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # noqa: E402
+from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0  # noqa: E402
 from otaman_bridge.afk import read_afk
 
 
 def _log_warn(msg: str) -> None:
     """Surface a warning to the user without blocking the prompt."""
-    print(f"maestro bridge: {msg}", file=sys.stderr)
+    print(f"otaman bridge: {msg}", file=sys.stderr)
 
 
 def _emit_allow_and_exit() -> None:
@@ -73,7 +73,7 @@ def _derive_account(project_root: Path) -> str | None:
     Priority:
       1. ``$OTAMAN_ACTIVE_ROUTING`` — set by the launcher (most reliable).
       2. ``CLAUDE_CONFIG_DIR`` basename — ``~/.claude-<name>`` → ``<name>``.
-      3. The managed repo's ``.maestro`` marker ``expected_account`` field.
+      3. The managed repo's ``.otaman`` marker ``expected_account`` field.
 
     Returns the account name, or ``None`` if nothing resolves — in which
     case the hook short-circuits to fail-safe (native prompt).
@@ -98,8 +98,11 @@ def _derive_account(project_root: Path) -> str | None:
 
 
 def _endpoint_file(account: str) -> Path:
-    """Standard endpoint file path (same as bridge/daemon.py)."""
-    return Path.home() / ".maestro" / f"bridge-{account}.endpoint"
+    """Standard endpoint file path — delegates to the shared resolver so
+    ``OTAMAN_BRIDGE_DIR`` override applies here too.
+    """
+    from otaman_bridge.daemon import endpoint_path
+    return endpoint_path(account)
 
 
 def _read_endpoint(account: str) -> tuple[int, str] | None:
@@ -174,7 +177,7 @@ def main() -> int:
     if not tool_name:
         _emit_allow_and_exit()
 
-    # --- Resolve maestro root + AFK state ---
+    # --- Resolve otaman workspace root + AFK state ---
     project_root = find_maestro_root()
     if project_root is None:
         _emit_allow_and_exit()
@@ -196,7 +199,7 @@ def main() -> int:
     if endpoint is None:
         _log_warn(
             f"AFK is on but daemon endpoint missing for account {account!r}. "
-            f"Run `maestro bridge run --account {account}` to start it."
+            f"Run `otaman bridge run --account {account}` to start it."
         )
         _emit_allow_and_exit()
     port, token = endpoint

@@ -1,17 +1,20 @@
 """Service-install helpers for the bridge daemon.
 
+Service-install helpers for the bridge daemon.
+
 Writes a system-appropriate init file (systemd --user on Linux, launchd
 on macOS; Windows stubbed) so the daemon survives logout and auto-
-restarts on crash. Called from `maestro bridge install`.
+restarts on crash. Called from `otaman bridge install`.
 
 Design §5.7:
-    Linux/WSL:  systemd --user — ~/.config/systemd/user/maestro-bridge@.service
-    macOS:      launchd agent — ~/Library/LaunchAgents/com.maestro.bridge.<account>.plist
+    Linux/WSL:  systemd --user — ~/.config/systemd/user/otaman-bridge@.service
+                (legacy: maestro-bridge@.service units also supported for back-compat)
+    macOS:      launchd agent — ~/Library/LaunchAgents/com.otaman.bridge.<account>.plist
     Windows:    NSSM / Scheduled Task (stubbed for v1)
 
 The generated unit locks the Python interpreter used at install time
 (``MAESTRO_PYTHON`` env var) so the service keeps working even if the
-user's shell PATH / conda env / nvm state drifts later.
+user's shell PATH / conda env / nvm state drifts later.  # legacy: MAESTRO_PYTHON env var renamed at otaman-core 1.0
 """
 
 from __future__ import annotations
@@ -41,12 +44,12 @@ def detect_system() -> str:
 
 
 def resolve_maestro_cli() -> Path:
-    """Locate the maestro/otaman CLI wrapper (``cli/maestro.sh``).
+    """Locate the otaman CLI wrapper (``cli/maestro.sh``).
 
     Resolution chain (post-Step-1 carve):
     1. Sibling otaman-cli checkout: ../otaman-cli/cli/maestro.sh
-    2. Sibling legacy maestro-plugin checkout: ../maestro-plugin/cli/maestro.sh
-    3. \maestro\ on PATH (fallback)
+    2. Sibling legacy maestro-plugin checkout: ../maestro-plugin/cli/maestro.sh  # legacy: until maestro-plugin is retired
+    3. ``otaman`` / ``maestro`` on PATH (legacy: maestro alias removed at otaman-core 1.0)
     """
     here = Path(__file__).resolve()
     # src/otaman_bridge/install.py → otaman-bridge/ → otaman/
@@ -62,12 +65,12 @@ def resolve_maestro_cli() -> Path:
         candidate2 = project_root / sibling / rel
         if candidate2.is_file():
             return candidate2
-    found = shutil.which("maestro") or shutil.which("otaman")
+    found = shutil.which("otaman") or shutil.which("maestro")  # legacy: maestro alias removed at otaman-core 1.0
     if found:
         return Path(found).resolve()
     raise RuntimeError(
-        "could not locate maestro/otaman CLI wrapper (expected "
-        "otaman-cli/cli/maestro.sh, maestro-plugin/cli/maestro.sh, or `maestro`/`otaman` on PATH)"
+        "could not locate otaman CLI wrapper (expected "
+        "otaman-cli/cli/maestro.sh, or `otaman` on PATH)"
     )
 
 
@@ -76,14 +79,14 @@ def resolve_working_dir(override: Path | str | None = None) -> Path:
 
     Falls back through:
       1. Explicit ``override`` (from --working-dir).
-      2. ``find_maestro_root()`` from the current process's cwd.
+      2. ``find_maestro_root()`` from the current process's cwd.  # legacy: renamed find_otaman_root at otaman-core 1.0
       3. Current cwd.
     """
     if override:
         return Path(override).expanduser().resolve()
     try:
-        # Lazy import so this module stays usable outside a maestro workspace.
-        from otaman_core._resolve import find_maestro_root
+        # Lazy import so this module stays usable outside an otaman workspace.
+        from otaman_core._resolve import find_maestro_root  # legacy: renamed find_otaman_root at otaman-core 1.0
         root = find_maestro_root()
         if root is not None:
             return root
@@ -145,11 +148,16 @@ def make_install_target(
 # systemd --user (Linux)
 
 
-SYSTEMD_UNIT_NAME = "maestro-bridge@.service"
+# Otaman-native unit name. Legacy "maestro-bridge@.service" units that
+# were installed before the rename keep working — their unit files stay
+# on disk, systemd keeps managing them — and per-project migration
+# (Phase C+) is what removes them. New installs use the otaman name.
+SYSTEMD_UNIT_NAME = "otaman-bridge@.service"
+LEGACY_SYSTEMD_UNIT_NAME = "maestro-bridge@.service"
 
 SYSTEMD_UNIT_TEMPLATE = """\
 [Unit]
-Description=Maestro remote-approval bridge (account %i)
+Description=Otaman bridge daemon (account %i)
 After=network-online.target
 Wants=network-online.target
 
@@ -158,12 +166,20 @@ Type=simple
 WorkingDirectory={workdir}
 # Lock the Python interpreter used at install time — survives PATH/conda/nvm
 # drift. Override with `systemctl --user edit` if needed.
+Environment="OTAMAN_PYTHON={python}"
+# Legacy MAESTRO_PYTHON alias for the otaman-cli/cli/maestro.sh wrapper,
+# which today still reads MAESTRO_PYTHON. Removed when maestro.sh learns
+# OTAMAN_PYTHON (task #52 follow-up).
 Environment="MAESTRO_PYTHON={python}"
+# Point endpoint files at ~/.otaman/ for otaman-native deployments;
+# legacy daemons (still using the maestro-bridge@.service unit) keep
+# writing to ~/.maestro/ via the default in endpoint_path().
+Environment="OTAMAN_BRIDGE_DIR=%h/.otaman"
 ExecStart={maestro_cli} bridge run --account %i{watch_bus_flag}{idle_flag}
 # Auto-restart on crash, but not too aggressively (exit 0 = intentional stop)
 Restart=on-failure
 RestartSec=5
-# Send logs to the journal (journalctl --user -u maestro-bridge@<account>)
+# Send logs to the journal (journalctl --user -u otaman-bridge@<account>)
 StandardOutput=journal
 StandardError=journal
 # Don't let a single stuck request take down the daemon forever
@@ -175,8 +191,17 @@ WantedBy=default.target
 
 
 def systemd_unit_path() -> Path:
-    """User-level systemd unit directory."""
+    """User-level systemd unit directory (otaman-bridge@.service)."""
     return Path.home() / ".config" / "systemd" / "user" / SYSTEMD_UNIT_NAME
+
+
+def legacy_systemd_unit_path() -> Path:
+    """Path of the pre-rename maestro-bridge@.service unit file.
+
+    Used by Phase D cleanup tooling to confirm legacy units before
+    archiving + removing.
+    """
+    return Path.home() / ".config" / "systemd" / "user" / LEGACY_SYSTEMD_UNIT_NAME
 
 
 def render_systemd_unit(target: InstallTarget) -> str:
@@ -227,7 +252,7 @@ def install_systemd(
     runner(["systemctl", "--user", "daemon-reload"], check=True)
     results.append("Ran: systemctl --user daemon-reload")
 
-    service = f"maestro-bridge@{target.account}.service"
+    service = f"otaman-bridge@{target.account}.service"
     if enable and start:
         runner(["systemctl", "--user", "enable", "--now", service], check=True)
         results.append(f"Enabled + started: {service}")
@@ -262,13 +287,15 @@ def uninstall_systemd(
     update, ``bridge stop`` for a one-shot stop.
     """
     results: list[str] = []
-    service = f"maestro-bridge@{account}.service"
-    # Don't `check=True` here — the service may already be stopped/disabled
-    # and systemctl returns nonzero in those cases. We just want a best-effort.
-    runner(["systemctl", "--user", "stop", service], check=False)
-    results.append(f"Stopped: {service}")
-    runner(["systemctl", "--user", "disable", service], check=False)
-    results.append(f"Disabled: {service}")
+    # Phase B-0a-3 of the CE/EE migration: stop both the new otaman-bridge
+    # unit AND the legacy maestro-bridge unit (if either was installed).
+    # `check=False` because either may not exist — best-effort cleanup.
+    for prefix in ("otaman-bridge", "maestro-bridge"):
+        service = f"{prefix}@{account}.service"
+        runner(["systemctl", "--user", "stop", service], check=False)
+        results.append(f"Stopped: {service}")
+        runner(["systemctl", "--user", "disable", service], check=False)
+        results.append(f"Disabled: {service}")
     return results
 
 
@@ -283,7 +310,7 @@ LAUNCHD_PLIST_TEMPLATE = """\
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.maestro.bridge.{account}</string>
+  <string>com.otaman.bridge.{account}</string>
   <key>ProgramArguments</key>
   <array>
     <string>{maestro_cli}</string>
@@ -296,8 +323,10 @@ LAUNCHD_PLIST_TEMPLATE = """\
   <string>{workdir}</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>MAESTRO_PYTHON</key>
+    <key>OTAMAN_PYTHON</key>
     <string>{python}</string>
+    <key>OTAMAN_BRIDGE_DIR</key>
+    <string>{home}/.otaman</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -307,20 +336,20 @@ LAUNCHD_PLIST_TEMPLATE = """\
     <false/>
   </dict>
   <key>StandardOutPath</key>
-  <string>{log_dir}/maestro-bridge-{account}.log</string>
+  <string>{log_dir}/otaman-bridge-{account}.log</string>
   <key>StandardErrorPath</key>
-  <string>{log_dir}/maestro-bridge-{account}.err</string>
+  <string>{log_dir}/otaman-bridge-{account}.err</string>
 </dict>
 </plist>
 """
 
 
 def launchd_plist_path(account: str) -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / f"com.maestro.bridge.{account}.plist"
+    return Path.home() / "Library" / "LaunchAgents" / f"com.otaman.bridge.{account}.plist"
 
 
 def launchd_log_dir() -> Path:
-    return Path.home() / "Library" / "Logs" / "maestro-bridge"
+    return Path.home() / "Library" / "Logs" / "otaman-bridge"
 
 
 def render_launchd_plist(target: InstallTarget) -> str:
@@ -338,6 +367,7 @@ def render_launchd_plist(target: InstallTarget) -> str:
         maestro_cli=target.maestro_cli,
         workdir=target.working_dir,
         python=target.python,
+        home=str(Path.home()),
         log_dir=launchd_log_dir(),
         watch_bus_args=watch_bus_args,
         idle_args=idle_args,
@@ -362,12 +392,12 @@ def install_launchd(
     # Idempotent: unload (ignore failure if not loaded), then load.
     runner(["launchctl", "unload", str(plist_path)], check=False)
     runner(["launchctl", "load", str(plist_path)], check=True)
-    results.append(f"Loaded: com.maestro.bridge.{target.account}")
+    results.append(f"Loaded: com.otaman.bridge.{target.account}")
 
     if start:
-        runner(["launchctl", "start", f"com.maestro.bridge.{target.account}"],
+        runner(["launchctl", "start", f"com.otaman.bridge.{target.account}"],
                check=False)
-        results.append(f"Started: com.maestro.bridge.{target.account}")
+        results.append(f"Started: com.otaman.bridge.{target.account}")
 
     return results
 
@@ -381,7 +411,7 @@ def uninstall_launchd(
     results: list[str] = []
     plist_path = launchd_plist_path(account)
     runner(["launchctl", "unload", str(plist_path)], check=False)
-    results.append(f"Unloaded: com.maestro.bridge.{account}")
+    results.append(f"Unloaded: com.otaman.bridge.{account}")
     if plist_path.exists():
         plist_path.unlink()
         results.append(f"Removed: {plist_path}")
@@ -399,9 +429,9 @@ class WindowsInstallNotSupported(RuntimeError):
 def install_windows(target: InstallTarget, **_kwargs) -> list[str]:  # noqa: ARG001
     raise WindowsInstallNotSupported(
         "Windows service install is not yet implemented. Options:\n"
-        "  - Run `maestro bridge run --account <name>` in a dedicated terminal\n"
+        "  - Run `otaman bridge run --account <name>` in a dedicated terminal\n"
         "  - Install NSSM (https://nssm.cc/) and wrap the daemon manually\n"
-        "  - Use Task Scheduler with trigger At log on, action = maestro.sh\n"
+        "  - Use Task Scheduler with trigger At log on, action = maestro.sh\n"  # legacy: maestro.sh renamed at otaman-core 1.0
         "Tracking: design §5.7 scopes this for a future release."
     )
 

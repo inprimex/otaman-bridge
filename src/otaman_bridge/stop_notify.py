@@ -13,11 +13,11 @@ in a row, or when the same question is re-emitted):
     - Content-hash dedup: never re-notify the exact same tail twice
       for the same session.
 
-State lives at ``<maestro-root>/.maestro/stop-notify.state`` as a small
+State lives at ``<workspace-root>/.otaman/stop-notify.state`` as a small
 JSON dict keyed by session_id. Entries older than 24h are pruned on
 write so the file can't grow unbounded.
 
-**Fail-safe contract**: any failure (no maestro root, no AFK, no
+**Fail-safe contract**: any failure (no otaman workspace, no AFK, no
 daemon, transcript unreadable, anything) exits 0. This is a
 convenience signal — never a blocker.
 """
@@ -33,7 +33,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # noqa: E402
+from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0  # noqa: E402
 from otaman_bridge.afk import read_afk  # noqa: E402
 
 
@@ -45,7 +45,7 @@ DETECTION_CHARS = 300   # look at last N chars for the `?` heuristic
 
 
 def _log_warn(msg: str) -> None:
-    print(f"maestro stop-notify: {msg}", file=sys.stderr)
+    print(f"otaman stop-notify: {msg}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,8 @@ def _derive_account(project_root: Path) -> str | None:
 
 
 def _endpoint_file(account: str) -> Path:
-    return Path.home() / ".maestro" / f"bridge-{account}.endpoint"
+    from otaman_bridge.daemon import endpoint_path  # noqa: PLC0415
+    return endpoint_path(account)  # respects OTAMAN_BRIDGE_DIR / MAESTRO_BRIDGE_DIR
 
 
 def _read_endpoint(account: str) -> tuple[int, str] | None:
@@ -260,7 +261,7 @@ def main() -> int:
     except (OSError, ValueError):
         return 0
 
-    project_root = find_maestro_root()
+    project_root = find_maestro_root()  # legacy: renamed find_otaman_root at otaman-core 1.0
     if project_root is None:
         return 0
 
@@ -280,7 +281,7 @@ def main() -> int:
     tail = text[-TAIL_CHARS:]
     content_hash = hashlib.sha256(tail.encode("utf-8")).hexdigest()[:16]
 
-    state_path = project_root / ".maestro" / "stop-notify.state"
+    state_path = project_root / ".otaman" / "stop-notify.state"
     if not debounce_ok(state_path, session_id, content_hash):
         return 0
 
