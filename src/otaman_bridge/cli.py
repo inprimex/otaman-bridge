@@ -611,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
     # httpx/httpcore print every request URL — and the Telegram Bot API
     # puts the token in the path (`/bot<TOKEN>/getUpdates`), so an INFO
     # log line leaks the whole secret. Drop them to WARNING; only errors
-    # surface. Legacy `maestro.bridge.*` loggers stay at INFO (renamed at otaman-core 1.0).
+    # surface. legacy: `maestro.bridge.*` loggers stay at INFO (renamed at otaman-core 1.0).
     for noisy in (
         "httpx",
         "httpcore",

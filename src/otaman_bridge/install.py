@@ -44,10 +44,10 @@ def detect_system() -> str:
 
 
 def resolve_maestro_cli() -> Path:
-    """Locate the otaman CLI wrapper (``cli/maestro.sh``).
+    """Locate the otaman CLI wrapper (legacy: cli/maestro.sh, renamed at otaman-core 1.0).
 
     Resolution chain (post-Step-1 carve):
-    1. Sibling otaman-cli checkout: ../otaman-cli/cli/maestro.sh
+    1. Sibling otaman-cli checkout: ../otaman-cli/cli/maestro.sh  # legacy: script renamed at otaman-core 1.0
     2. Sibling legacy maestro-plugin checkout: ../maestro-plugin/cli/maestro.sh  # legacy: until maestro-plugin is retired
     3. ``otaman`` / ``maestro`` on PATH (legacy: maestro alias removed at otaman-core 1.0)
     """
@@ -55,8 +55,8 @@ def resolve_maestro_cli() -> Path:
     # src/otaman_bridge/install.py → otaman-bridge/ → otaman/
     project_root = here.parent.parent.parent
     for sibling, rel in (
-        ("otaman-cli", "cli/maestro.sh"),
-        ("maestro-plugin", "cli/maestro.sh"),
+        ("otaman-cli", "cli/maestro.sh"),   # legacy: script renamed at otaman-core 1.0
+        ("maestro-plugin", "cli/maestro.sh"),  # legacy: until maestro-plugin is retired
     ):
         candidate = project_root.parent / sibling / rel
         if candidate.is_file():
@@ -68,9 +68,9 @@ def resolve_maestro_cli() -> Path:
     found = shutil.which("otaman") or shutil.which("maestro")  # legacy: maestro alias removed at otaman-core 1.0
     if found:
         return Path(found).resolve()
-    raise RuntimeError(
+    raise RuntimeError(  # legacy: cli/maestro.sh renamed at otaman-core 1.0
         "could not locate otaman CLI wrapper (expected "
-        "otaman-cli/cli/maestro.sh, or `otaman` on PATH)"
+        "otaman-cli/cli/maestro.sh, or `otaman` on PATH)"  # legacy: maestro.sh path
     )
 
 
@@ -109,7 +109,7 @@ class InstallTarget:
 
     account: str
     python: str           # absolute path to the Python interpreter
-    maestro_cli: Path     # absolute path to cli/maestro.sh (or `maestro`)
+    maestro_cli: Path     # legacy: cli/maestro.sh (or `maestro`) — renamed at otaman-core 1.0
     working_dir: Path     # cwd for the service; should contain launch-settings.yaml
     system: str           # linux-systemd | macos-launchd | windows-nssm
     watch_bus: bool = True  # pass --watch-bus so installed services drain the bus
@@ -148,12 +148,11 @@ def make_install_target(
 # systemd --user (Linux)
 
 
-# Otaman-native unit name. Legacy "maestro-bridge@.service" units that
-# were installed before the rename keep working — their unit files stay
-# on disk, systemd keeps managing them — and per-project migration
-# (Phase C+) is what removes them. New installs use the otaman name.
+# Otaman-native unit name. legacy: "maestro-bridge@.service" units installed
+# before the rename keep working — their unit files stay on disk, systemd keeps
+# managing them — and per-project migration (Phase C+) removes them.
 SYSTEMD_UNIT_NAME = "otaman-bridge@.service"
-LEGACY_SYSTEMD_UNIT_NAME = "maestro-bridge@.service"
+LEGACY_SYSTEMD_UNIT_NAME = "maestro-bridge@.service"  # legacy: pre-rename unit name, kept for Phase C+ cleanup
 
 SYSTEMD_UNIT_TEMPLATE = """\
 [Unit]
@@ -167,13 +166,13 @@ WorkingDirectory={workdir}
 # Lock the Python interpreter used at install time — survives PATH/conda/nvm
 # drift. Override with `systemctl --user edit` if needed.
 Environment="OTAMAN_PYTHON={python}"
-# Legacy MAESTRO_PYTHON alias for the otaman-cli/cli/maestro.sh wrapper,
-# which today still reads MAESTRO_PYTHON. Removed when maestro.sh learns
-# OTAMAN_PYTHON (task #52 follow-up).
+# legacy: MAESTRO_PYTHON alias for the otaman-cli/cli/maestro.sh wrapper,
+# legacy: which still reads MAESTRO_PYTHON. Removed when maestro.sh learns
+# legacy: OTAMAN_PYTHON (task #52 follow-up).
 Environment="MAESTRO_PYTHON={python}"
 # Point endpoint files at ~/.otaman/ for otaman-native deployments;
-# legacy daemons (still using the maestro-bridge@.service unit) keep
-# writing to ~/.maestro/ via the default in endpoint_path().
+# legacy: daemons still using the maestro-bridge@.service unit keep
+# legacy: writing to ~/.maestro/ via the default in endpoint_path().
 Environment="OTAMAN_BRIDGE_DIR=%h/.otaman"
 ExecStart={maestro_cli} bridge run --account %i{watch_bus_flag}{idle_flag}
 # Auto-restart on crash, but not too aggressively (exit 0 = intentional stop)
@@ -196,7 +195,7 @@ def systemd_unit_path() -> Path:
 
 
 def legacy_systemd_unit_path() -> Path:
-    """Path of the pre-rename maestro-bridge@.service unit file.
+    """Path of the pre-rename unit file (legacy: maestro-bridge@.service).
 
     Used by Phase D cleanup tooling to confirm legacy units before
     archiving + removing.
@@ -288,9 +287,9 @@ def uninstall_systemd(
     """
     results: list[str] = []
     # Phase B-0a-3 of the CE/EE migration: stop both the new otaman-bridge
-    # unit AND the legacy maestro-bridge unit (if either was installed).
+    # unit AND the legacy: maestro-bridge unit (if either was installed).
     # `check=False` because either may not exist — best-effort cleanup.
-    for prefix in ("otaman-bridge", "maestro-bridge"):
+    for prefix in ("otaman-bridge", "maestro-bridge"):  # legacy: maestro-bridge kept for Phase C+ cleanup
         service = f"{prefix}@{account}.service"
         runner(["systemctl", "--user", "stop", service], check=False)
         results.append(f"Stopped: {service}")

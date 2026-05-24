@@ -1,4 +1,4 @@
-"""Maestro remote-approval bridge.
+"""Otaman remote-approval bridge.
 
 The bridge routes PreToolUse permission prompts and bus notifications to
 a messenger (Telegram, Slack, Discord, Matrix, ...) via a pluggable

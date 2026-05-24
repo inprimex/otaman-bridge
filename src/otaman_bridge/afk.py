@@ -218,7 +218,7 @@ _warned_legacy_afk: bool = False
 def read_afk(maestro_root: Path) -> AfkState | None:
     """Read the AFK file. Returns None if absent, unreadable, or expired.
 
-    Prefers .otaman/afk; falls back to .maestro/afk for legacy workspaces.
+    Prefers .otaman/afk; falls back to .maestro/afk (legacy: until otaman-core 1.0).
     Expired entries are deleted lazily — this is why the SessionStart
     hook doesn't need a background timer.
     """
