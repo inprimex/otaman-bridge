@@ -14,3 +14,6 @@ build/
 htmlcov/
 .DS_Store
 Thumbs.db
+
+# Maestro marker file (local pointer to maestro folder)
+.otaman
