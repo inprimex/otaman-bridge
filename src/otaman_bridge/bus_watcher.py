@@ -63,8 +63,8 @@ def _load_state(project_root: Path) -> dict[str, float]:
         if legacy.is_file():
             if not _warned_legacy_state:
                 _log.warning(
-                    "legacy: found bus-surfaced.state under .maestro/; "
-                    "migrating to .otaman/ — remove .maestro/bus-surfaced.state "
+                    "legacy: found bus-surfaced.state under .maestro/; "  # legacy: read-fallback
+                    "migrating to .otaman/ — remove legacy .maestro/ file "  # legacy: migration log
                     "once .otaman/bus-surfaced.state is confirmed present"
                 )
                 _warned_legacy_state = True
@@ -87,13 +87,13 @@ def _load_state(project_root: Path) -> dict[str, float]:
             continue
     # One-time migration: write to .otaman/ immediately so the canonical path
     # exists after restart even if no new messages surface this scan cycle.
-    # The legacy file under .maestro/ is left in place (operator removes it
-    # once .otaman/bus-surfaced.state is confirmed present).
+    # legacy: The state file under .maestro/ is left for the operator to remove
+    # once they confirm .otaman/bus-surfaced.state is present.
     if migrating_from_legacy:
         _save_state(project_root, out)
         _log.info(
-            "legacy: migrated bus-surfaced.state from .maestro/ to .otaman/ "
-            "(%d entries); safe to delete .maestro/bus-surfaced.state",
+            "legacy: migrated bus-surfaced.state from legacy dir to .otaman/ "
+            "(%d entries); safe to delete the legacy bus-surfaced.state file",  # legacy: migration log
             len(out),
         )
     return out
