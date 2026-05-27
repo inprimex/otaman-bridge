@@ -57,16 +57,19 @@ def _load_state(project_root: Path) -> dict[str, float]:
     """Return ``{msg_stem: surfaced_at_unix_ts}``. Empty dict if absent/corrupt."""
     global _warned_legacy_state
     path = _state_path(project_root)
+    migrating_from_legacy = False
     if not path.is_file():
         legacy = _state_path_legacy(project_root)
         if legacy.is_file():
             if not _warned_legacy_state:
                 _log.warning(
                     "legacy: found bus-surfaced.state under .maestro/; "
-                    "rename to .otaman/ before otaman-core 1.0"
+                    "migrating to .otaman/ — remove .maestro/bus-surfaced.state "
+                    "once .otaman/bus-surfaced.state is confirmed present"
                 )
                 _warned_legacy_state = True
             path = legacy
+            migrating_from_legacy = True
     if not path.is_file():
         return {}
     try:
@@ -82,6 +85,17 @@ def _load_state(project_root: Path) -> dict[str, float]:
             out[str(k)] = float(v)
         except (TypeError, ValueError):
             continue
+    # One-time migration: write to .otaman/ immediately so the canonical path
+    # exists after restart even if no new messages surface this scan cycle.
+    # The legacy file under .maestro/ is left in place (operator removes it
+    # once .otaman/bus-surfaced.state is confirmed present).
+    if migrating_from_legacy:
+        _save_state(project_root, out)
+        _log.info(
+            "legacy: migrated bus-surfaced.state from .maestro/ to .otaman/ "
+            "(%d entries); safe to delete .maestro/bus-surfaced.state",
+            len(out),
+        )
     return out
 
 

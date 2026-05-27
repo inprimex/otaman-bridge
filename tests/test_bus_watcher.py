@@ -186,11 +186,50 @@ class TestDedup:
         _write_bus_msg(project_root, "stateful",
                        type="spec-change-request", to="human")
         asyncio.run(_make_watcher(project_root, recorder)._scan_once())
-        state_file = project_root / ".maestro" / "bus-surfaced.state"
+        # State file is written under .otaman/ (migrated from .maestro/ in
+        # finish-maestro-to-otaman-migration).
+        state_file = project_root / ".otaman" / "bus-surfaced.state"
         assert state_file.is_file()
         data = json.loads(state_file.read_text(encoding="utf-8"))
         assert "stateful" in data
         assert isinstance(data["stateful"], (int, float))
+
+    def test_legacy_maestro_state_migrated_on_load(self, project_root, recorder):
+        """If .otaman/bus-surfaced.state is absent but .maestro/ has one,
+        _load_state must write it to .otaman/ immediately (one-time migration)."""
+        # Seed a legacy state file under .maestro/
+        legacy_dir = project_root / ".maestro"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_state = {"old-msg-stem": time.time() - 60}
+        (legacy_dir / "bus-surfaced.state").write_text(
+            json.dumps(legacy_state), encoding="utf-8"
+        )
+
+        # Running a scan (even with no new messages) should trigger the migration
+        w = _make_watcher(project_root, recorder)
+        asyncio.run(w._scan_once())
+
+        new_path = project_root / ".otaman" / "bus-surfaced.state"
+        assert new_path.is_file(), ".otaman/bus-surfaced.state should exist after migration"
+        data = json.loads(new_path.read_text(encoding="utf-8"))
+        assert "old-msg-stem" in data, "legacy entries must be preserved in migrated state"
+
+    def test_legacy_state_used_for_dedup_before_migration(self, project_root, recorder):
+        """A message already in .maestro/bus-surfaced.state must not re-surface
+        when the bridge migrates the state to .otaman/."""
+        # Seed legacy state claiming a message was already surfaced
+        legacy_dir = project_root / ".maestro"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        (legacy_dir / "bus-surfaced.state").write_text(
+            json.dumps({"already-done": time.time() - 60}), encoding="utf-8"
+        )
+
+        _write_bus_msg(project_root, "already-done",
+                       type="spec-change-request", to="human")
+        w = _make_watcher(project_root, recorder)
+        n = asyncio.run(w._scan_once())
+        assert n == 0, "message already in legacy state must not be re-surfaced"
+        assert recorder.approvals == []
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +297,7 @@ class TestDispatchFailureIsolates:
         assert len(attempts) == 3
         # The failed one should NOT be in state (will retry next scan)
         state = json.loads(
-            (project_root / ".maestro" / "bus-surfaced.state").read_text()
+            (project_root / ".otaman" / "bus-surfaced.state").read_text()
         )
         assert "good-1" in state
         assert "good-2" in state
