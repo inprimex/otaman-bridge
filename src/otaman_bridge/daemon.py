@@ -1479,6 +1479,38 @@ class BridgeDaemon:
             "pending_approvals": pending_count,
         }
 
+    def handle_healthz(self) -> tuple[int, dict[str, Any]]:
+        """Docker / compose healthcheck endpoint.  No auth required.
+
+        v1 health criteria:
+          - Daemon is not in the process of shutting down.
+          - HTTP server is responding (implicit: we are executing this method).
+
+        Returns 200 ``{"status": "ok", ...}`` when healthy.
+        Returns 503 ``{"status": "degraded", "reason": ...}`` otherwise.
+
+        Extended checks (transport liveness, bus-watcher staleness) are
+        deferred to v2 once operational patterns are better understood.
+
+        Contract documented in ``research/healthz-contract.md``.
+        """
+        if self._shutdown_requested.is_set():
+            return 503, {
+                "status": "degraded",
+                "reason": "shutdown in progress",
+            }
+        payload: dict[str, Any] = {
+            "status": "ok",
+            "account": self.account,
+            "uptime_seconds": int(time.monotonic() - self.started_at),
+        }
+        # Annotate with experimental-mode info when a workspace is configured
+        # so monitoring can detect the mode without parsing startup logs.
+        if self.bus_watcher_root is not None:
+            from otaman_bridge.experimental_mode import healthz_extras  # noqa: PLC0415
+            payload.update(healthz_extras(self.bus_watcher_root))
+        return 200, payload
+
     def handle_shutdown(self) -> tuple[int, dict[str, Any]]:
         # Schedule shutdown slightly later so this response can flush first.
         threading.Thread(target=self.stop, name="bridge-stop", daemon=True).start()
@@ -1776,6 +1808,13 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             if route == "/status":
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
+                self._reply_json(status, resp)
+                return
+            if route == "/healthz":
+                # /healthz does NOT require auth — Docker / compose healthchecks
+                # run without credentials.  Returns 200 when healthy, 503 when
+                # degraded (e.g., shutdown in progress).
+                status, resp = daemon.handle_healthz()
                 self._reply_json(status, resp)
                 return
             if route == "" or route == "/":

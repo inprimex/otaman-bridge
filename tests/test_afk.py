@@ -379,7 +379,7 @@ class TestCli:
 class TestAfkPath:
     def test_path_format(self, tmp_path):
         assert afk.afk_path(tmp_path).name == "afk"
-        assert afk.afk_path(tmp_path).parent.name == ".maestro"
+        assert afk.afk_path(tmp_path).parent.name == ".otaman"  # migrated from .maestro/ in finish-maestro-to-otaman-migration
 
 
 # ---------------------------------------------------------------------------

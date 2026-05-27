@@ -186,7 +186,9 @@ class TestDedup:
         _write_bus_msg(project_root, "stateful",
                        type="spec-change-request", to="human")
         asyncio.run(_make_watcher(project_root, recorder)._scan_once())
-        state_file = project_root / ".maestro" / "bus-surfaced.state"
+        # State file is written under .otaman/ (migrated from .maestro/ in
+        # finish-maestro-to-otaman-migration).
+        state_file = project_root / ".otaman" / "bus-surfaced.state"
         assert state_file.is_file()
         data = json.loads(state_file.read_text(encoding="utf-8"))
         assert "stateful" in data
@@ -258,7 +260,7 @@ class TestDispatchFailureIsolates:
         assert len(attempts) == 3
         # The failed one should NOT be in state (will retry next scan)
         state = json.loads(
-            (project_root / ".maestro" / "bus-surfaced.state").read_text()
+            (project_root / ".otaman" / "bus-surfaced.state").read_text()
         )
         assert "good-1" in state
         assert "good-2" in state

@@ -189,6 +189,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
+    # ADR-012 gate 2: emit the experimental-mode banner when the workspace
+    # declares experimental_multi_tenant mode.  Runs after start() so the
+    # daemon is fully up before we log the warning (ordering matters for
+    # container log parsers that correlate startup messages).
+    if bus_watcher_root is not None:
+        from otaman_bridge.experimental_mode import emit_startup_banner  # noqa: PLC0415
+        emit_startup_banner(bus_watcher_root)
+
     print(
         f"otaman bridge: account={args.account} "
         f"transport={transport_name} "
@@ -209,17 +217,32 @@ def cmd_run(args: argparse.Namespace) -> int:
         while not stop_event.is_set() and not daemon._shutdown_requested.is_set():
             stop_event.wait(timeout=0.5)
     finally:
-        print("\nShutting down...")
+        # Container-aware: SIGTERM arrives here (via stop_event) within
+        # Docker's default 10s grace window.  daemon.stop() drains pending
+        # approvals, shuts down the HTTP server, and cancels the bus watcher
+        # before returning.  Total stop() budget ≤ 9s (see daemon.stop()
+        # docstring) so we stay comfortably inside the 10s envelope.
+        print("\nShutting down...", flush=True)
         daemon.stop()  # idempotent via _shutdown_requested guard
     return 0
 
 
 def _install_signal_handlers():
-    """Return a threading.Event set when SIGINT / SIGTERM is received."""
+    """Return a threading.Event set when SIGINT / SIGTERM is received.
+
+    Container-aware: both SIGINT (Ctrl-C in dev) and SIGTERM (Docker stop)
+    trigger the same graceful-shutdown path.  The handler emits a log line
+    naming the signal so container log parsers can correlate the shutdown
+    event with an orchestrator action (e.g., ``docker stop``).
+    """
+    import logging
     import threading
+    _sig_log = logging.getLogger("otaman.bridge.cli")
     stop_event = threading.Event()
 
     def handler(signum, frame):  # noqa: ARG001
+        sig_name = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
+        _sig_log.info("received %s — initiating graceful shutdown", sig_name)
         stop_event.set()
 
     for sig_name in ("SIGINT", "SIGTERM"):
