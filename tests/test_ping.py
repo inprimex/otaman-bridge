@@ -32,6 +32,8 @@ def _env_with_home(home: Path) -> dict:
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
     env.pop("CLAUDE_CONFIG_DIR", None)
+    env.pop("OTAMAN_ACTIVE_ROUTING", None)
+    env.pop("OTAMAN_ACTIVE_ACCOUNT", None)
     env.pop("MAESTRO_ACTIVE_ACCOUNT", None)
     bridge_src = str(REPO_ROOT / "src")
     core_src = str(REPO_ROOT.parent / "otaman-core" / "src")
@@ -85,7 +87,7 @@ class TestPingErrors:
         assert result.returncode == 1
         assert "endpoint" in result.stderr.lower()
         # Should suggest how to start the daemon
-        assert "maestro bridge run" in result.stderr
+        assert "bridge run" in result.stderr
 
     def test_invalid_severity_errors(self, maestro_folder):
         result = _run(

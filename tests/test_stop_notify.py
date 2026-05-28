@@ -197,6 +197,8 @@ def _env_with_home(home: Path) -> dict:
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
     env.pop("CLAUDE_CONFIG_DIR", None)
+    env.pop("OTAMAN_ACTIVE_ROUTING", None)
+    env.pop("OTAMAN_ACTIVE_ACCOUNT", None)
     env.pop("MAESTRO_ACTIVE_ACCOUNT", None)
     bridge_src = str(REPO_ROOT / "src")
     core_src = str(REPO_ROOT.parent / "otaman-core" / "src")

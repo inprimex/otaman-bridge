@@ -379,7 +379,7 @@ class TestCli:
 class TestAfkPath:
     def test_path_format(self, tmp_path):
         assert afk.afk_path(tmp_path).name == "afk"
-        assert afk.afk_path(tmp_path).parent.name == ".maestro"
+        assert afk.afk_path(tmp_path).parent.name == ".otaman"
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +489,8 @@ class TestNotify:
         self, maestro_folder, home_dir, monkeypatch, captured,
     ):
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "personal")
         _setup_endpoint(home_dir, "personal", port=54321, token="tok-xyz")
 
@@ -531,6 +533,8 @@ class TestNotify:
         self, maestro_folder, home_dir, monkeypatch, captured,
     ):
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "personal")
         _setup_endpoint(home_dir, "personal")
         assert afk.notify_afk_cleared(
@@ -547,6 +551,8 @@ class TestNotify:
         self, maestro_folder, home_dir, monkeypatch,
     ):
         """MAESTRO_ACTIVE_ACCOUNT wins over CLAUDE_CONFIG_DIR basename."""
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "primary")
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home_dir / ".claude-secondary"))
         assert afk._resolve_account_for_notify() == "primary"
@@ -561,6 +567,8 @@ class TestNotify:
         state and notifies — used by ssh-auto-afk.sh after it writes the file
         with its custom ``signal:`` line."""
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "personal")
         _setup_endpoint(home_dir, "personal")
         monkeypatch.chdir(maestro_folder)
@@ -587,6 +595,8 @@ class TestNotify:
         self, maestro_folder, home_dir, monkeypatch, captured,
     ):
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "personal")
         _setup_endpoint(home_dir, "personal")
         monkeypatch.chdir(maestro_folder)
@@ -608,6 +618,8 @@ class TestNotify:
     ):
         """End-to-end: ``maestro afk on`` writes file AND notifies."""
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "personal")
         _setup_endpoint(home_dir, "personal")
         monkeypatch.chdir(maestro_folder)
@@ -625,6 +637,8 @@ class TestNotify:
         self, maestro_folder, home_dir, monkeypatch, captured,
     ):
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "personal")
         _setup_endpoint(home_dir, "personal")
         monkeypatch.chdir(maestro_folder)
