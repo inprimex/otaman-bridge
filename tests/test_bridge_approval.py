@@ -49,6 +49,8 @@ def _run_helper(
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
     env.pop("CLAUDE_CONFIG_DIR", None)
+    env.pop("OTAMAN_ACTIVE_ROUTING", None)
+    env.pop("OTAMAN_ACTIVE_ACCOUNT", None)
     env.pop("MAESTRO_ACTIVE_ACCOUNT", None)
     if env_extra:
         env.update(env_extra)
@@ -358,6 +360,8 @@ class TestAccountDerivation:
         from otaman_bridge import bridge_approval as _ba
         module = importlib.reload(_ba)
 
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "env-wins")
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude-other"))
         assert module._derive_account(maestro_folder) == "env-wins"
@@ -369,6 +373,8 @@ class TestAccountDerivation:
         from otaman_bridge import bridge_approval as _ba
         module = importlib.reload(_ba)
 
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.delenv("MAESTRO_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude-riseapps"))
         assert module._derive_account(maestro_folder) == "riseapps"
@@ -380,6 +386,8 @@ class TestAccountDerivation:
         from otaman_bridge import bridge_approval as _ba
         module = importlib.reload(_ba)
 
+        monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
+        monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.delenv("MAESTRO_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
         monkeypatch.chdir(tmp_path)  # no marker here

@@ -71,7 +71,7 @@ class TestCheckOnce:
         _write_activity(maestro_root, age_seconds=120)  # 2 min idle
         monitor = IdleAFKMonitor(maestro_root, idle_minutes=1)
         asyncio.run(monitor._check_once())
-        afk = maestro_root / ".maestro" / AFK_FILENAME
+        afk = maestro_root / ".otaman" / AFK_FILENAME
         assert afk.is_file()
         content = afk.read_text(encoding="utf-8")
         assert "source: idle-auto" in content
@@ -170,7 +170,7 @@ class TestCallbacks:
         # Should not raise.
         asyncio.run(monitor._check_once())
         # AFK should still be written despite the callback failing.
-        assert (maestro_root / ".maestro" / AFK_FILENAME).is_file()
+        assert (maestro_root / ".otaman" / AFK_FILENAME).is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ class TestCallbacks:
 class TestRoundTrip:
     def test_full_cycle(self, maestro_root):
         monitor = IdleAFKMonitor(maestro_root, idle_minutes=1)
-        afk = maestro_root / ".maestro" / AFK_FILENAME
+        afk = maestro_root / ".otaman" / AFK_FILENAME
 
         # 1. User active, no AFK
         _write_activity(maestro_root, age_seconds=5)

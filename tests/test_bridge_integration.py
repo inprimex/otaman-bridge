@@ -598,7 +598,7 @@ class TestDaemonBusWatcher:
 
                 # Dedup state should now list the SCR.
                 import json as _json
-                state_file = project_root / ".maestro" / "bus-surfaced.state"
+                state_file = project_root / ".otaman" / "bus-surfaced.state"
                 assert state_file.is_file()
                 state = _json.loads(state_file.read_text(encoding="utf-8"))
                 assert scr_stem in state
