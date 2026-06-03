@@ -41,6 +41,14 @@ class SessionNotFoundError(RuntimeError):
     """
 
 
+class SpawnError(RuntimeError):
+    """Runner returned an error on POST /spawn.
+
+    Distinct from RunnerUnreachableError (network-level failure) -- this means
+    the runner was reached but rejected the spawn request (e.g. 4xx/5xx).
+    """
+
+
 class RunnerClient:
     """Read-only client for the runner's loopback HTTP API."""
 
@@ -128,6 +136,54 @@ class RunnerClient:
         return sessions
 
 
+    def spawn(self, agent: str, human: str, mode: str, context: dict) -> str:
+        """Call runner POST /spawn; return session_id on success.
+
+        Provisional API — coordinate with runner-agent on /spawn schema (task 2.3).
+        Body: {agent, human, mode, context}. Response: {session_id, status}.
+
+        Raises:
+        - RunnerUnreachableError on network/connection failures.
+        - RunnerAuthError on 401 (stale bearer).
+        - SpawnError on 4xx/5xx indicating the runner rejected the request.
+        """
+        host, port, token = self._read_endpoint()
+        url = f"http://{host}:{port}/spawn"
+        body = json.dumps({"agent": agent, "human": human, "mode": mode, "context": context}).encode()
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with self._opener.open(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                raise RunnerAuthError(
+                    "runner rejected loopback bearer (HTTP 401) -- token may be stale"
+                ) from exc
+            detail = ""
+            try:
+                detail = exc.read().decode()
+            except Exception:
+                pass
+            raise SpawnError(
+                f"runner returned HTTP {exc.code} on POST /spawn: {detail}"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise RunnerUnreachableError(
+                f"runner unreachable at {url}: {exc}"
+            ) from exc
+        session_id = data.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise SpawnError(f"runner /spawn response missing session_id: {data}")
+        return session_id
+
     def kill_session(self, session_id: str) -> None:
         """Call runner POST /kill with the given session_id.
 
@@ -181,5 +237,6 @@ __all__ = [
     "RunnerUnreachableError",
     "RunnerAuthError",
     "SessionNotFoundError",
+    "SpawnError",
     "RunnerClient",
 ]

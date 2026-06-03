@@ -1,11 +1,39 @@
+"""Session registry — dedup gate for auto-session-spawn.
+
+``SessionRegistry`` is a protocol; ``SqliteSessionRegistry`` is the Mode-1
+concrete backend. ``NatsKvSessionRegistry`` is a stub for the Mode-2+ swap.
+
+Schema (task 1.3):
+    sessions(agent_id TEXT, human_id TEXT, session_id TEXT, mode TEXT,
+             claimed_at TEXT, heartbeat_at TEXT, PRIMARY KEY(agent_id, human_id))
+
+All timestamps are ISO-8601 UTC strings.  Stale rows (no heartbeat for
+``stale_threshold_seconds``, default 2 h) are pruned by ``cleanup_stale()``.
+
+The registry is a *cache* of authoritative bus state (per design.md insight
+from prior-art survey).  If the bridge restarts, ``process_pending()`` on the
+event source reconstructs live sessions from the bus.
+"""
+
 from __future__ import annotations
 
 import sqlite3
 import threading
-import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+DEFAULT_DB_PATH = Path.home() / ".otaman" / "session-registry.db"
+DEFAULT_STALE_THRESHOLD = 2 * 3600.0   # seconds; rows older than this are pruned
+
+
+def _now_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _iso_to_ts(s: str) -> float:
+    return datetime.fromisoformat(s).timestamp()
 
 
 # ---------------------------------------------------------------------------
@@ -15,48 +43,22 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class SessionRegistry(Protocol):
-    # Protocol interface for the session registry.
-    # The SQLite implementation is the Mode-1 concrete backend.
-    # When M-7 (stateless bridge) lands, a new backend (PostgreSQL / NATS-KV)
-    # implements this same protocol; callers (spawn_decision.py) are unchanged.
-
-    def is_sessioned(self, agent: str, human: str) -> bool:
-        # Return True if an active session exists for (agent, human).
-        ...
+    def is_sessioned(self, agent_id: str, human_id: str) -> bool: ...
 
     def claim_session(
         self,
-        agent: str,
-        human: str,
+        agent_id: str,
+        human_id: str,
         session_id: str,
         *,
-        ttl_seconds: float = 3600.0,
-    ) -> bool:
-        # Atomically claim a session slot for (agent, human).
-        # Returns True if the slot was acquired; False if already occupied.
-        # Sets the session_id and an expiry based on ttl_seconds.
-        ...
+        mode: str = "headless",
+    ) -> bool: ...
 
-    def release_session(self, agent: str, human: str, session_id: str) -> bool:
-        # Release the session slot for (agent, human).
-        # Returns True if the slot was released; False if it was not claimed
-        # by this session_id (or had already expired).
-        ...
+    def release_session(self, agent_id: str, human_id: str, session_id: str) -> bool: ...
 
-    def heartbeat(
-        self,
-        agent: str,
-        human: str,
-        session_id: str,
-        *,
-        ttl_seconds: float = 3600.0,
-    ) -> bool:
-        # Renew the TTL on an active session. Returns True on success.
-        ...
+    def heartbeat(self, agent_id: str, human_id: str, session_id: str) -> bool: ...
 
-    def cleanup_expired(self) -> int:
-        # Remove all expired sessions. Returns the count removed.
-        ...
+    def cleanup_stale(self, *, stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD) -> int: ...
 
 
 # ---------------------------------------------------------------------------
@@ -66,27 +68,14 @@ class SessionRegistry(Protocol):
 
 @dataclass
 class SqliteSessionRegistry:
-    # Mode-1 session registry backed by SQLite.
-    #
-    # Design notes (per auto-session-spawn design.md Q5):
-    #
-    # 1. The session registry is a CACHE of authoritative bus state, not the
-    #    source of truth. Rows are transient; they expire and are reconstructed
-    #    from bus state if the daemon restarts.
-    #
-    # 2. is_sessioned() / claim_session() / release_session() form the dedup
-    #    primitive. The spawn-decision component calls these to enforce
-    #    "at most one session per (agent, human) pair".
-    #
-    # 3. claim_session() is idempotent with the same session_id; a re-spawn
-    #    of an already-sessioned agent returns False so the caller can no-op.
-    #
-    # 4. M-7 migration: SqliteSessionRegistry can be swapped for a
-    #    PostgresSessionRegistry or NatsKVSessionRegistry that implements the
-    #    same SessionRegistry protocol. The db_path moves from a local file to
-    #    an external connection string. No callers change.
+    """Mode-1 session registry backed by WAL-mode SQLite.
 
-    db_path: Path
+    Atomic ``claim_session`` uses RLock + check-before-upsert.
+    ``heartbeat`` updates ``heartbeat_at`` so the linger timer can measure
+    inactivity without a separate expires_at column.
+    """
+
+    db_path: Path = DEFAULT_DB_PATH
 
     def __post_init__(self) -> None:
         self._lock = threading.RLock()
@@ -94,124 +83,150 @@ class SqliteSessionRegistry:
         self._init_db()
 
     # ------------------------------------------------------------------
-    # Public API (satisfies SessionRegistry protocol)
+    # Public API
     # ------------------------------------------------------------------
 
-    def is_sessioned(self, agent: str, human: str) -> bool:
+    def is_sessioned(self, agent_id: str, human_id: str) -> bool:
         with self._lock:
-            row = self._exec_one(
-                "SELECT 1 FROM sessions WHERE agent=? AND human=? AND expires_at > ?",
-                (agent, human, time.time()),
+            row = self._one(
+                "SELECT 1 FROM sessions WHERE agent_id=? AND human_id=?",
+                (agent_id, human_id),
             )
             return row is not None
 
     def claim_session(
         self,
-        agent: str,
-        human: str,
+        agent_id: str,
+        human_id: str,
         session_id: str,
         *,
-        ttl_seconds: float = 3600.0,
+        mode: str = "headless",
     ) -> bool:
-        # Atomic upsert: if (agent, human) is already claimed by a DIFFERENT
-        # session_id and not expired, return False. Otherwise insert/update.
         with self._lock:
-            expires_at = time.time() + ttl_seconds
-            now = time.time()
-            # Check for existing non-expired claim by a different session_id.
-            existing = self._exec_one(
-                "SELECT session_id FROM sessions WHERE agent=? AND human=? AND expires_at > ?",
-                (agent, human, now),
+            existing = self._one(
+                "SELECT session_id FROM sessions WHERE agent_id=? AND human_id=?",
+                (agent_id, human_id),
             )
             if existing and existing[0] != session_id:
-                return False  # already owned by a different session
-            # Upsert (replace if same session_id or expired).
+                return False
+            now = _now_iso()
             self._conn.execute(  # type: ignore[union-attr]
-                "INSERT OR REPLACE INTO sessions (agent, human, session_id, claimed_at, expires_at)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (agent, human, session_id, now, expires_at),
+                "INSERT OR REPLACE INTO sessions"
+                " (agent_id, human_id, session_id, mode, claimed_at, heartbeat_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (agent_id, human_id, session_id, mode, now, now),
             )
             self._conn.commit()  # type: ignore[union-attr]
             return True
 
-    def release_session(self, agent: str, human: str, session_id: str) -> bool:
+    def release_session(self, agent_id: str, human_id: str, session_id: str) -> bool:
         with self._lock:
             cur = self._conn.execute(  # type: ignore[union-attr]
-                "DELETE FROM sessions WHERE agent=? AND human=? AND session_id=?",
-                (agent, human, session_id),
+                "DELETE FROM sessions WHERE agent_id=? AND human_id=? AND session_id=?",
+                (agent_id, human_id, session_id),
             )
             self._conn.commit()  # type: ignore[union-attr]
             return cur.rowcount > 0
 
-    def heartbeat(
-        self,
-        agent: str,
-        human: str,
-        session_id: str,
-        *,
-        ttl_seconds: float = 3600.0,
-    ) -> bool:
+    def heartbeat(self, agent_id: str, human_id: str, session_id: str) -> bool:
         with self._lock:
-            expires_at = time.time() + ttl_seconds
             cur = self._conn.execute(  # type: ignore[union-attr]
-                "UPDATE sessions SET expires_at=? WHERE agent=? AND human=? AND session_id=?",
-                (expires_at, agent, human, session_id),
+                "UPDATE sessions SET heartbeat_at=? WHERE agent_id=? AND human_id=? AND session_id=?",
+                (_now_iso(), agent_id, human_id, session_id),
             )
             self._conn.commit()  # type: ignore[union-attr]
             return cur.rowcount > 0
 
-    def cleanup_expired(self) -> int:
+    def cleanup_stale(
+        self, *, stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD
+    ) -> int:
+        """Remove rows where heartbeat_at is older than stale_threshold_seconds."""
+        import time
+        cutoff = datetime.fromtimestamp(
+            time.time() - stale_threshold_seconds, tz=timezone.utc
+        ).isoformat()
         with self._lock:
             cur = self._conn.execute(  # type: ignore[union-attr]
-                "DELETE FROM sessions WHERE expires_at <= ?", (time.time(),)
+                "DELETE FROM sessions WHERE heartbeat_at < ?", (cutoff,)
             )
             self._conn.commit()  # type: ignore[union-attr]
             return cur.rowcount
 
     def list_active(self) -> list[dict]:
-        # Returns all non-expired sessions. Useful for audit / diagnostics.
         with self._lock:
             rows = self._conn.execute(  # type: ignore[union-attr]
-                "SELECT agent, human, session_id, claimed_at, expires_at"
-                " FROM sessions WHERE expires_at > ? ORDER BY claimed_at",
-                (time.time(),),
+                "SELECT agent_id, human_id, session_id, mode, claimed_at, heartbeat_at"
+                " FROM sessions ORDER BY claimed_at"
             ).fetchall()
             return [
-                {"agent": r[0], "human": r[1], "session_id": r[2],
-                 "claimed_at": r[3], "expires_at": r[4]}
+                {
+                    "agent_id": r[0], "human_id": r[1], "session_id": r[2],
+                    "mode": r[3], "claimed_at": r[4], "heartbeat_at": r[5],
+                }
                 for r in rows
             ]
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    def _init_db(self) -> None:
-        conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
-                agent       TEXT NOT NULL,
-                human       TEXT NOT NULL,
-                session_id  TEXT NOT NULL,
-                claimed_at  REAL NOT NULL,   -- unix timestamp
-                expires_at  REAL NOT NULL,   -- unix timestamp; row is stale when < now()
-                PRIMARY KEY (agent, human)
-            )"""
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_expires ON sessions (expires_at)"
-        )
-        conn.commit()
-        self._conn = conn
-
-    def _exec_one(self, sql: str, params: tuple) -> tuple | None:
-        return self._conn.execute(sql, params).fetchone()  # type: ignore[union-attr]
 
     def close(self) -> None:
         with self._lock:
             if self._conn:
                 self._conn.close()
                 self._conn = None
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _init_db(self) -> None:
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                agent_id    TEXT NOT NULL,
+                human_id    TEXT NOT NULL,
+                session_id  TEXT NOT NULL,
+                mode        TEXT NOT NULL DEFAULT 'headless',
+                claimed_at  TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                PRIMARY KEY (agent_id, human_id)
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_heartbeat ON sessions (heartbeat_at)"
+        )
+        conn.commit()
+        self._conn = conn
+
+    def _one(self, sql: str, params: tuple) -> tuple | None:
+        return self._conn.execute(sql, params).fetchone()  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# NATS-KV stub (Mode 2+ migration seam)
+# ---------------------------------------------------------------------------
+
+
+class NatsKvSessionRegistry:
+    """Stub for the Mode-2+ NATS-KV session registry.
+
+    All methods raise ``NotImplementedError`` — this class exists to confirm
+    the ``SessionRegistry`` protocol shape survives the Mode-2+ swap without
+    any caller changes.  Replace with a real implementation when NATS lands.
+    """
+
+    def is_sessioned(self, agent_id: str, human_id: str) -> bool:
+        raise NotImplementedError("NatsKvSessionRegistry not yet implemented")
+
+    def claim_session(self, agent_id: str, human_id: str, session_id: str, *, mode: str = "headless") -> bool:
+        raise NotImplementedError
+
+    def release_session(self, agent_id: str, human_id: str, session_id: str) -> bool:
+        raise NotImplementedError
+
+    def heartbeat(self, agent_id: str, human_id: str, session_id: str) -> bool:
+        raise NotImplementedError
+
+    def cleanup_stale(self, *, stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD) -> int:
+        raise NotImplementedError
