@@ -100,8 +100,8 @@ def _parse_message(path: Path) -> dict | None:
     return {"frontmatter": fm, "body": parts[2]}
 
 
-def _extract_mode(body: str, owned_agents: dict[str, str]) -> tuple[str, str] | None:
-    """Scan task lines in body; return (agent_id, mode) for the first owned repo.
+def _extract_mode(body: str, owned_agents: dict[str, str]) -> tuple[str, str, str] | None:
+    """Scan task lines in body; return (agent_id, mode, repo_name) for the first owned repo.
 
     Mode defaults to "interactive" if the annotation is absent (per design.md Q2 rule 2).
     Raises ValueError on conflict (both [headless] and [interactive] on one line) or
@@ -134,7 +134,7 @@ def _extract_mode(body: str, owned_agents: dict[str, str]) -> tuple[str, str] | 
                 )
 
         mode = annotation if annotation else "interactive"
-        return owned_agents[full_repo_name], mode
+        return owned_agents[full_repo_name], mode, full_repo_name
 
     return None
 
@@ -209,6 +209,7 @@ def handle_bus_event(
     runner_client: RunnerClient,
     owned_agents: dict[str, str],  # repo_name -> agent_id, e.g. {"otaman-bridge": "bridge-agent"}
     bus_dir: Path,
+    project_root: str,  # required by runner POST /spawn; absolute path to project root
     this_agent: str = "bridge-agent",
     trigger_source: str = "bus-event",
     linger_manager=None,  # optional SessionLingerManager; if provided, start linger after spawn
@@ -255,8 +256,11 @@ def handle_bus_event(
         # Message targets this agent but no matching task lines found — use conservative defaults.
         agent_id = to_field
         mode = "interactive"
+        repo_name = next(
+            (r for r, a in owned_agents.items() if a == to_field), to_field
+        )
     else:
-        agent_id, mode = task_info
+        agent_id, mode, repo_name = task_info
 
     dedup = _dedup_key(agent_id, change_id)
 
@@ -288,6 +292,8 @@ def handle_bus_event(
                 human=human_id,
                 mode="headless",
                 context=context,
+                repo=repo_name,
+                project_root=project_root,
             )
         except (RunnerUnreachableError, SpawnError) as exc:
             _log.error(

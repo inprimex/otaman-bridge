@@ -136,11 +136,21 @@ class RunnerClient:
         return sessions
 
 
-    def spawn(self, agent: str, human: str, mode: str, context: dict) -> str:
+    def spawn(
+        self,
+        agent: str,
+        human: str,
+        mode: str,
+        context: dict,
+        *,
+        repo: str,
+        project_root: str,
+    ) -> str:
         """Call runner POST /spawn; return session_id on success.
 
-        Provisional API — coordinate with runner-agent on /spawn schema (task 2.3).
-        Body: {agent, human, mode, context}. Response: {session_id, status}.
+        Required by runner API (task 2.3):
+          agent, repo, project_root — required fields
+          human, mode, context     — optional (human is bridge alias for user)
 
         Raises:
         - RunnerUnreachableError on network/connection failures.
@@ -149,7 +159,14 @@ class RunnerClient:
         """
         host, port, token = self._read_endpoint()
         url = f"http://{host}:{port}/spawn"
-        body = json.dumps({"agent": agent, "human": human, "mode": mode, "context": context}).encode()
+        body = json.dumps({
+            "agent": agent,
+            "repo": repo,
+            "project_root": project_root,
+            "human": human,
+            "mode": mode,
+            "context": context,
+        }).encode()
         req = urllib.request.Request(
             url,
             data=body,
