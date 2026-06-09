@@ -6,7 +6,6 @@
 Otaman folder: `../otaman-meta/` (contains `.agents/`, `platform.yaml`, bus messages)
 
 ### First Session Checklist
-0. **Set identity for hooks**: `echo "bridge-agent" > ../otaman-meta/.agents/current-agent` — hooks read this file directly; without it they see a stale agent name and block writes.
 1. Run `otaman check` (Bash) — see pending bus messages. The CLI auto-detects project root, your agent identity, and ack status. No MCP tool-loading needed for this hot path; pre-allowed in `.claude/settings.local.json`.
 2. Read `../otaman-meta/.agents/queue/bridge-agent.md` — see your active/queued/blocked tasks
 3. Read specs relevant to your repo (specs_dir paths below)
@@ -101,6 +100,19 @@ Why the split: bus checks happen dozens of times per session, and the MCP-via-in
 - **After approval + spec-change notification**: wait for `task-assignment` messages addressed to you from the mapped `tasks.md`. Those tasks will be **implementation work in your repo**, not spec authoring.
 - **Never write**: `proposal.md`, `design.md`, `tasks.md`, `spec.md`, ADR files, or any file under `otaman-specs/openspec/`. Even after approval. Even if you think it would be faster.
 - If you feel the urge to "just fill in the spec myself" — stop, send a `question` message to spec-agent instead.
+
+### Agent Status (REQUIRED)
+
+Before writing any code for a specific task, call:
+  otaman set-status working --task "<N.M task description>" --change <change-name>
+
+When waiting on another agent or a dependency:
+  otaman set-status waiting --task "<N.M ...>" --change <change-name>
+
+When done with all current tasks:
+  otaman set-status idle
+
+One CLI call — no file editing, no token overhead.
 
 ### Git Workflow
 - Work in branches: `agent/bridge-agent/{feature-name}`
