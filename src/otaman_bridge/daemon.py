@@ -933,11 +933,13 @@ class BridgeDaemon:
 
         # Give the async thread a chance to let a Transport.close() coroutine
         # run (e.g., TelegramTransport stops its Application's polling).
+        # Budget: 4s here + 1s (listener) + 2s (bus_watcher) + 2s (idle_monitor)
+        # = 9s total, safely within Docker's 10s SIGKILL window.
         close = getattr(self.transport, "close", None)
         if close is not None and asyncio.iscoroutinefunction(close):
             try:
                 fut = self._async.submit(close())
-                fut.result(timeout=5.0)
+                fut.result(timeout=4.0)
             except Exception:  # noqa: BLE001
                 _log.debug("transport.close() failed during shutdown", exc_info=True)
 
@@ -1484,6 +1486,22 @@ class BridgeDaemon:
         threading.Thread(target=self.stop, name="bridge-stop", daemon=True).start()
         return 200, {"stopping": True}
 
+    def handle_healthz(self) -> tuple[int, dict[str, Any]]:
+        """Docker/compose healthcheck endpoint — no auth required.
+
+        200 → bridge is running and accepting requests.
+        503 → shutdown in progress (container orchestrator should stop routing).
+        """
+        if self._shutdown_requested.is_set():
+            return 503, {"ok": False, "reason": "shutdown in progress"}
+        if self._server is None:
+            return 503, {"ok": False, "reason": "http server not started"}
+        return 200, {
+            "ok": True,
+            "uptime_seconds": int(time.monotonic() - self.started_at),
+            "transport": self.transport.name,
+        }
+
 
 # ---------------------------------------------------------------------------
 # HTTP handler
@@ -1790,6 +1808,11 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             if route == "/status":
                 # /status does NOT require auth — intentional (§5.3 design).
                 status, resp = daemon.handle_status()
+                self._reply_json(status, resp)
+                return
+            if route == "/healthz":
+                # No auth — container orchestrator probes this unauthenticated.
+                status, resp = daemon.handle_healthz()
                 self._reply_json(status, resp)
                 return
             if route == "" or route == "/":

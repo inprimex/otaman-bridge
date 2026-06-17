@@ -270,6 +270,48 @@ class TestAuth:
 
 
 # ---------------------------------------------------------------------------
+# /healthz
+
+
+class TestHealthz:
+    def test_returns_200_when_running(self, running_daemon):
+        daemon, _ = running_daemon
+        url = f"http://127.0.0.1:{daemon.port}/healthz"
+        resp = _get(url)  # no auth token needed
+        assert resp.status == 200
+        body = _body(resp)
+        assert body["ok"] is True
+        assert body["transport"] == "null"
+        assert isinstance(body["uptime_seconds"], int)
+
+    def test_does_not_require_auth(self, running_daemon):
+        daemon, _ = running_daemon
+        url = f"http://127.0.0.1:{daemon.port}/healthz"
+        resp = _get(url)  # no token
+        assert resp.status == 200
+
+    def test_returns_503_after_shutdown_requested(self, tmp_path):
+        transport = NullTransport(allowlist={"*"})
+        endpoint = tmp_path / "bridge.endpoint"
+        daemon = BridgeDaemon(account="test", transport=transport, endpoint_file=endpoint)
+        daemon.start()
+        port = daemon.port
+        daemon._shutdown_requested.set()
+        try:
+            url = f"http://127.0.0.1:{port}/healthz"
+            try:
+                _get(url)
+                assert False, "expected HTTP 503"
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 503
+                body = json.loads(exc.read().decode())
+                assert body["ok"] is False
+        finally:
+            daemon._shutdown_requested.clear()
+            daemon.stop()
+
+
+# ---------------------------------------------------------------------------
 # /notify
 
 
