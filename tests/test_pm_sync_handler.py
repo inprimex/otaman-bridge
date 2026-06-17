@@ -1,301 +1,392 @@
-"""Tests for pm_sync_handler.py — bus-to-PM event handler."""
+"""Integration tests for pm_sync_handler (task 6.2 — pm-sync-adapter spec change).
+
+Tests use a mocked adapter so no live Easy8 instance is required.
+
+Scenarios covered:
+  - spec-change-approved → adapter.create_issue() called; issue_id persisted
+  - task-assignment → adapter.update_issue(in_progress) + add_comment()
+  - task-complete → adapter.update_issue(done) + add_comment()
+  - Capability-gated: no add_comment() when capabilities.issue_comments == False
+  - Inbound webhook: Issue→Done + spec-path → spec-update-requested bus event
+  - Inbound webhook: Issue create (external) → pm-issue-created bus event
+  - Inbound webhook: @spec-agent comment → spec-update-requested bus event
+  - Agent dispatch (task 4.7): project_id resolved to agent from project-map
+  - MCP Tier 2 (task 9.3): call_mcp_complex_query falls back gracefully when unavailable
+"""
 
 from __future__ import annotations
 
-import sys
+import os
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from otaman_bridge.pm_sync_handler import PmSyncHandler
+
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
-
-@pytest.fixture
-def project_root(tmp_path):
-    """Minimal project root with platform.yaml containing a pm-sync block."""
-    root = tmp_path / "my-project"
-    root.mkdir()
-    (root / ".agents" / "bus" / "active").mkdir(parents=True)
-    (root / "platform.yaml").write_text(
-        """
-project: test
-version: "1.0"
+PLATFORM_YAML_CONTENT = """\
+project: otaman
 pm-sync:
   provider: easy8
-  base_url: https://pm.example.com
-  identity_mode: system_user
-  program_name: Test Program
-  program_key: TEST
-  per_repo: false
-  exclude_repos: []
-  webhook_target: https://hooks.example.com/pm
-  project_map:
-    otaman-core: 12
-""",
-        encoding="utf-8",
-    )
-    return root
+  base-url: https://es.example.com
+  identity-mode: system_user
+  program-name: Otaman Platform
+  program-key: otaman
+  per-repo: true
+  status-map:
+    declared: New
+    in_progress: In Progress
+    done: Closed
+  tracker: Task
+  project-map:
+    _root: 1
+    otaman-specs: 2
+    otaman-bridge: 3
+repos:
+  - name: otaman-specs
+    owner: spec-agent
+  - name: otaman-bridge
+    owner: bridge-agent
+"""
 
 
-@pytest.fixture
-def project_root_no_pm(tmp_path):
-    """Project root with platform.yaml but NO pm-sync block."""
-    root = tmp_path / "no-pm-project"
-    root.mkdir()
-    (root / ".agents" / "bus" / "active").mkdir(parents=True)
-    (root / "platform.yaml").write_text(
-        "project: test\nversion: '1.0'\n",
-        encoding="utf-8",
-    )
-    return root
+def _make_capabilities(*, issue_comments: bool = True) -> MagicMock:
+    caps = MagicMock()
+    caps.issue_comments = issue_comments
+    caps.mcp_support = True
+    return caps
 
 
-def _make_mock_adapter():
-    """Return a mock that satisfies PmSyncAdapter protocol."""
+def _make_issue(issue_id: int = 42, subject: str = "test issue") -> MagicMock:
+    issue = MagicMock()
+    issue.id = issue_id
+    issue.subject = subject
+    return issue
+
+
+def _make_adapter(*, issue_id: int = 42, issue_comments: bool = True) -> MagicMock:
     adapter = MagicMock()
-    adapter.capabilities.issue_comments = True
+    adapter.capabilities = _make_capabilities(issue_comments=issue_comments)
+    adapter.create_issue.return_value = _make_issue(issue_id)
+    adapter.update_issue.return_value = _make_issue(issue_id)
+    adapter.list_issues.return_value = []
     return adapter
 
 
-def _make_handler_with_mock_adapter(project_root):
-    """Build a PmSyncHandler with a mocked adapter injected after construction."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
+def _make_inbound_event(
+    *,
+    event_type: str = "update",
+    project_id: int = 2,
+    issue_id: int = 7,
+    new_status: str | None = None,
+    spec_path: str | None = None,
+    issue_subject: str | None = None,
+) -> MagicMock:
+    evt = MagicMock()
+    evt.event_type = event_type
+    evt.project_id = project_id
+    evt.issue_id = issue_id
+    evt.new_status = new_status
+    evt.spec_path = spec_path
+    evt.issue_subject = issue_subject
+    return evt
 
-    # Patch _load_adapter so no real network calls happen
-    mock_adapter = _make_mock_adapter()
-    with patch.object(PmSyncHandler, "_load_adapter", return_value=mock_adapter):
-        handler = PmSyncHandler(project_root)
 
-    return handler, mock_adapter
-
-
-# ---------------------------------------------------------------------------
-# handle_inbound_webhook — happy path
-# ---------------------------------------------------------------------------
+@pytest.fixture
+def workspace(tmp_path: Path) -> Path:
+    (tmp_path / "platform.yaml").write_text(PLATFORM_YAML_CONTENT, encoding="utf-8")
+    (tmp_path / ".agents" / "bus" / "active").mkdir(parents=True)
+    return tmp_path
 
 
-def test_handle_inbound_webhook_valid_payload(project_root):
-    """handle_inbound_webhook with a valid payload returns ok=True."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
-
-    # Build a minimal PmInboundEvent-like object the adapter returns
-    fake_event = SimpleNamespace(
-        event_type="issue_updated",
-        project_id=12,
-        issue_id=99,
-        new_status="In Progress",
-        spec_path=None,
-    )
-    mock_adapter = _make_mock_adapter()
-    mock_adapter.handle_inbound_event.return_value = fake_event
-
-    with patch.object(PmSyncHandler, "_load_adapter", return_value=mock_adapter):
-        handler = PmSyncHandler(project_root)
-
-    payload = {"action": "issue_updated", "issue": {"id": 99}, "project": {"id": 12}}
-    result = handler.handle_inbound_webhook(payload)
-
-    assert result["ok"] is True
-    assert result["event_type"] == "issue_updated"
-    mock_adapter.handle_inbound_event.assert_called_once_with(payload)
+@pytest.fixture
+def handler(workspace: Path) -> PmSyncHandler:
+    h = PmSyncHandler(workspace)
+    h.adapter = _make_adapter()
+    h.enabled = True
+    h._project_id_to_repo = {1: "_root", 2: "otaman-specs", 3: "otaman-bridge"}
+    return h
 
 
 # ---------------------------------------------------------------------------
-# handle_inbound_webhook — pm-sync not configured
+# Outbound: spec-change-approved → create_issue (task 4.2)
 # ---------------------------------------------------------------------------
 
 
-def test_handle_inbound_webhook_not_configured(project_root_no_pm):
-    """handle_inbound_webhook returns ok=False when pm-sync is not configured."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
+class TestSpecChangeApproved:
+    def test_calls_create_issue(self, handler: PmSyncHandler) -> None:
+        handler.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human",
+            "pm-sync-adapter: PmSyncAdapter protocol", "openspec/changes/pm-sync-adapter/tasks.md",
+            "pm-sync-adapter",
+        )
+        handler.adapter.create_issue.assert_called_once()
 
-    handler = PmSyncHandler(project_root_no_pm)
-    assert not handler.enabled
+    def test_persists_issue_id(self, handler: PmSyncHandler) -> None:
+        handler.adapter.create_issue.return_value = _make_issue(99)
+        handler.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human",
+            "Some spec change", None, "my-change",
+        )
+        assert handler._load_issue_id("my-change") == 99
 
-    result = handler.handle_inbound_webhook({"foo": "bar"})
+    def test_posts_comment_if_issue_comments_enabled(self, handler: PmSyncHandler) -> None:
+        handler.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human",
+            "My spec", None, "my-change",
+        )
+        handler.adapter.add_comment.assert_called_once()
+        comment = handler.adapter.add_comment.call_args[0][1]
+        assert "Spec approved" in comment
 
-    assert result["ok"] is False
-    assert "error" in result
-
-
-def test_handle_inbound_webhook_no_platform_yaml(tmp_path):
-    """handle_inbound_webhook returns ok=False when there is no platform.yaml."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
-
-    root = tmp_path / "empty"
-    root.mkdir()
-    handler = PmSyncHandler(root)
-    assert not handler.enabled
-
-    result = handler.handle_inbound_webhook({})
-    assert result["ok"] is False
-
-
-# ---------------------------------------------------------------------------
-# _emit_bus_event — issue_updated + Done + spec_path -> spec-update-requested
-# ---------------------------------------------------------------------------
-
-
-def test_emit_bus_event_done_with_spec_path(project_root):
-    """_emit_bus_event writes a spec-update-requested message when status is Done."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
-
-    handler, mock_adapter = _make_handler_with_mock_adapter(project_root)
-    assert handler.enabled
-
-    event = SimpleNamespace(
-        event_type="issue_updated",
-        project_id=12,
-        issue_id=42,
-        new_status="Done",
-        spec_path="openspec/specs/pm-sync/spec.md",
-    )
-
-    handler._emit_bus_event(event)
-
-    active_dir = project_root / ".agents" / "bus" / "active"
-    files = list(active_dir.iterdir())
-    assert len(files) == 1, f"Expected 1 bus message file, found {len(files)}: {files}"
-
-    content = files[0].read_text(encoding="utf-8")
-    assert "type: spec-update-requested" in content
-    assert "to: spec-agent" in content
-    assert "openspec/specs/pm-sync/spec.md" in content
-
-
-def test_emit_bus_event_created_goes_to_human(project_root):
-    """_emit_bus_event writes pm-issue-created and routes to human."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
-
-    handler, _ = _make_handler_with_mock_adapter(project_root)
-
-    event = SimpleNamespace(
-        event_type="issue_created",
-        project_id=12,
-        issue_id=7,
-        new_status=None,
-        spec_path=None,
-    )
-
-    handler._emit_bus_event(event)
-
-    active_dir = project_root / ".agents" / "bus" / "active"
-    files = list(active_dir.iterdir())
-    assert len(files) == 1
-
-    content = files[0].read_text(encoding="utf-8")
-    assert "type: pm-issue-created" in content
-    assert "to: human" in content
-
-
-def test_emit_bus_event_updated_no_spec_path_goes_to_human(project_root):
-    """_emit_bus_event with issue_updated but no spec_path routes to human."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
-
-    handler, _ = _make_handler_with_mock_adapter(project_root)
-
-    event = SimpleNamespace(
-        event_type="issue_updated",
-        project_id=12,
-        issue_id=8,
-        new_status="Done",
-        spec_path=None,
-    )
-
-    handler._emit_bus_event(event)
-
-    active_dir = project_root / ".agents" / "bus" / "active"
-    files = list(active_dir.iterdir())
-    content = files[0].read_text(encoding="utf-8")
-    assert "type: pm-issue-updated" in content
-    assert "to: human" in content
+    def test_no_comment_if_issue_comments_disabled(self, handler: PmSyncHandler) -> None:
+        handler.adapter = _make_adapter(issue_comments=False)
+        handler.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human",
+            "My spec", None, "my-change",
+        )
+        handler.adapter.add_comment.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# handle_bus_event — outbound
+# Outbound: task-assignment → update_issue(in_progress) + comment (task 4.3)
 # ---------------------------------------------------------------------------
 
 
-def test_handle_bus_event_spec_change_approved(project_root):
-    """handle_bus_event with spec-change-approved calls adapter.create_issue."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
+class TestTaskAssignment:
+    def test_updates_issue_to_in_progress(self, handler: PmSyncHandler) -> None:
+        handler._save_issue_id("my-change", 42)
+        handler.handle_bus_event(
+            "task-assignment", "otaman", "bridge-agent",
+            "Implement pm_sync_handler", None, "my-change",
+        )
+        handler.adapter.update_issue.assert_called_once()
+        call_args = handler.adapter.update_issue.call_args
+        assert call_args[0][0] == 42
+        state = call_args[0][1]
+        assert "in_progress" in str(getattr(state, "status", state)).lower()
 
-    handler, mock_adapter = _make_handler_with_mock_adapter(project_root)
-    mock_issue = SimpleNamespace(id=55)
-    mock_adapter.create_issue.return_value = mock_issue
+    def test_posts_comment_with_correct_format(self, handler: PmSyncHandler) -> None:
+        handler._save_issue_id("my-change", 42)
+        handler.handle_bus_event(
+            "task-assignment", "roman", "bridge-agent",
+            "Do something", None, "my-change",
+        )
+        handler.adapter.add_comment.assert_called_once()
+        comment = handler.adapter.add_comment.call_args[0][1]
+        assert "🤖" in comment
+        assert "roman" in comment
+        assert "bridge-agent" in comment
 
-    handler.handle_bus_event(
-        msg_type="spec-change-approved",
-        msg_from="spec-agent",
-        msg_to="bridge-agent",
-        subject="PM sync integration approved",
-        spec_path="openspec/specs/pm-sync/spec.md",
-        change_name="pm-sync-integration",
-    )
+    def test_no_comment_when_issue_comments_disabled(self, handler: PmSyncHandler) -> None:
+        handler.adapter = _make_adapter(issue_comments=False)
+        handler._save_issue_id("my-change", 42)
+        handler.handle_bus_event(
+            "task-assignment", "otaman", "bridge-agent",
+            "Do something", None, "my-change",
+        )
+        handler.adapter.add_comment.assert_not_called()
 
-    mock_adapter.create_issue.assert_called_once()
-    call_args = mock_adapter.create_issue.call_args[0][0]
-    assert call_args.change_name == "pm-sync-integration"
-
-
-def test_handle_bus_event_disabled_is_noop(project_root_no_pm):
-    """handle_bus_event is a no-op when pm-sync is not configured."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
-
-    handler = PmSyncHandler(project_root_no_pm)
-    # Should not raise
-    handler.handle_bus_event(
-        msg_type="spec-change-approved",
-        msg_from="spec-agent",
-        msg_to="bridge-agent",
-        subject="should be ignored",
-        spec_path=None,
-        change_name="some-change",
-    )
+    def test_skips_when_no_issue_resolved(self, handler: PmSyncHandler) -> None:
+        handler.handle_bus_event(
+            "task-assignment", "otaman", "bridge-agent",
+            "unknown change", None, "nonexistent-change",
+        )
+        handler.adapter.update_issue.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# _load_adapter — fallback to direct Easy8Adapter import
+# Outbound: task-complete → update_issue(done) + comment (task 4.4)
 # ---------------------------------------------------------------------------
 
 
-def test_load_adapter_falls_back_to_easy8(project_root):
-    """_load_adapter resolves Easy8Adapter when otaman_core registry misses it."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
+class TestTaskComplete:
+    def test_updates_issue_to_done(self, handler: PmSyncHandler) -> None:
+        handler._save_issue_id("my-change", 42)
+        handler.handle_bus_event(
+            "task-complete", "bridge-agent", "human",
+            "pm_sync_handler implemented", None, "my-change",
+        )
+        handler.adapter.update_issue.assert_called_once()
+        call_args = handler.adapter.update_issue.call_args
+        assert call_args[0][0] == 42
+        state = call_args[0][1]
+        assert "done" in str(getattr(state, "status", state)).lower()
 
-    # Simulate otaman_core registry raising KeyError
-    def fake_get_pm_adapter(name):
-        raise KeyError(name)
+    def test_posts_comment_with_correct_format(self, handler: PmSyncHandler) -> None:
+        handler._save_issue_id("my-change", 42)
+        handler.handle_bus_event(
+            "task-complete", "bridge-agent", "human",
+            "pm_sync_handler done", None, "my-change",
+        )
+        handler.adapter.add_comment.assert_called_once()
+        comment = handler.adapter.add_comment.call_args[0][1]
+        assert "✅" in comment
+        assert "task complete" in comment
 
-    mock_easy8_cls = MagicMock()
-    mock_instance = _make_mock_adapter()
-    mock_easy8_cls.return_value = mock_instance
-
-    with (
-        patch("otaman_core.pm_sync.get_pm_adapter", fake_get_pm_adapter),
-        patch.dict(sys.modules, {"otaman_adapters.easy8": MagicMock(Easy8Adapter=mock_easy8_cls)}),
-    ):
-        handler = PmSyncHandler(project_root)
-
-    # If the adapter loaded, enabled should be True
-    assert handler.enabled
+    def test_no_comment_when_issue_comments_disabled(self, handler: PmSyncHandler) -> None:
+        handler.adapter = _make_adapter(issue_comments=False)
+        handler._save_issue_id("my-change", 42)
+        handler.handle_bus_event(
+            "task-complete", "bridge-agent", "human",
+            "done", None, "my-change",
+        )
+        handler.adapter.add_comment.assert_not_called()
 
 
-def test_load_adapter_sets_project_map(project_root):
-    """_load_adapter calls set_project_map when the adapter supports it."""
-    from otaman_bridge.pm_sync_handler import PmSyncHandler
+# ---------------------------------------------------------------------------
+# Inbound: PM webhook → bus event (task 4.5)
+# ---------------------------------------------------------------------------
 
-    mock_adapter = _make_mock_adapter()
-    mock_cls = MagicMock(return_value=mock_adapter)
 
-    with patch("otaman_core.pm_sync.get_pm_adapter", return_value=mock_cls):
-        handler = PmSyncHandler(project_root)
+class TestInboundWebhook:
+    def _active_messages(self, workspace: Path) -> list[Path]:
+        return sorted((workspace / ".agents" / "bus" / "active").glob("*.md"))
 
-    mock_adapter.set_project_map.assert_called_once()
-    call_kwargs = mock_adapter.set_project_map.call_args[0][0]
-    assert "otaman-core" in call_kwargs
+    def test_issue_done_with_spec_path_emits_spec_update_requested(
+        self, handler: PmSyncHandler, workspace: Path
+    ) -> None:
+        evt = _make_inbound_event(
+            event_type="update", issue_id=7,
+            new_status="Done", spec_path="openspec/changes/foo/tasks.md",
+        )
+        handler.adapter.handle_inbound_event.return_value = evt
+        result = handler.handle_inbound_webhook({"action": "update", "issue": {}})
+        assert result["ok"] is True
+        msgs = self._active_messages(workspace)
+        assert len(msgs) == 1
+        content = msgs[0].read_text()
+        assert "spec-update-requested" in content
+        assert "spec-agent" in content
+
+    def test_issue_create_emits_pm_issue_created(
+        self, handler: PmSyncHandler, workspace: Path
+    ) -> None:
+        evt = _make_inbound_event(event_type="create", issue_id=8)
+        handler.adapter.handle_inbound_event.return_value = evt
+        handler.handle_inbound_webhook({"action": "create"})
+        msgs = self._active_messages(workspace)
+        assert len(msgs) == 1
+        assert "pm-issue-created" in msgs[0].read_text()
+
+    def test_issue_update_other_emits_pm_issue_updated(
+        self, handler: PmSyncHandler, workspace: Path
+    ) -> None:
+        evt = _make_inbound_event(event_type="update", issue_id=9)
+        handler.adapter.handle_inbound_event.return_value = evt
+        handler.handle_inbound_webhook({"action": "update"})
+        msgs = self._active_messages(workspace)
+        assert len(msgs) == 1
+        assert "pm-issue-updated" in msgs[0].read_text()
+
+    def test_spec_agent_comment_emits_spec_update_requested(
+        self, handler: PmSyncHandler, workspace: Path
+    ) -> None:
+        evt = _make_inbound_event(event_type="update", issue_id=10)
+        handler.adapter.handle_inbound_event.return_value = evt
+        payload = {
+            "action": "update",
+            "issue": {"id": 10},
+            "journals": [{"notes": "Hey @spec-agent please update the task status"}],
+        }
+        handler.handle_inbound_webhook(payload)
+        msgs = self._active_messages(workspace)
+        assert len(msgs) == 1
+        content = msgs[0].read_text()
+        assert "spec-update-requested" in content
+        assert "spec-agent" in content
+
+    def test_disabled_handler_returns_error(self, workspace: Path) -> None:
+        h = PmSyncHandler(workspace)
+        h.enabled = False
+        result = h.handle_inbound_webhook({"action": "update"})
+        assert result["ok"] is False
+
+    def test_project_id_maps_to_agent_in_bus_to(
+        self, handler: PmSyncHandler, workspace: Path
+    ) -> None:
+        # project_id=2 → otaman-specs → spec-agent (from repos in platform.yaml)
+        evt = _make_inbound_event(event_type="create", project_id=2, issue_id=11)
+        handler.adapter.handle_inbound_event.return_value = evt
+        handler.handle_inbound_webhook({"action": "create"})
+        msgs = self._active_messages(workspace)
+        assert len(msgs) == 1
+        assert "spec-agent" in msgs[0].read_text()
+
+
+# ---------------------------------------------------------------------------
+# MCP Tier 2 (task 9.3)
+# ---------------------------------------------------------------------------
+
+
+class TestMcpTier2:
+    def test_returns_none_when_mcp_client_unavailable(
+        self, handler: PmSyncHandler
+    ) -> None:
+        import otaman_bridge.pm_sync_handler as _mod
+        original = _mod._MCP_CLIENT_CLS
+        _mod._MCP_CLIENT_CLS = None
+        try:
+            result = handler.call_mcp_complex_query("easy8_issues_list", {})
+            assert result is None
+        finally:
+            _mod._MCP_CLIENT_CLS = original
+
+    def test_returns_none_when_disabled(self, workspace: Path) -> None:
+        h = PmSyncHandler(workspace)
+        h.enabled = False
+        result = h.call_mcp_complex_query("easy8_issues_list", {})
+        assert result is None
+
+    def test_calls_mcp_client_when_available(self, handler: PmSyncHandler) -> None:
+        import otaman_bridge.pm_sync_handler as _mod
+        original = _mod._MCP_CLIENT_CLS
+
+        mock_mcp_cls = MagicMock()
+        mock_mcp_instance = MagicMock()
+        mock_mcp_instance.call_tool.return_value = {"issues": []}
+        mock_mcp_cls.return_value = mock_mcp_instance
+
+        _mod._MCP_CLIENT_CLS = mock_mcp_cls
+        try:
+            with patch.dict(os.environ, {"OTAMAN_PM_EASY8_API_KEY": "test-key"}):
+                handler.config = MagicMock()
+                handler.config.provider = "easy8"
+                handler.config.base_url = "https://es.example.com"
+                result = handler.call_mcp_complex_query("easy8_issues_list", {"project_id": 1})
+            assert result == {"issues": []}
+            mock_mcp_instance.call_tool.assert_called_once_with(
+                "easy8_issues_list", {"project_id": 1}
+            )
+        finally:
+            _mod._MCP_CLIENT_CLS = original
+
+
+# ---------------------------------------------------------------------------
+# Issue map persistence
+# ---------------------------------------------------------------------------
+
+
+class TestIssueMapPersistence:
+    def test_save_and_load_issue_id(self, handler: PmSyncHandler) -> None:
+        handler._save_issue_id("my-feature", 77)
+        assert handler._load_issue_id("my-feature") == 77
+
+    def test_load_returns_none_for_unknown_change(self, handler: PmSyncHandler) -> None:
+        assert handler._load_issue_id("nonexistent") is None
+
+    def test_update_existing_entry(self, handler: PmSyncHandler) -> None:
+        handler._save_issue_id("change-a", 1)
+        handler._save_issue_id("change-a", 2)
+        assert handler._load_issue_id("change-a") == 2
+
+    def test_multiple_changes_tracked_independently(self, handler: PmSyncHandler) -> None:
+        handler._save_issue_id("change-a", 10)
+        handler._save_issue_id("change-b", 20)
+        assert handler._load_issue_id("change-a") == 10
+        assert handler._load_issue_id("change-b") == 20

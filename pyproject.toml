@@ -27,7 +27,7 @@ packages = ["src/otaman_bridge", "src/otaman_bridge_ee"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "../otaman-core/src"]
+pythonpath = ["src", "../otaman-core/src", "../otaman-adapters/src"]
 
 [dependency-groups]
 dev = [
