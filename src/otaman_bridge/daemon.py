@@ -1696,6 +1696,20 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 self.send_header("Connection", "close")
                 self.end_headers()
                 return
+            if route.startswith("/pm-sync/"):
+                body = self._read_body()
+                if body is None:
+                    self._reply_error(400, "invalid JSON body")
+                    return
+                # Lazy-load pm_sync_handler
+                if not hasattr(daemon, "_pm_sync_handler"):
+                    from pathlib import Path as _Path
+                    from otaman_bridge.pm_sync_handler import PmSyncHandler
+                    _root = _Path(daemon.bus_watcher_root) if daemon.bus_watcher_root else _Path.cwd()
+                    daemon._pm_sync_handler = PmSyncHandler(_root)
+                result = daemon._pm_sync_handler.handle_inbound_webhook(body)
+                self._reply_json(200, result)
+                return
             if route in ("/approval", "/notify", "/reply", "/shutdown"):
                 if not self._auth_ok():
                     self._reply_error(401, "invalid or missing bearer token")
