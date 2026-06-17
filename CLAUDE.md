@@ -64,6 +64,25 @@ Why the split: bus checks happen dozens of times per session, and the MCP-via-in
 - Message handling while busy: ack as `read`, add to queue, finish current task first
 - Urgent messages: pause current work, inform the human immediately
 
+### Agent Status (REQUIRED)
+
+Before writing any code for a specific task, call:
+```
+otaman set-status working --task "<N.M task description>" --change <change-name>
+```
+
+When waiting on another agent or a dependency:
+```
+otaman set-status waiting --task "<N.M ...>" --change <change-name>
+```
+
+When done with all current tasks:
+```
+otaman set-status idle
+```
+
+This is a single CLI call — no file editing, no token overhead. It lets the human see live fleet state in `otaman status` and in `otaman check`. Per `agent-status-presence` design Q3.
+
 ### Task Queue
 - Your queue file: `../otaman-meta/.agents/queue/bridge-agent.md`
 - Max 1 active task at a time — finish or pause before switching
@@ -94,25 +113,9 @@ Why the split: bus checks happen dozens of times per session, and the MCP-via-in
 - Resume the blocked task only after you see BOTH `spec-change-approved` AND `spec-change` messages
 - Check `../otaman-meta/.agents/blocked/bridge-agent.md` for your currently blocked tasks
 
-### Spec Authoring — NOT your job (CRITICAL)
-- **spec-agent authors ALL spec artifacts** — `proposal.md`, `design.md`, `tasks.md`, `specs/*/spec.md`, JSON schemas, ADRs. These live in `otaman-specs` which is READ-ONLY for you.
-- **Your only spec action is `/otaman:propose`** — you describe what you need, spec-agent writes it.
-- **After approval + spec-change notification**: wait for `task-assignment` messages addressed to you from the mapped `tasks.md`. Those tasks will be **implementation work in your repo**, not spec authoring.
-- **Never write**: `proposal.md`, `design.md`, `tasks.md`, `spec.md`, ADR files, or any file under `otaman-specs/openspec/`. Even after approval. Even if you think it would be faster.
-- If you feel the urge to "just fill in the spec myself" — stop, send a `question` message to spec-agent instead.
 
-### Agent Status (REQUIRED)
 
-Before writing any code for a specific task, call:
-  otaman set-status working --task "<N.M task description>" --change <change-name>
 
-When waiting on another agent or a dependency:
-  otaman set-status waiting --task "<N.M ...>" --change <change-name>
-
-When done with all current tasks:
-  otaman set-status idle
-
-One CLI call — no file editing, no token overhead.
 
 ### Git Workflow
 - Work in branches: `agent/bridge-agent/{feature-name}`
