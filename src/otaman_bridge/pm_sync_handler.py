@@ -259,7 +259,14 @@ status: pending
 
         api_key = os.environ.get(f"OTAMAN_PM_{provider.upper()}_API_KEY", "")
         try:
-            adapter = cls(base_url=config.base_url, api_key=api_key)
+            _status_map = getattr(config, "status_map", {}) or {}
+            _tracker = getattr(config, "tracker", "Task") or "Task"
+            adapter = cls(
+                base_url=config.base_url,
+                api_key=api_key,
+                status_map=_status_map,
+                tracker=_tracker,
+            )
         except Exception:
             logger.exception(
                 "pm_sync_handler: failed to instantiate adapter for provider=%r", provider
