@@ -210,6 +210,7 @@ class BusWatcher:
         project: str,
         on_info,     # async callable: (InfoMessage) -> ...
         on_approval, # async callable: (ApprovalRequest, BusMessage) -> ...
+        on_event=None,  # sync callable: (BusMessage) -> None; called for every surfaced msg
         poll_interval: float = POLL_INTERVAL_SECONDS,
     ) -> None:
         self.project_root = project_root
@@ -217,6 +218,7 @@ class BusWatcher:
         self.project = project
         self._on_info = on_info
         self._on_approval = on_approval
+        self._on_event = on_event
         self.poll_interval = max(0.1, poll_interval)
         self._stopping = asyncio.Event()
 
@@ -280,6 +282,14 @@ class BusWatcher:
                     msg.stem, msg.type,
                 )
                 continue
+
+            if self._on_event is not None:
+                try:
+                    self._on_event(msg)
+                except Exception:  # noqa: BLE001
+                    _log.exception(
+                        "pm sync: handle_event failed for %s; continuing", msg.stem,
+                    )
 
             state[msg.stem] = now
             surfaced += 1

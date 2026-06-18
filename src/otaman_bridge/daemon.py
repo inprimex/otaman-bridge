@@ -700,12 +700,20 @@ class BridgeDaemon:
                 self.bus_watcher_project
                 or resolve_project_name(self.bus_watcher_root)
             )
+            _pm_event_cb = None
+            try:
+                from otaman_bridge.pm_sync_handler import PmSyncHandler as _PmSyncHandler  # noqa: PLC0415
+                _pm_event_cb = _PmSyncHandler(self.bus_watcher_root).handle_event
+            except Exception:
+                _log.warning("pm sync: could not load PmSyncHandler; PM sync disabled")
+
             self._bus_watcher = BusWatcher(
                 project_root=self.bus_watcher_root,
                 account=self.account,
                 project=project_name,
                 on_info=self._bus_on_info,
                 on_approval=self._bus_on_approval,
+                on_event=_pm_event_cb,
             )
             self._bus_watcher_future = self._async.submit(self._bus_watcher.run())
             _log.info(
