@@ -52,6 +52,15 @@ repos:
     owner: spec-agent
   - name: otaman-bridge
     owner: bridge-agent
+human-roster:
+  - name: Roman Starikov
+    email: roman@example.com
+    roles: [cofounder, cto, cpo]
+    pm-user-id: 1
+  - name: Alice Dev
+    email: alice@example.com
+    roles: [developer]
+    pm-user-id: 7
 """
 
 
@@ -390,3 +399,131 @@ class TestIssueMapPersistence:
         handler._save_issue_id("change-b", 20)
         assert handler._load_issue_id("change-a") == 10
         assert handler._load_issue_id("change-b") == 20
+
+
+# ---------------------------------------------------------------------------
+# Human-roster assignee resolution (human-roster spec tasks 3.1–3.3)
+# ---------------------------------------------------------------------------
+
+from otaman_bridge.pm_sync_handler import resolve_assignee  # noqa: E402
+
+
+ROSTER = [
+    {"name": "Roman", "roles": ["cofounder", "cto"], "pm-user-id": 1},
+    {"name": "Alice", "roles": ["developer"], "pm-user-id": 7},
+]
+
+
+class TestResolveAssignee:
+    def test_agent_role_match(self) -> None:
+        assert resolve_assignee("cofounder-agent", ROSTER) == 1
+
+    def test_human_resolves_to_cofounder_first(self) -> None:
+        assert resolve_assignee("human", ROSTER) == 1
+
+    def test_developer_agent_resolves(self) -> None:
+        assert resolve_assignee("developer-agent", ROSTER) == 7
+
+    def test_no_match_returns_none(self) -> None:
+        assert resolve_assignee("cpo-agent", [{"name": "X", "roles": ["developer"], "pm-user-id": 5}]) is None
+
+    def test_missing_pm_user_id_returns_none(self) -> None:
+        roster = [{"name": "X", "roles": ["cofounder"]}]
+        assert resolve_assignee("cofounder-agent", roster) is None
+
+    def test_empty_roster_returns_none(self) -> None:
+        assert resolve_assignee("human", []) is None
+
+
+class TestSpecChangeApprovedWithRoster:
+    def test_resolve_assignee_called_and_passed(self, handler: PmSyncHandler) -> None:
+        # handler has ROSTER from PLATFORM_YAML_CONTENT; to=human → pm-user-id=1
+        handler.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human",
+            "My spec", None, "my-change",
+        )
+        call_args = handler.adapter.create_issue.call_args[0][0]
+        # _SpecChangeWithAssignee wraps SpecChange and exposes assigned_to_id
+        assert getattr(call_args, "assigned_to_id", None) == 1
+
+
+# ---------------------------------------------------------------------------
+# .pm-sync.yaml persistence (pm-sync-issue-id-on-spec tasks 2.1–2.5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def handler_with_openspec(workspace: Path) -> PmSyncHandler:
+    """Handler with openspec/changes/ dir in workspace for .pm-sync.yaml tests."""
+    changes_dir = workspace / "openspec" / "changes" / "my-change"
+    changes_dir.mkdir(parents=True)
+    h = PmSyncHandler(workspace)
+    h.adapter = _make_adapter()
+    h.enabled = True
+    h._project_id_to_repo = {1: "_root", 2: "otaman-specs", 3: "otaman-bridge"}
+    return h
+
+
+class TestPmSyncYaml:
+    def test_spec_change_approved_writes_pm_sync_yaml(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        handler_with_openspec.adapter.create_issue.return_value = _make_issue(42)
+        handler_with_openspec.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human",
+            "My spec", None, "my-change",
+        )
+        pm_sync = workspace / "openspec" / "changes" / "my-change" / ".pm-sync.yaml"
+        assert pm_sync.is_file()
+        import yaml
+        data = yaml.safe_load(pm_sync.read_text())
+        assert data["change_issue_id"] == 42
+
+    def test_resolve_issue_id_reads_pm_sync_yaml_first(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        # Pre-write .pm-sync.yaml
+        pm_sync = workspace / "openspec" / "changes" / "my-change" / ".pm-sync.yaml"
+        pm_sync.write_text("change_issue_id: 99\n", encoding="utf-8")
+        result = handler_with_openspec._resolve_issue_id("my-change", "anything")
+        assert result == 99
+        # Should NOT have called list_issues (no API call needed)
+        handler_with_openspec.adapter.list_issues.assert_not_called()
+
+    def test_resolve_falls_through_to_issue_map_when_no_pm_sync_yaml(
+        self, handler: PmSyncHandler
+    ) -> None:
+        handler._save_issue_id("my-change", 55)
+        # handler has no openspec dir → _pm_sync_file returns None → falls to issue-map
+        result = handler._resolve_issue_id("my-change", "")
+        assert result == 55
+
+    def test_write_failure_logs_warning_and_does_not_raise(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        # Make the directory read-only so write fails
+        pm_dir = workspace / "openspec" / "changes" / "my-change"
+        pm_dir.chmod(0o555)
+        try:
+            # Should log WARNING but not raise
+            handler_with_openspec._write_pm_sync_yaml("my-change", 77)
+        finally:
+            pm_dir.chmod(0o755)
+
+    def test_malformed_pm_sync_yaml_returns_none(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        pm_sync = workspace / "openspec" / "changes" / "my-change" / ".pm-sync.yaml"
+        pm_sync.write_text(": invalid: yaml: [[[", encoding="utf-8")
+        result = handler_with_openspec._read_pm_sync_yaml("my-change")
+        assert result is None
+
+    def test_existing_tasks_preserved_on_write(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        pm_sync = workspace / "openspec" / "changes" / "my-change" / ".pm-sync.yaml"
+        pm_sync.write_text("change_issue_id: 10\ntasks:\n  '2.1': 43\n", encoding="utf-8")
+        handler_with_openspec._write_pm_sync_yaml("my-change", 10)
+        import yaml
+        data = yaml.safe_load(pm_sync.read_text())
+        assert data.get("tasks", {}).get("2.1") == 43
