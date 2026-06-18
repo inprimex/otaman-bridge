@@ -165,6 +165,7 @@ class PmSyncHandler:
 
         change_name: str | None = frontmatter.get("change") or None
         spec_path: str | None = frontmatter.get("spec-path") or None
+        jtbd_id: str | None = frontmatter.get("jtbd-id") or None
 
         # spec-change-approved messages have no `change:` field — derive from subject
         # format: "Approved: <change-name>: <description>" or "Approved: <change-name>"
@@ -172,7 +173,7 @@ class PmSyncHandler:
             after = subject.removeprefix("Approved:").strip()
             change_name = after.split(":")[0].strip() or None
 
-        self.handle_bus_event(msg_type, msg_from, msg_to, subject, spec_path, change_name)
+        self.handle_bus_event(msg_type, msg_from, msg_to, subject, spec_path, change_name, jtbd_id=jtbd_id)
 
     def handle_bus_event(
         self,
@@ -182,13 +183,14 @@ class PmSyncHandler:
         subject: str,
         spec_path: str | None,
         change_name: str | None,
+        jtbd_id: str | None = None,
     ) -> None:
         """Called by the bus-watcher when a mapped bus event fires."""
         if not self.enabled or self.adapter is None:
             return
 
         try:
-            self._dispatch_outbound(msg_type, msg_from, msg_to, subject, spec_path, change_name)
+            self._dispatch_outbound(msg_type, msg_from, msg_to, subject, spec_path, change_name, jtbd_id=jtbd_id)
         except Exception:
             logger.exception(
                 "pm_sync_handler: error handling bus event type=%r change=%r",
@@ -203,11 +205,12 @@ class PmSyncHandler:
         subject: str,
         spec_path: str | None,
         change_name: str | None,
+        jtbd_id: str | None = None,
     ) -> None:
         assert self.adapter is not None
 
         if msg_type == "spec-change-approved" and change_name:
-            # task 4.2
+            # task 4.2 + 3.1-3.4
             try:
                 from otaman_core.pm_sync import SpecChange
             except ImportError:
@@ -216,12 +219,16 @@ class PmSyncHandler:
             # Use specs repo name (not msg sender) so project_map lookup resolves
             # to the right Easy8 sub-project (e.g. "otaman-specs" → project_id 32).
             specs_repo = self._specs_repo_name()
+            description = self._read_proposal_description(change_name)
+            proposal_title = self._extract_proposal_title(description)
+            issue_title = self._build_issue_title(change_name, proposal_title)
             spec_change: object = SpecChange(
                 change_name=change_name,
-                title=subject,
+                title=issue_title,
                 agent_name=specs_repo,
                 spec_path=spec_path or "",
-                jtbd_id=None,
+                jtbd_id=jtbd_id,
+                description=description,
             )
             # human-roster: resolve PM assignee from roster
             assigned_to_id = resolve_assignee(msg_to, self._human_roster)
@@ -619,12 +626,14 @@ class PmSyncHandler:
             return None
 
         api_key = os.environ.get(f"OTAMAN_PM_{provider.upper()}_API_KEY", "")
+        platform_custom_fields = getattr(config, "custom_fields", None) or {}
         try:
             adapter = cls(
                 base_url=config.base_url,
                 api_key=api_key,
                 status_map=getattr(config, "status_map", {}) or {},
                 tracker=getattr(config, "tracker", "Task") or "Task",
+                platform_custom_fields=platform_custom_fields,
             )
         except Exception:
             logger.exception(
@@ -653,6 +662,34 @@ class PmSyncHandler:
             if isinstance(repo, dict) and repo.get("name") == repo_name:
                 return str(repo.get("owner", ""))
         return None
+
+    # ------------------------------------------------------------------
+    # Proposal metadata helpers (tasks 3.1–3.3)
+    # ------------------------------------------------------------------
+
+    def _read_proposal_description(self, change_name: str) -> str:
+        """Read proposal.md for change_name; returns '' on any error."""
+        root = self._specs_root()
+        if root is None:
+            return ""
+        path = root / change_name / "proposal.md"
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    def _extract_proposal_title(self, description: str) -> "str | None":
+        """Return first `# Heading` line from proposal.md text, or None."""
+        for line in description.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# ") and not stripped.startswith("## "):
+                return stripped.lstrip("# ").strip()
+        return None
+
+    def _build_issue_title(self, change_name: str, proposal_title: "str | None") -> str:
+        """Return `[{change_name}] {proposal_title or change_name}`."""
+        label = proposal_title or change_name
+        return f"[{change_name}] {label}"
 
     def _specs_repo_name(self) -> str:
         """Derive the specs repo name from the resolved specs root for project_map lookup.
