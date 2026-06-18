@@ -266,6 +266,50 @@ class TestDispatchFailureIsolates:
 
 
 # ---------------------------------------------------------------------------
+# on_event callback
+
+
+class TestOnEvent:
+    def test_on_event_called_for_each_surfaced_message(self, project_root, recorder):
+        """on_event fires once per surfaced message, in addition to transport dispatch."""
+        seen: list[str] = []
+
+        def on_event(msg):
+            seen.append(msg.stem)
+
+        _write_bus_msg(project_root, "msg-alpha", type="info", priority="urgent")
+        _write_bus_msg(project_root, "msg-beta", type="info", priority="urgent")
+
+        w = _make_watcher(project_root, recorder, on_event=on_event)
+        asyncio.run(w._scan_once())
+
+        assert sorted(seen) == ["msg-alpha", "msg-beta"]
+
+    def test_on_event_exception_does_not_prevent_state_recording(self, project_root, recorder):
+        """An exception in on_event must not drop the message from surfaced state."""
+        def on_event(msg):
+            raise RuntimeError("pm sync exploded")
+
+        _write_bus_msg(project_root, "msg-boom", type="info", priority="urgent")
+
+        w = _make_watcher(project_root, recorder, on_event=on_event)
+        asyncio.run(w._scan_once())
+
+        # Message must still be recorded as surfaced
+        state = json.loads(
+            (project_root / ".otaman" / "bus-surfaced.state").read_text()
+        )
+        assert "msg-boom" in state
+
+    def test_on_event_none_is_noop(self, project_root, recorder):
+        """Passing on_event=None (default) works without error."""
+        _write_bus_msg(project_root, "msg-noop", type="info", priority="urgent")
+        w = _make_watcher(project_root, recorder)  # on_event defaults to None
+        n = asyncio.run(w._scan_once())
+        assert n == 1
+
+
+# ---------------------------------------------------------------------------
 # run / stop
 
 

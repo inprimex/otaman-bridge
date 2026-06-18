@@ -111,6 +111,25 @@ class PmSyncHandler:
     # Outbound: bus event → PM (tasks 4.2–4.6)
     # ------------------------------------------------------------------
 
+    def handle_event(self, msg: object) -> None:
+        """Sync callback for BusWatcher.on_event — adapts BusMessage to handle_bus_event."""
+        msg_type: str = str(getattr(msg, "type", "") or "")
+        msg_from: str = str(getattr(msg, "from_", "") or "")
+        msg_to: str = str(getattr(msg, "to", "") or "")
+        subject: str = str(getattr(msg, "subject", "") or "")
+        frontmatter: dict = getattr(msg, "frontmatter", {}) or {}
+
+        change_name: str | None = frontmatter.get("change") or None
+        spec_path: str | None = frontmatter.get("spec-path") or None
+
+        # spec-change-approved messages have no `change:` field — derive from subject
+        # format: "Approved: <change-name>: <description>" or "Approved: <change-name>"
+        if msg_type == "spec-change-approved" and not change_name:
+            after = subject.removeprefix("Approved:").strip()
+            change_name = after.split(":")[0].strip() or None
+
+        self.handle_bus_event(msg_type, msg_from, msg_to, subject, spec_path, change_name)
+
     def handle_bus_event(
         self,
         msg_type: str,
