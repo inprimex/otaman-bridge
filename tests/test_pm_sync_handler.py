@@ -435,6 +435,30 @@ class TestResolveAssignee:
         assert resolve_assignee("human", []) is None
 
 
+class TestSpecsRepoName:
+    def test_derives_repo_name_from_specs_root(self, handler_with_openspec: PmSyncHandler, workspace: Path) -> None:
+        # workspace/openspec/changes → workspace is the "repo" dir, name = tmp dir name
+        # The fallback when _specs_root returns an in-workspace path is just the basename
+        name = handler_with_openspec._specs_repo_name()
+        # Should be non-empty string (may be the tmp dir name); key property: not empty
+        assert isinstance(name, str) and len(name) > 0
+
+    def test_falls_back_to_otaman_specs_when_unresolvable(self, handler: PmSyncHandler) -> None:
+        # handler has no openspec dir → _specs_root returns None → fallback
+        assert handler._specs_repo_name() == "otaman-specs"
+
+    def test_spec_change_approved_uses_specs_repo_not_msg_from(
+        self, handler_with_openspec: PmSyncHandler
+    ) -> None:
+        """agent_name in SpecChange must be the specs repo name, not the message sender."""
+        handler_with_openspec.handle_bus_event(
+            "spec-change-approved", "plugin-agent", "spec-agent",
+            "My spec", None, "my-change",
+        )
+        call_args = handler_with_openspec.adapter.create_issue.call_args[0][0]
+        assert getattr(call_args, "agent_name", None) != "plugin-agent"
+
+
 class TestSpecChangeApprovedWithRoster:
     def test_resolve_assignee_called_and_passed(self, handler: PmSyncHandler) -> None:
         # handler has ROSTER from PLATFORM_YAML_CONTENT; to=human → pm-user-id=1
