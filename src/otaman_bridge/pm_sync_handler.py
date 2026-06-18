@@ -19,7 +19,10 @@ MCP Tier 2 (task 9.3):
   Complex queries (fleet summary, bulk-transition) route via Easy8McpClient when
   available; all CRUD hot-path operations stay on REST.
 
-Issue ID persistence: {project_root}/.otaman/pm-sync/issue-map.json
+Issue ID persistence:
+  Primary:   openspec/changes/{change}/.pm-sync.yaml  (spec-side canonical)
+  Secondary: {project_root}/.otaman/pm-sync/issue-map.json  (runtime cache)
+  Fallback:  live GET /issues.json search
 """
 
 from __future__ import annotations
@@ -43,6 +46,44 @@ try:
     _MCP_CLIENT_CLS = _Easy8McpClient
 except (ImportError, AttributeError):
     _MCP_CLIENT_CLS = None  # task 9.2 not yet merged; fall back to REST always
+
+
+# ---------------------------------------------------------------------------
+# Human-roster assignee resolution (human-roster spec)
+# ---------------------------------------------------------------------------
+
+def resolve_assignee(msg_to: str, roster: list) -> "int | None":
+    """Return pm-user-id for the person responsible for msg_to.
+
+    Algorithm:
+    - ``<role>-agent`` → find first roster entry with that role
+    - ``human``        → first entry matching priority order cofounder→cto→cpo→developer
+    - no match / pm-user-id absent → None (issue created unassigned)
+    """
+    if msg_to.endswith("-agent"):
+        role = msg_to.removesuffix("-agent")
+        for person in roster:
+            if isinstance(person, dict) and role in person.get("roles", []):
+                uid = person.get("pm-user-id")
+                return int(uid) if uid is not None else None
+    if msg_to == "human":
+        for role in ("cofounder", "cto", "cpo", "developer"):
+            for person in roster:
+                if isinstance(person, dict) and role in person.get("roles", []):
+                    uid = person.get("pm-user-id")
+                    return int(uid) if uid is not None else None
+    return None
+
+
+class _SpecChangeWithAssignee:
+    """Thin wrapper around SpecChange that adds assigned_to_id for adapters that support it."""
+
+    def __init__(self, spec_change: object, assigned_to_id: "int | None") -> None:
+        self._sc = spec_change
+        self.assigned_to_id = assigned_to_id
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._sc, name)
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +148,9 @@ class PmSyncHandler:
             v: k for k, v in (self.config.project_map or {}).items()
         }
 
+        # Human roster for PM assignee resolution (human-roster spec)
+        self._human_roster: list = self._load_human_roster(platform_yaml)
+
     # ------------------------------------------------------------------
     # Outbound: bus event → PM (tasks 4.2–4.6)
     # ------------------------------------------------------------------
@@ -169,15 +213,20 @@ class PmSyncHandler:
             except ImportError:
                 logger.warning("pm_sync_handler: cannot import SpecChange")
                 return
-            spec_change = SpecChange(
+            spec_change: object = SpecChange(
                 change_name=change_name,
                 title=subject,
                 agent_name=msg_from,
                 spec_path=spec_path or "",
                 jtbd_id=None,
             )
+            # human-roster: resolve PM assignee from roster
+            assigned_to_id = resolve_assignee(msg_to, self._human_roster)
+            if assigned_to_id is not None:
+                spec_change = _SpecChangeWithAssignee(spec_change, assigned_to_id)
             issue = self.adapter.create_issue(spec_change)
             self._save_issue_id(change_name, issue.id)
+            self._write_pm_sync_yaml(change_name, issue.id)
             logger.info(
                 "pm_sync_handler: created issue #%s for spec-change '%s'", issue.id, change_name
             )
@@ -420,12 +469,105 @@ class PmSyncHandler:
             return None
 
     # ------------------------------------------------------------------
+    # .pm-sync.yaml — spec-side issue ID (pm-sync-issue-id-on-spec spec)
+    # ------------------------------------------------------------------
+
+    def _specs_root(self) -> "Path | None":
+        """Resolve the openspec changes directory from platform.yaml specs.path."""
+        platform_yaml = self.project_root / "platform.yaml"
+        if not platform_yaml.is_file():
+            platform_yaml = self.project_root / "otaman-meta" / "platform.yaml"
+        try:
+            import yaml
+            data = yaml.safe_load(platform_yaml.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+        specs_path_str = (data.get("specs") or {}).get("path", "")
+        if specs_path_str:
+            sp = Path(specs_path_str)
+            if not sp.is_absolute():
+                sp = (platform_yaml.parent / sp).resolve()
+            return sp / "openspec" / "changes"
+        # fallback: collocated openspec (e.g. in test fixtures)
+        candidate = self.project_root / "openspec" / "changes"
+        return candidate if candidate.is_dir() else None
+
+    def _pm_sync_file(self, change_name: str) -> "Path | None":
+        """Return path to .pm-sync.yaml for a change, or None if unresolvable."""
+        root = self._specs_root()
+        if root is None:
+            return None
+        return root / change_name / ".pm-sync.yaml"
+
+    def _write_pm_sync_yaml(self, change_name: str, issue_id: int) -> None:
+        """Write/update .pm-sync.yaml with change_issue_id, preserving existing task entries."""
+        path = self._pm_sync_file(change_name)
+        if path is None:
+            logger.warning(
+                "pm_sync_handler: cannot resolve spec dir for %r; skipping .pm-sync.yaml write",
+                change_name,
+            )
+            return
+        try:
+            import yaml
+            existing: dict = {}
+            if path.is_file():
+                try:
+                    existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    existing = {}
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data: dict = {
+                "provider": getattr(self.config, "provider", "") or "",
+                "base_url": getattr(self.config, "base_url", "") or "",
+                "change_issue_id": issue_id,
+            }
+            if existing.get("tasks"):
+                data["tasks"] = existing["tasks"]
+            path.write_text(
+                yaml.dump(data, default_flow_style=False, sort_keys=True), encoding="utf-8",
+            )
+            logger.debug("pm_sync_handler: wrote .pm-sync.yaml for %r → #%s", change_name, issue_id)
+        except Exception:
+            logger.warning(
+                "pm_sync_handler: failed to write .pm-sync.yaml for %r", change_name, exc_info=True,
+            )
+
+    def _read_pm_sync_yaml(self, change_name: str) -> "int | None":
+        """Read change_issue_id from .pm-sync.yaml; returns None on miss or error."""
+        path = self._pm_sync_file(change_name)
+        if path is None or not path.is_file():
+            return None
+        try:
+            import yaml
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            val = data.get("change_issue_id")
+            return int(val) if val is not None else None
+        except Exception:
+            logger.warning(
+                "pm_sync_handler: malformed .pm-sync.yaml for %r; treating as cache miss",
+                change_name,
+            )
+            return None
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _resolve_issue_id(self, change_name: str | None, subject: str) -> int | None:
-        """Return PM issue id for a change: check issue-map first, then live search."""
+        """Return PM issue id for a change.
+
+        Priority chain:
+        1. .pm-sync.yaml change_issue_id (spec-side canonical)
+        2. .otaman/pm-sync/issue-map.json (runtime cache)
+        3. Live GET /issues.json search (last resort)
+        """
         if change_name:
+            # 1. spec-side .pm-sync.yaml
+            from_spec = self._read_pm_sync_yaml(change_name)
+            if from_spec is not None:
+                return from_spec
+            # 2. runtime cache
             stored = self._load_issue_id(change_name)
             if stored is not None:
                 return stored
@@ -508,6 +650,16 @@ class PmSyncHandler:
             if isinstance(repo, dict) and repo.get("name") == repo_name:
                 return str(repo.get("owner", ""))
         return None
+
+    def _load_human_roster(self, platform_yaml: Path) -> list:
+        """Read human-roster list from platform.yaml; returns [] on any error."""
+        try:
+            import yaml
+            data = yaml.safe_load(platform_yaml.read_text(encoding="utf-8")) or {}
+            roster = data.get("human-roster", [])
+            return roster if isinstance(roster, list) else []
+        except Exception:
+            return []
 
     def _write_bus_message(
         self,
