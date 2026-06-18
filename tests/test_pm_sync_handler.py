@@ -551,3 +551,183 @@ class TestPmSyncYaml:
         import yaml
         data = yaml.safe_load(pm_sync.read_text())
         assert data.get("tasks", {}).get("2.1") == 43
+
+
+# ---------------------------------------------------------------------------
+# Proposal helpers (tasks 3.1–3.3)
+# ---------------------------------------------------------------------------
+
+
+class TestProposalHelpers:
+    def test_read_proposal_description_reads_file(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        proposal = workspace / "openspec" / "changes" / "my-change" / "proposal.md"
+        proposal.write_text("# My Proposal\n\nSome content.", encoding="utf-8")
+        result = handler_with_openspec._read_proposal_description("my-change")
+        assert result == "# My Proposal\n\nSome content."
+
+    def test_read_proposal_description_returns_empty_on_missing(
+        self, handler_with_openspec: PmSyncHandler
+    ) -> None:
+        result = handler_with_openspec._read_proposal_description("nonexistent-change")
+        assert result == ""
+
+    def test_read_proposal_description_returns_empty_when_no_specs_root(
+        self, handler: PmSyncHandler
+    ) -> None:
+        result = handler._read_proposal_description("any-change")
+        assert result == ""
+
+    def test_extract_proposal_title_finds_heading(self, handler: PmSyncHandler) -> None:
+        result = handler._extract_proposal_title("# My Title\n\nBody text.")
+        assert result == "My Title"
+
+    def test_extract_proposal_title_skips_subheadings(self, handler: PmSyncHandler) -> None:
+        result = handler._extract_proposal_title("## Subheading\nBody.\n# Real Title")
+        assert result == "Real Title"
+
+    def test_extract_proposal_title_returns_none_when_absent(self, handler: PmSyncHandler) -> None:
+        assert handler._extract_proposal_title("No headings here.") is None
+
+    def test_build_issue_title_with_proposal_title(self, handler: PmSyncHandler) -> None:
+        assert handler._build_issue_title("my-change", "My Title") == "[my-change] My Title"
+
+    def test_build_issue_title_falls_back_to_change_name(self, handler: PmSyncHandler) -> None:
+        assert handler._build_issue_title("my-change", None) == "[my-change] my-change"
+
+
+# ---------------------------------------------------------------------------
+# spec-change-approved rich title + description (task 3.4)
+# ---------------------------------------------------------------------------
+
+
+class TestSpecChangeApprovedRichTitle:
+    def test_title_uses_proposal_heading(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        proposal = workspace / "openspec" / "changes" / "my-change" / "proposal.md"
+        proposal.write_text("# Rich Issue Title\n\nBody.", encoding="utf-8")
+        handler_with_openspec.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human",
+            "Approved: my-change: some description", None, "my-change",
+        )
+        call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
+        assert getattr(call_sc, "title", "") == "[my-change] Rich Issue Title"
+
+    def test_title_falls_back_to_change_name_when_no_proposal(
+        self, handler_with_openspec: PmSyncHandler
+    ) -> None:
+        # No proposal.md written — _read_proposal_description returns ""
+        handler_with_openspec.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human",
+            "Approved: my-change", None, "my-change",
+        )
+        call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
+        assert getattr(call_sc, "title", "") == "[my-change] my-change"
+
+    def test_description_populated_from_proposal(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        proposal = workspace / "openspec" / "changes" / "my-change" / "proposal.md"
+        proposal.write_text("# Title\n\nFull description body.", encoding="utf-8")
+        handler_with_openspec.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human",
+            "Approved: my-change", None, "my-change",
+        )
+        call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
+        assert "Full description body." in getattr(call_sc, "description", "")
+
+    def test_jtbd_id_threaded_from_handle_event(
+        self, handler_with_openspec: PmSyncHandler
+    ) -> None:
+        class _FakeMsg:
+            type = "spec-change-approved"
+            from_ = "spec-agent"
+            to = "human"
+            subject = "Approved: my-change"
+            frontmatter = {"jtbd-id": "JTBD-42", "spec-path": ""}
+
+        handler_with_openspec.handle_event(_FakeMsg())
+        call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
+        assert getattr(call_sc, "jtbd_id", None) == "JTBD-42"
+
+    def test_jtbd_id_none_when_absent_from_frontmatter(
+        self, handler_with_openspec: PmSyncHandler
+    ) -> None:
+        class _FakeMsg:
+            type = "spec-change-approved"
+            from_ = "spec-agent"
+            to = "human"
+            subject = "Approved: my-change"
+            frontmatter: dict = {}
+
+        handler_with_openspec.handle_event(_FakeMsg())
+        call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
+        assert getattr(call_sc, "jtbd_id", "sentinel") is None
+
+
+# ---------------------------------------------------------------------------
+# platform_custom_fields injection (task 3.5)
+# ---------------------------------------------------------------------------
+
+
+_PLATFORM_YAML_WITH_CUSTOM_FIELDS = """\
+project: otaman
+pm-sync:
+  provider: easy8
+  base-url: https://es.example.com
+  identity-mode: system_user
+  program-name: Otaman Platform
+  program-key: otaman
+  per-repo: true
+  status-map:
+    declared: New
+    in_progress: In Progress
+    done: Closed
+  tracker: Task
+  project-map:
+    _root: 1
+    otaman-specs: 2
+    otaman-bridge: 3
+  custom-fields:
+    jtbd-id: 4
+    otaman-agent: 5
+repos:
+  - name: otaman-specs
+    owner: spec-agent
+"""
+
+
+class TestLoadAdapterCustomFields:
+    def test_custom_fields_passed_to_adapter_constructor(self, workspace: Path) -> None:
+        """_load_adapter injects platform_custom_fields from config into the adapter."""
+        from unittest.mock import patch
+
+        (workspace / "platform.yaml").write_text(_PLATFORM_YAML_WITH_CUSTOM_FIELDS, encoding="utf-8")
+
+        mock_cls = MagicMock()
+        mock_cls.return_value.capabilities = _make_capabilities()
+
+        # get_pm_adapter is called inline inside _load_adapter; patch it to return
+        # mock_cls so we can inspect constructor kwargs.
+        with patch("otaman_core.pm_sync.get_pm_adapter", return_value=mock_cls):
+            PmSyncHandler(workspace)
+
+        assert mock_cls.called
+        passed_cf = mock_cls.call_args.kwargs.get("platform_custom_fields")
+        assert passed_cf == {"jtbd-id": 4, "otaman-agent": 5}
+
+    def test_empty_custom_fields_passed_when_absent_from_config(self, workspace: Path) -> None:
+        """When custom-fields is absent from platform.yaml, pass empty dict."""
+        from unittest.mock import patch
+
+        mock_cls = MagicMock()
+        mock_cls.return_value.capabilities = _make_capabilities()
+
+        with patch("otaman_core.pm_sync.get_pm_adapter", return_value=mock_cls):
+            PmSyncHandler(workspace)
+
+        assert mock_cls.called
+        passed_cf = mock_cls.call_args.kwargs.get("platform_custom_fields")
+        assert passed_cf == {}
