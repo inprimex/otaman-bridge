@@ -308,6 +308,32 @@ class TestOnEvent:
         n = asyncio.run(w._scan_once())
         assert n == 1
 
+    def test_on_event_fires_for_non_surfaced_messages(self, project_root, recorder):
+        """on_event must fire even for messages that don't pass the surface policy.
+
+        task-assignment is policy "never" so decision.surface=False and transport
+        callbacks are skipped — but PM sync (on_event) must still receive the message.
+        """
+        seen: list[str] = []
+
+        def on_event(msg):
+            seen.append(msg.stem)
+
+        _write_bus_msg(project_root, "ta-msg", type="task-assignment", to="bridge-agent")
+
+        w = _make_watcher(project_root, recorder, on_event=on_event)
+        n = asyncio.run(w._scan_once())
+
+        # Transport was not notified (surfaced=0)
+        assert n == 0
+        assert recorder.infos == [] and recorder.approvals == []
+        # But PM sync callback fired
+        assert seen == ["ta-msg"]
+        # And message is deduped — won't fire again on next scan
+        state_file = project_root / ".otaman" / "bus-surfaced.state"
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        assert "ta-msg" in state
+
 
 # ---------------------------------------------------------------------------
 # run / stop
