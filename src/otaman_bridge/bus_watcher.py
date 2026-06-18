@@ -250,17 +250,31 @@ class BusWatcher:
         self._stopping.set()
 
     async def _scan_once(self) -> int:
-        """One pass over the bus. Returns number of messages surfaced."""
+        """One pass over the bus. Returns number of messages surfaced to transport."""
         overrides = load_surface_overrides(self.project_root)
         state = _load_state(self.project_root)
         now = time.time()
         surfaced = 0
+        state_changed = False  # tracks whether _save_state is needed
 
         for msg in iter_bus_messages(self.project_root):
             if msg.stem in state:
-                continue  # already surfaced in a previous scan
+                continue  # already processed in a previous scan
             decision = decide(msg, overrides=overrides)
+
             if not decision.surface:
+                # Not surfaced to transport (e.g. task-assignment at normal priority),
+                # but on_event (PM sync) must still fire — PM sync is independent of
+                # the transport notification layer.
+                if self._on_event is not None:
+                    try:
+                        self._on_event(msg)
+                    except Exception:  # noqa: BLE001
+                        _log.exception(
+                            "pm sync: handle_event failed for %s; continuing", msg.stem,
+                        )
+                state[msg.stem] = now
+                state_changed = True
                 continue
 
             try:
@@ -292,9 +306,11 @@ class BusWatcher:
                     )
 
             state[msg.stem] = now
+            state_changed = True
             surfaced += 1
 
-        if surfaced:
+        if state_changed:
             _save_state(self.project_root, state)
+        if surfaced:
             _log.info("bus watcher: surfaced %d new message(s)", surfaced)
         return surfaced
