@@ -213,10 +213,13 @@ class PmSyncHandler:
             except ImportError:
                 logger.warning("pm_sync_handler: cannot import SpecChange")
                 return
+            # Use specs repo name (not msg sender) so project_map lookup resolves
+            # to the right Easy8 sub-project (e.g. "otaman-specs" → project_id 32).
+            specs_repo = self._specs_repo_name()
             spec_change: object = SpecChange(
                 change_name=change_name,
                 title=subject,
-                agent_name=msg_from,
+                agent_name=specs_repo,
                 spec_path=spec_path or "",
                 jtbd_id=None,
             )
@@ -650,6 +653,20 @@ class PmSyncHandler:
             if isinstance(repo, dict) and repo.get("name") == repo_name:
                 return str(repo.get("owner", ""))
         return None
+
+    def _specs_repo_name(self) -> str:
+        """Derive the specs repo name from the resolved specs root for project_map lookup.
+
+        e.g. /home/user/otaman/otaman-specs/openspec/changes → "otaman-specs"
+        Falls back to "otaman-specs" if unresolvable.
+        """
+        root = self._specs_root()
+        if root is not None:
+            # root is openspec/changes — two levels up is the repo dir
+            name = root.parent.parent.name
+            if name:
+                return name
+        return "otaman-specs"
 
     def _load_human_roster(self, platform_yaml: Path) -> list:
         """Read human-roster list from platform.yaml; returns [] on any error."""
