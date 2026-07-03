@@ -33,11 +33,12 @@ import secrets as _secrets
 import socket
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from otaman_bridge.approval_service import ApprovalService
 from otaman_bridge.bus_decision import (
     record_decision,
     write_acknowledge,
@@ -143,55 +144,6 @@ def read_endpoint_file(path: Path) -> dict[str, Any] | None:
 
 # ---------------------------------------------------------------------------
 # Pending approvals registry
-
-
-class _PendingApproval:
-    """Thread-safe slot for a waiting hook.
-
-    The deadline is a monotonic timestamp rather than the raw duration
-    passed into ``wait()`` so that Snooze can push it out while the
-    hook is still blocked in ``wait()``. The original ``timeout`` arg
-    is retained for backwards compatibility but ignored in favor of
-    ``_deadline``.
-    """
-
-    __slots__ = ("event", "response", "request", "handle", "_deadline")
-
-    def __init__(self, request: ApprovalRequest):
-        self.event = threading.Event()
-        self.response: ApprovalResponse | None = None
-        self.request = request
-        # TransportHandle returned by Transport.send_approval — stored so
-        # inbound replies can edit the original message after the decision.
-        self.handle: TransportHandle | None = None
-        self._deadline = time.monotonic() + request.timeout_seconds
-
-    def resolve(self, response: ApprovalResponse) -> None:
-        self.response = response
-        self.event.set()
-
-    def extend_by(self, seconds: float) -> None:
-        """Push the deadline to at least ``now + seconds`` (never shortens it)."""
-        new_deadline = time.monotonic() + seconds
-        if new_deadline > self._deadline:
-            self._deadline = new_deadline
-
-    def wait(self, timeout: float) -> ApprovalResponse:  # noqa: ARG002
-        """Block until resolved or the deadline passes.
-
-        Polls in small chunks (≤5s) so deadline extensions made by
-        Snooze after ``wait()`` starts are picked up.
-        """
-        while True:
-            remaining = self._deadline - time.monotonic()
-            if remaining <= 0:
-                return ApprovalResponse(
-                    decision="timeout",
-                    request_id=self.request.request_id,
-                )
-            if self.event.wait(timeout=min(remaining, 5.0)):
-                assert self.response is not None
-                return self.response
 
 
 class _PendingBusDecision:
@@ -613,15 +565,24 @@ class BridgeDaemon:
         ))
         _log.info("MCP: messaging tools registered (inbox=%s)", self.inbox.root)
 
-        self._pending: dict[str, _PendingApproval] = {}
+        self._async = _AsyncLoopThread()
+        # Tool-call approval table (hook blocked in handle_approval()
+        # waiting for a human tap). Extracted to ApprovalService (F040
+        # phase 1) — see approval_service.py for the state + lock it owns.
+        self._approval_service = ApprovalService(
+            transport=self.transport, async_loop=self._async,
+        )
         # Parallel registry for bus spec-change-requests waiting on an
         # Approve/Reject tap. Keyed by request_id (= bus message stem).
-        # Unlike _pending, these don't block a caller — the daemon just
-        # holds the BusMessage + handle until the decision comes in,
-        # then writes the ack + broadcast.
+        # Unlike the approval table, these don't block a caller — the
+        # daemon just holds the BusMessage + handle until the decision
+        # comes in, then writes the ack + broadcast. Own lock: nothing
+        # requires this table and the approval table to be read/written
+        # atomically together (the two dispatch call sites that touch
+        # both — _dispatch_inbound_reply, _surface_details — do so as
+        # two independent lookups).
         self._pending_bus: dict[str, _PendingBusDecision] = {}
         self._pending_lock = threading.Lock()
-        self._async = _AsyncLoopThread()
         self._server: ThreadingHTTPServer | None = None
         self._serve_thread: threading.Thread | None = None
         self._shutdown_requested = threading.Event()
@@ -870,15 +831,13 @@ class BridgeDaemon:
 
         # Cancel pending approvals so hooks get an immediate "daemon-shutdown"
         # response instead of waiting for their timeouts.
+        self._approval_service.cancel_all(lambda request_id: ApprovalResponse(
+            decision="ask",  # fail-safe: let Claude's native prompt show
+            request_id=request_id,
+            responder="daemon:shutdown",
+            message="bridge daemon shutting down",
+        ))
         with self._pending_lock:
-            for pending in self._pending.values():
-                pending.resolve(ApprovalResponse(
-                    decision="ask",  # fail-safe: let Claude's native prompt show
-                    request_id=pending.request.request_id,
-                    responder="daemon:shutdown",
-                    message="bridge daemon shutting down",
-                ))
-            self._pending.clear()
             # Bus pendings don't block anything — just drop them. They'll
             # re-surface on next daemon start because the state file
             # dedup is in-memory only within a single watcher instance
@@ -964,54 +923,7 @@ class BridgeDaemon:
     # ----- route handlers (called by the HTTP handler) --------------------
 
     def handle_approval(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        try:
-            req = ApprovalRequest.from_dict(body)
-        except (TypeError, ValueError) as e:
-            return 400, {"error": f"invalid ApprovalRequest: {e}"}
-
-        pending = _PendingApproval(req)
-        with self._pending_lock:
-            self._pending[req.request_id] = pending
-
-        # Schedule the transport's send_approval on the async loop and
-        # capture the TransportHandle for later update() calls.
-        try:
-            fut = self._async.submit(self.transport.send_approval(req))
-            handle = fut.result(timeout=10.0)
-            if isinstance(handle, TransportHandle):
-                pending.handle = handle
-        except Exception as e:
-            with self._pending_lock:
-                self._pending.pop(req.request_id, None)
-            _log.exception("transport.send_approval failed")
-            # Fail-safe: return "ask" so the native terminal prompt takes over.
-            return 200, ApprovalResponse(
-                decision="ask",
-                request_id=req.request_id,
-                responder="daemon:send-failed",
-                message=str(e),
-            ).to_dict()
-
-        try:
-            response = pending.wait(timeout=req.timeout_seconds)
-        finally:
-            with self._pending_lock:
-                self._pending.pop(req.request_id, None)
-
-        # Let the transport update the original message (strip buttons,
-        # append final status). Best-effort — failures are non-fatal.
-        if pending.handle is not None and response.decision in ("allow", "deny", "timeout"):
-            status_text = {
-                "allow": f"✓ approved by {response.responder or 'user'}",
-                "deny": f"✗ rejected by {response.responder or 'user'}",
-                "timeout": "⏱️ expired",
-            }.get(response.decision, response.decision)
-            try:
-                self._async.submit(self.transport.update(pending.handle, status_text))
-            except Exception:
-                _log.debug("transport.update scheduling failed", exc_info=True)
-
-        return 200, response.to_dict()
+        return self._approval_service.handle_approval(body)
 
     def handle_notify(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         try:
@@ -1037,12 +949,8 @@ class BridgeDaemon:
         except (TypeError, ValueError) as e:
             return 400, {"error": f"invalid ApprovalResponse: {e}"}
 
-        with self._pending_lock:
-            pending = self._pending.get(request_id)
-        if pending is None:
+        if not self._approval_service.resolve(request_id, response):
             return 404, {"error": "no pending approval with that request_id"}
-
-        pending.resolve(response)
         return 200, {"resolved": True}
 
     async def _listener_loop(self) -> None:
@@ -1101,21 +1009,17 @@ class BridgeDaemon:
             )
             return
 
-        with self._pending_lock:
-            pending = self._pending.get(reply.request_id)
-        if pending is None:
-            _log.info(
-                "inbound: no pending approval for request_id=%s (already resolved?)",
-                reply.request_id,
-            )
-            return
-
-        pending.resolve(ApprovalResponse(
+        resolved = self._approval_service.resolve(reply.request_id, ApprovalResponse(
             decision=decision,  # type: ignore[arg-type]
             request_id=reply.request_id,
             responder=reply.responder,
             message=reply.comment,
         ))
+        if not resolved:
+            _log.info(
+                "inbound: no pending approval for request_id=%s (already resolved?)",
+                reply.request_id,
+            )
 
     def _dispatch_bus_decision(
         self, reply: InboundReply, pending: _PendingBusDecision,
@@ -1283,8 +1187,8 @@ class BridgeDaemon:
         (e.g. tapped Approve then Details immediately after), log a
         brief notice and skip.
         """
+        pending = self._approval_service.get(reply.request_id)
         with self._pending_lock:
-            pending = self._pending.get(reply.request_id)
             bus_pending = self._pending_bus.get(reply.request_id)
         if pending is None and bus_pending is None:
             _log.info(
@@ -1334,73 +1238,14 @@ class BridgeDaemon:
             _log.exception("details: failed to schedule send_info")
 
     def _handle_snooze(self, reply: InboundReply) -> None:
-        """Defer an approval by SNOOZE_SECONDS and re-post a fresh card.
+        """Defer an approval by ``SNOOZE_SECONDS`` and re-post a fresh card.
 
-        1. Extend the pending approval's deadline so the hook doesn't
-           time out during the snooze window (adds a 30s buffer over
-           SNOOZE_SECONDS).
-        2. Edit the original card to strip buttons + show "snoozed
-           until HH:MM" so the stale card can't be tapped again.
-        3. Schedule a coroutine that sleeps SNOOZE_SECONDS then calls
-           ``transport.send_approval`` again (unless the pending
-           approval has been resolved in the meantime). The new handle
-           replaces the stored one so any subsequent ``update()`` /
-           ``details`` goes to the re-posted card.
+        Reads the module-level ``SNOOZE_SECONDS`` at call time (not
+        import time) so tests can monkeypatch it down for speed.
         """
-        with self._pending_lock:
-            pending = self._pending.get(reply.request_id)
-        if pending is None:
-            _log.info(
-                "snooze: no pending approval for %s (already resolved?)",
-                reply.request_id,
-            )
-            return
-
-        snooze_seconds = SNOOZE_SECONDS
-        pending.extend_by(snooze_seconds + 30)
-
-        # Edit the original card — strip buttons, show the snooze wall-clock.
-        if pending.handle is not None:
-            snooze_clock = (datetime.now() + timedelta(seconds=snooze_seconds)).strftime("%H:%M")
-            try:
-                self._async.submit(
-                    self.transport.update(
-                        pending.handle,
-                        f"⏱️ snoozed — re-posting at ~{snooze_clock}",
-                    )
-                )
-            except Exception:  # noqa: BLE001
-                _log.debug("snooze: transport.update failed", exc_info=True)
-
-        # Schedule the re-post in the async loop.
-        try:
-            self._async.submit(self._snooze_repost(reply.request_id, snooze_seconds))
-        except Exception:  # noqa: BLE001
-            _log.exception("snooze: failed to schedule re-post")
-
-    async def _snooze_repost(self, request_id: str, after_seconds: float) -> None:
-        """Sleep, then re-send the approval card if it's still pending."""
-        try:
-            await asyncio.sleep(after_seconds)
-        except asyncio.CancelledError:
-            return  # daemon shutting down
-
-        with self._pending_lock:
-            pending = self._pending.get(request_id)
-        if pending is None:
-            _log.info("snooze: %s resolved during snooze; skipping re-post", request_id)
-            return
-
-        try:
-            new_handle = await self.transport.send_approval(pending.request)
-        except Exception:  # noqa: BLE001
-            _log.exception("snooze: send_approval re-post failed for %s", request_id)
-            return
-
-        with self._pending_lock:
-            still_pending = self._pending.get(request_id)
-            if still_pending is pending:
-                still_pending.handle = new_handle
+        self._approval_service.handle_snooze(
+            reply.request_id, snooze_seconds=SNOOZE_SECONDS,
+        )
 
     async def _dcr_cleanup_sweep_loop(self):
         """Background task that periodically prunes stale shim-managed apps.
@@ -1478,15 +1323,13 @@ class BridgeDaemon:
         return self._dcr_mgmt_client_cached
 
     def handle_status(self) -> tuple[int, dict[str, Any]]:
-        with self._pending_lock:
-            pending_count = len(self._pending)
         return 200, {
             "account": self.account,
             "transport": self.transport.name,
             "pid": self.pid,
             "port": self.port,
             "uptime_seconds": int(time.monotonic() - self.started_at),
-            "pending_approvals": pending_count,
+            "pending_approvals": self._approval_service.count(),
         }
 
     def handle_shutdown(self) -> tuple[int, dict[str, Any]]:
