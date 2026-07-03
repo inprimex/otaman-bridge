@@ -39,21 +39,14 @@ from pathlib import Path
 from typing import Any
 
 from otaman_bridge.approval_service import ApprovalService
-from otaman_bridge.bus_decision import (
-    record_decision,
-    write_acknowledge,
-    write_reply_message,
-)
-from otaman_bridge.bus_surface import BusMessage
+from otaman_bridge.bus_surface_service import BusSurfaceService, _PendingBusDecision
 from otaman_bridge.bus_watcher import BusWatcher
 from otaman_bridge.idle_afk import IdleAFKMonitor
 from otaman_bridge.core import (
-    ApprovalRequest,
     ApprovalResponse,
     InboundReply,
     InfoMessage,
     Transport,
-    TransportHandle,
 )
 
 # Map from transport-neutral Action verbs → Decision verbs.
@@ -140,35 +133,6 @@ def read_endpoint_file(path: Path) -> dict[str, Any] | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-
-
-# ---------------------------------------------------------------------------
-# Pending approvals registry
-
-
-class _PendingBusDecision:
-    """Holds a bus spec-change-request between ``send_approval`` and the
-    button tap that resolves it.
-
-    Unlike ``_PendingApproval`` there's no thread blocked on a reply —
-    the originating agent's proposal already sits on disk. We just
-    remember enough context (the BusMessage + card handle) to write the
-    ack + broadcast when the decision arrives, and to edit the card.
-    """
-
-    __slots__ = ("request", "msg", "handle", "project_root", "created_at")
-
-    def __init__(
-        self,
-        request: ApprovalRequest,
-        msg: BusMessage,
-        project_root: Path,
-    ):
-        self.request = request
-        self.msg = msg
-        self.project_root = project_root
-        self.handle: TransportHandle | None = None
-        self.created_at = time.monotonic()
 
 
 # ---------------------------------------------------------------------------
@@ -572,25 +536,41 @@ class BridgeDaemon:
         self._approval_service = ApprovalService(
             transport=self.transport, async_loop=self._async,
         )
-        # Parallel registry for bus spec-change-requests waiting on an
-        # Approve/Reject tap. Keyed by request_id (= bus message stem).
-        # Unlike the approval table, these don't block a caller — the
-        # daemon just holds the BusMessage + handle until the decision
-        # comes in, then writes the ack + broadcast. Own lock: nothing
-        # requires this table and the approval table to be read/written
-        # atomically together (the two dispatch call sites that touch
-        # both — _dispatch_inbound_reply, _surface_details — do so as
-        # two independent lookups).
-        self._pending_bus: dict[str, _PendingBusDecision] = {}
-        self._pending_lock = threading.Lock()
+        # Bus spec-change-request surfacing (watcher lifecycle + pending-
+        # decision registry). Extracted to BusSurfaceService (F040 phase 2)
+        # — own lock, independent of ApprovalService's: nothing requires
+        # the two pending tables to be read/written atomically together
+        # (the two dispatch call sites that touch both —
+        # _dispatch_inbound_reply, _surface_details — do so as two
+        # independent lookups).
+        self._bus_service = BusSurfaceService(
+            transport=self.transport, async_loop=self._async, account=self.account,
+        )
         self._server: ThreadingHTTPServer | None = None
         self._serve_thread: threading.Thread | None = None
         self._shutdown_requested = threading.Event()
         self._listener_future = None  # concurrent.futures.Future, set on start()
-        self._bus_watcher: BusWatcher | None = None
-        self._bus_watcher_future = None  # concurrent.futures.Future
         self._idle_monitor: IdleAFKMonitor | None = None
         self._idle_monitor_future = None  # concurrent.futures.Future
+
+    # ----- test/back-compat accessors --------------------------------------
+    # BusSurfaceService owns this state; several tests reach into these
+    # attribute names directly (they predate the phase-2 extraction), so
+    # they're kept as thin forwarding properties rather than churning the
+    # test suite. Treat these names as a frozen seam, same as the daemon
+    # attributes EE's routes_dcr.py depends on.
+
+    @property
+    def _pending_bus(self) -> dict[str, _PendingBusDecision]:
+        return self._bus_service._pending_bus
+
+    @property
+    def _bus_watcher(self) -> BusWatcher | None:
+        return self._bus_service.bus_watcher
+
+    @property
+    def _bus_watcher_future(self):
+        return self._bus_service._bus_watcher_future
 
     # ----- lifecycle ------------------------------------------------------
 
@@ -651,36 +631,10 @@ class BridgeDaemon:
         # T2d: optionally start the bus watcher in the same async loop.
         # Info-only surfacing in this phase (T2d-2); interactive bus
         # approvals land in T2d-3.
-        if self.bus_watcher_root is not None:
-            # Project name defaults to platform.yaml's `project:` field so
-            # bus-watcher-surfaced messages land in the same Telegram topic
-            # as PreToolUse approvals. Falls back to the folder name only
-            # when no platform.yaml / no project key is present.
-            from otaman_bridge.bus_surface import resolve_project_name  # noqa: PLC0415
-            project_name = (
-                self.bus_watcher_project
-                or resolve_project_name(self.bus_watcher_root)
-            )
-            _pm_event_cb = None
-            try:
-                from otaman_bridge.pm_sync_handler import PmSyncHandler as _PmSyncHandler  # noqa: PLC0415
-                _pm_event_cb = _PmSyncHandler(self.bus_watcher_root).handle_event
-            except Exception:
-                _log.warning("pm sync: could not load PmSyncHandler; PM sync disabled")
-
-            self._bus_watcher = BusWatcher(
-                project_root=self.bus_watcher_root,
-                account=self.account,
-                project=project_name,
-                on_info=self._bus_on_info,
-                on_approval=self._bus_on_approval,
-                on_event=_pm_event_cb,
-            )
-            self._bus_watcher_future = self._async.submit(self._bus_watcher.run())
-            _log.info(
-                "bus watcher started for %s (project=%s)",
-                self.bus_watcher_root, project_name,
-            )
+        self._bus_service.start(
+            bus_watcher_root=self.bus_watcher_root,
+            bus_watcher_project=self.bus_watcher_project,
+        )
 
         # Idle-auto-AFK monitor: enabled when idle_auto_afk_minutes > 0
         # AND an otaman workspace is configured (shares bus_watcher_root since
@@ -768,51 +722,6 @@ class BridgeDaemon:
 
         return notify
 
-    # ----- bus watcher callbacks (T2d-2: info-only) -----------------------
-
-    async def _bus_on_info(self, info: InfoMessage) -> None:
-        """Forward a non-interactive bus message to the transport."""
-        await self.transport.send_info(info)
-
-    async def _bus_on_approval(
-        self, req: ApprovalRequest, msg: BusMessage,
-    ) -> None:
-        """Surface an interactive bus spec-change-request to Telegram.
-
-        Registers a ``_PendingBusDecision`` keyed by the bus message
-        stem (= ``req.request_id``) so that when the user taps
-        Approve / Reject, the listener dispatch can find the original
-        BusMessage and write the ack + broadcast. The approval card
-        gets Approve/Reject/Details buttons via the standard
-        ``transport.send_approval`` path.
-        """
-        if self.bus_watcher_root is None:
-            # Shouldn't happen — watcher is only started when root is set.
-            _log.warning(
-                "bus approval for %s but no bus_watcher_root configured",
-                req.request_id,
-            )
-            return
-
-        pending = _PendingBusDecision(req, msg, self.bus_watcher_root)
-        with self._pending_lock:
-            self._pending_bus[req.request_id] = pending
-
-        try:
-            handle = await self.transport.send_approval(req)
-            pending.handle = handle
-        except Exception:  # noqa: BLE001
-            _log.exception(
-                "bus approval: send_approval failed for %s", req.request_id,
-            )
-            # Drop from registry so the watcher's retry-on-fail path
-            # can re-surface on the next scan (state file wasn't
-            # written because this callback raises back up to the
-            # watcher's dispatch guard).
-            with self._pending_lock:
-                self._pending_bus.pop(req.request_id, None)
-            raise
-
     def stop(self) -> None:
         """Graceful shutdown — remove endpoint file, cancel pending approvals.
 
@@ -837,16 +746,6 @@ class BridgeDaemon:
             responder="daemon:shutdown",
             message="bridge daemon shutting down",
         ))
-        with self._pending_lock:
-            # Bus pendings don't block anything — just drop them. They'll
-            # re-surface on next daemon start because the state file
-            # dedup is in-memory only within a single watcher instance
-            # (fresh daemon reads state from disk but bus messages that
-            # were surfaced but un-decided stay idempotent: ack absent,
-            # watcher's state says "already surfaced" — user taps land
-            # empty until `/otaman:approve` locally resolves them).
-            self._pending_bus.clear()
-
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
@@ -872,18 +771,9 @@ class BridgeDaemon:
             self._listener_future = None
 
         # Stop the bus watcher, if one was started, before the async loop
-        # goes away. stop() flips an asyncio.Event; the future then exits
-        # via its normal path and we cancel as a backstop.
-        if self._bus_watcher is not None:
-            self._bus_watcher.stop()
-        if self._bus_watcher_future is not None:
-            self._bus_watcher_future.cancel()
-            try:
-                self._bus_watcher_future.result(timeout=2.0)
-            except Exception:  # noqa: BLE001
-                pass
-            self._bus_watcher_future = None
-            self._bus_watcher = None
+        # goes away, and drop the pending-bus registry (recovered on next
+        # start() via BusSurfaceService._recover_undecided_pendings).
+        self._bus_service.stop()
 
         # Stop the idle-AFK monitor, if running. Same pattern as the bus
         # watcher — event-driven graceful stop, future.cancel() as backstop.
@@ -983,7 +873,7 @@ class BridgeDaemon:
         Bus spec-change-requests share the inbound action vocabulary
         but resolve via a different path (write ack + broadcast file).
         We check the bus registry first so a matching request_id
-        shortcuts into ``_dispatch_bus_decision``.
+        shortcuts into ``BusSurfaceService.dispatch``.
         """
         if reply.action == "details":
             self._surface_details(reply)
@@ -994,10 +884,7 @@ class BridgeDaemon:
             return
 
         # Bus spec-change-request? Route to the bus decision handler.
-        with self._pending_lock:
-            bus_pending = self._pending_bus.get(reply.request_id)
-        if bus_pending is not None:
-            self._dispatch_bus_decision(reply, bus_pending)
+        if self._bus_service.dispatch(reply):
             return
 
         decision = _ACTION_TO_DECISION.get(reply.action)
@@ -1021,162 +908,6 @@ class BridgeDaemon:
                 reply.request_id,
             )
 
-    def _dispatch_bus_decision(
-        self, reply: InboundReply, pending: _PendingBusDecision,
-    ) -> None:
-        """Resolve a bus spec-change-request tap.
-
-        Approve → ``approved`` ack + ``spec-change-approved`` broadcast.
-        Reject  → ``rejected`` ack + ``spec-change-rejected`` to proposer.
-        Details → dump full message body (payload is already in hand,
-            no follow-up surfacing needed).
-        Other actions are ignored — the card stays as-is, user can try
-        again.
-        """
-        action = reply.action
-        if action == "details":
-            # Bus messages already carry the full body in tool_input; the
-            # generic _surface_details path handles that.
-            self._surface_details(reply)
-            return
-
-        if action == "comment":
-            # Free-text reply to a bus card. Writes an info message
-            # from human to the original proposer. Decision stays
-            # pending — user may follow up with Approve/Reject.
-            self._record_bus_comment(reply, pending)
-            return
-
-        if action == "acknowledge":
-            # "to: human" messages (design §5.6) get Acknowledge
-            # instead of Approve/Reject. We write the ack file +
-            # optional reply, then clear the registry.
-            self._record_bus_acknowledge(reply, pending)
-            return
-
-        decision_map = {"approve": "approved", "reject": "rejected"}
-        decision = decision_map.get(action)
-        if decision is None:
-            _log.info(
-                "bus decision: non-decision action %r for %s (ignored)",
-                action, reply.request_id,
-            )
-            return
-
-        # For non-SCR bus cards (e.g., `to: human` messages), Approve
-        # means "acknowledged" — not a spec-change-approval broadcast.
-        # Only spec-change-request types route through record_decision.
-        if pending.msg.type != "spec-change-request":
-            self._record_bus_acknowledge(reply, pending)
-            return
-
-        try:
-            ack_path, broadcast_path = record_decision(
-                pending.project_root,
-                pending.msg,
-                decision=decision,
-                responder=reply.responder,
-                comment=reply.comment or "",
-            )
-            _log.info(
-                "bus decision: %s for %s → %s + %s",
-                decision, pending.msg.stem,
-                ack_path.name, broadcast_path.name,
-            )
-        except Exception:  # noqa: BLE001
-            _log.exception(
-                "bus decision: record_decision failed for %s",
-                pending.msg.stem,
-            )
-            # Leave in registry so the user can retry tapping.
-            return
-
-        # Clear the pending slot so a second tap is a no-op.
-        with self._pending_lock:
-            self._pending_bus.pop(reply.request_id, None)
-
-        # Edit the card to show the result so the user can't tap again.
-        if pending.handle is not None:
-            status_text = {
-                "approved": f"✓ approved by {reply.responder or 'user'}",
-                "rejected": f"✗ rejected by {reply.responder or 'user'}",
-            }.get(decision, decision)
-            try:
-                self._async.submit(
-                    self.transport.update(pending.handle, status_text)
-                )
-            except Exception:  # noqa: BLE001
-                _log.debug("bus decision: transport.update failed", exc_info=True)
-
-    def _record_bus_comment(
-        self, reply: InboundReply, pending: _PendingBusDecision,
-    ) -> None:
-        """Write a free-text reply bus message for a card that stays pending.
-
-        For spec-change-requests, a comment is supplementary — the
-        Approve/Reject decision is still open. We DON'T clear the
-        registry here; the user may tap a decision button after.
-        """
-        text = (reply.comment or "").strip()
-        if not text:
-            _log.info(
-                "bus comment: empty reply for %s (ignored)",
-                pending.msg.stem,
-            )
-            return
-        try:
-            reply_path = write_reply_message(
-                pending.project_root, pending.msg,
-                text=text, responder=reply.responder,
-            )
-            _log.info(
-                "bus comment: wrote %s (in_reply_to=%s)",
-                reply_path.name, pending.msg.stem,
-            )
-        except Exception:  # noqa: BLE001
-            _log.exception(
-                "bus comment: write_reply_message failed for %s",
-                pending.msg.stem,
-            )
-
-    def _record_bus_acknowledge(
-        self, reply: InboundReply, pending: _PendingBusDecision,
-    ) -> None:
-        """Record an Acknowledge tap on a ``to: human`` card.
-
-        Writes the ack file + optional reply, clears the pending
-        slot, and edits the card to confirm.
-        """
-        try:
-            ack_path, reply_path = write_acknowledge(
-                pending.project_root, pending.msg,
-                responder=reply.responder, comment=reply.comment or "",
-            )
-            _log.info(
-                "bus ack: wrote %s for %s%s",
-                ack_path.name, pending.msg.stem,
-                f" + reply {reply_path.name}" if reply_path else "",
-            )
-        except Exception:  # noqa: BLE001
-            _log.exception(
-                "bus ack: write_acknowledge failed for %s", pending.msg.stem,
-            )
-            return
-
-        with self._pending_lock:
-            self._pending_bus.pop(reply.request_id, None)
-
-        if pending.handle is not None:
-            try:
-                self._async.submit(
-                    self.transport.update(
-                        pending.handle,
-                        f"👍 acknowledged by {reply.responder or 'user'}",
-                    )
-                )
-            except Exception:  # noqa: BLE001
-                _log.debug("bus ack: transport.update failed", exc_info=True)
-
     def _surface_details(self, reply: InboundReply) -> None:
         """Post a follow-up info message with the full tool payload.
 
@@ -1188,8 +919,7 @@ class BridgeDaemon:
         brief notice and skip.
         """
         pending = self._approval_service.get(reply.request_id)
-        with self._pending_lock:
-            bus_pending = self._pending_bus.get(reply.request_id)
+        bus_pending = self._bus_service.get(reply.request_id)
         if pending is None and bus_pending is None:
             _log.info(
                 "details: no pending approval for %s (already resolved?)",

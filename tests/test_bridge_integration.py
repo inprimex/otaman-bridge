@@ -626,6 +626,150 @@ class TestDaemonBusWatcher:
             daemon.stop()
 
 
+class TestBusPendingRestartRecovery:
+    """F040 phase 2: a bus card surfaced before a restart, but never
+    decided, must not become a dead tap. BusSurfaceService reconstructs
+    ``_pending_bus`` on the next start() by cross-referencing the
+    surfaced-state file against still-active, not-yet-acked messages."""
+
+    def _fast_poll(self, monkeypatch):
+        import otaman_bridge.bus_watcher as bw_mod
+        monkeypatch.setattr(bw_mod, "POLL_INTERVAL_SECONDS", 0.1)
+
+    def test_undecided_scr_recovered_and_resolvable_after_restart(
+        self, tmp_path, monkeypatch,
+    ):
+        self._fast_poll(monkeypatch)
+        daemon_a, transport_a, project_root = _run_daemon_with_bus(tmp_path, "restartA")
+        daemon_a.start()
+        stem = "20260703T100000-backend-to-human-restart-recovery"
+        try:
+            _write_bus_msg(project_root, stem, subject="undecided across restart")
+            for _ in range(80):
+                if transport_a.sent_approvals:
+                    break
+                time.sleep(0.05)
+            assert transport_a.sent_approvals, "watcher should surface the SCR"
+            assert stem in daemon_a._pending_bus
+        finally:
+            # Simulates a crash/restart: in-memory registry is gone, but the
+            # surfaced-state file and the (undecided) message stay on disk.
+            daemon_a.stop()
+
+        ack = project_root / ".agents" / "bus" / "active" / "acks" / f"{stem}.human.ack"
+        assert not ack.is_file(), "precondition: no decision was ever made"
+
+        transport_b = NullTransport(allowlist={"*"})
+        daemon_b = BridgeDaemon(
+            account="restartB",
+            transport=transport_b,
+            endpoint_file=tmp_path / ".maestro" / "bridge-restartB.endpoint",
+            bus_watcher_root=project_root,
+            bus_watcher_project="t2d3-test",
+        )
+        daemon_b.start()
+        try:
+            # Recovered synchronously in start(), before any fresh poll —
+            # without this, the watcher's own dedup would never
+            # re-surface it (state already says "surfaced").
+            assert stem in daemon_b._pending_bus, (
+                "undecided pending should be recovered on restart"
+            )
+
+            # A tap on the old (still-visible-on-phone) card must resolve
+            # correctly even though daemon_b never sent that card itself.
+            transport_b.push_reply(InboundReply(
+                request_id=stem, action="approve",
+                responder="telegram:roman", comment="",
+            ))
+            for _ in range(40):
+                if ack.is_file():
+                    break
+                time.sleep(0.05)
+            assert ack.is_file(), "recovered pending should still be tappable"
+            assert ack.read_text(encoding="utf-8").strip() == "approved"
+        finally:
+            daemon_b.stop()
+
+    def test_already_decided_scr_not_recovered(self, tmp_path, monkeypatch):
+        self._fast_poll(monkeypatch)
+        daemon_a, transport_a, project_root = _run_daemon_with_bus(tmp_path, "decidedA")
+        daemon_a.start()
+        stem = "20260703T100000-backend-to-human-already-decided"
+        try:
+            _write_bus_msg(project_root, stem, subject="decided before restart")
+            for _ in range(80):
+                if transport_a.sent_approvals:
+                    break
+                time.sleep(0.05)
+            assert transport_a.sent_approvals
+
+            transport_a.push_reply(InboundReply(
+                request_id=stem, action="approve",
+                responder="telegram:roman", comment="",
+            ))
+            ack = project_root / ".agents" / "bus" / "active" / "acks" / f"{stem}.human.ack"
+            for _ in range(40):
+                if ack.is_file():
+                    break
+                time.sleep(0.05)
+            assert ack.is_file(), "precondition: decision was recorded before restart"
+        finally:
+            daemon_a.stop()
+
+        transport_b = NullTransport(allowlist={"*"})
+        daemon_b = BridgeDaemon(
+            account="decidedB",
+            transport=transport_b,
+            endpoint_file=tmp_path / ".maestro" / "bridge-decidedB.endpoint",
+            bus_watcher_root=project_root,
+            bus_watcher_project="t2d3-test",
+        )
+        daemon_b.start()
+        try:
+            assert stem not in daemon_b._pending_bus, (
+                "already-decided cards must not be resurrected as pending"
+            )
+        finally:
+            daemon_b.stop()
+
+    def test_non_interactive_message_not_recovered(self, tmp_path, monkeypatch):
+        self._fast_poll(monkeypatch)
+        daemon_a, transport_a, project_root = _run_daemon_with_bus(tmp_path, "infoA")
+        daemon_a.start()
+        stem = "20260703T100000-broadcast-info-only"
+        try:
+            _write_bus_msg(project_root, stem, type="info", to="all",
+                           subject="fyi, no action needed")
+            # Info messages surface via send_info, not send_approval.
+            for _ in range(40):
+                time.sleep(0.05)
+            import json as _json
+            state_file = project_root / ".otaman" / "bus-surfaced.state"
+            for _ in range(40):
+                if state_file.is_file():
+                    break
+                time.sleep(0.05)
+        finally:
+            daemon_a.stop()
+
+        transport_b = NullTransport(allowlist={"*"})
+        daemon_b = BridgeDaemon(
+            account="infoB",
+            transport=transport_b,
+            endpoint_file=tmp_path / ".maestro" / "bridge-infoB.endpoint",
+            bus_watcher_root=project_root,
+            bus_watcher_project="t2d3-test",
+        )
+        daemon_b.start()
+        try:
+            assert stem not in daemon_b._pending_bus, (
+                "non-interactive messages have no decision to recover"
+            )
+        finally:
+            daemon_b.stop()
+
+
 # ---------------------------------------------------------------------------
 # Bus decision buttons (T2d-3)
 
