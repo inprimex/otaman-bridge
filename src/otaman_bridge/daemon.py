@@ -49,6 +49,7 @@ from otaman_bridge.core import (
     InfoMessage,
     Transport,
 )
+from otaman_bridge.mcp_dispatch_service import McpDispatchService
 
 # Map from transport-neutral Action verbs → Decision verbs.
 # Decisions resolve the pending approval; non-decision actions (details,
@@ -369,76 +370,10 @@ class BridgeDaemon:
         # property below (auth_stack.py's module docstring explains why).
         self._auth_stack = AuthStack(token=self.token)
 
-        # MCP server: tool registry for the team-mode v0 cross-user
-        # visibility flow. Always built (even when web_login_flow is
-        # None) -- some tools may not need web auth. Privacy mode is
-        # configurable via env (default emails for trusted teams).
-        from otaman_bridge.mcp_server import MCPServer
-        from otaman_bridge.mcp_tools import (
-            PRIVACY_EMAILS,
-            PRIVACY_OPAQUE,
-            build_list_team_sessions_tool,
-        )
-        from otaman_bridge.runner_client import RunnerClient
-        self.mcp_server = MCPServer()
-        self._runner_client = RunnerClient()
-        privacy = os.environ.get("OTAMAN_BRIDGE_PRIVACY_MODE", PRIVACY_EMAILS).strip()
-        if privacy not in (PRIVACY_EMAILS, PRIVACY_OPAQUE):
-            _log.warning(
-                "invalid OTAMAN_BRIDGE_PRIVACY_MODE=%r, using emails", privacy,
-            )
-            privacy = PRIVACY_EMAILS
-        # Only register list_team_sessions when session_store exists --
-        # the tool's email lookup depends on it. If web auth is
-        # disabled, the tool falls back to opaque (no email source).
-        if self.session_store is not None:
-            self.mcp_server.register(build_list_team_sessions_tool(
-                runner_client=self._runner_client,
-                session_store=self.session_store,
-                privacy_mode=privacy,
-            ))
-            _log.info("MCP: list_team_sessions registered (privacy=%s)", privacy)
-        # Messaging tools (v0+): send_message_to_user / check_messages /
-        # mark_message_read. Inbox storage under ~/.otaman/inboxes/ by
-        # default; override via OTAMAN_BRIDGE_INBOX_ROOT env var. These
-        # tools work without web auth (they read ctx.user_id from any
-        # of the three auth paths; loopback bearer is rejected at handler).
-
-
-        from otaman_bridge.inbox import Inbox
-        from otaman_bridge.mcp_tools import (
-            build_check_messages_tool,
-            build_get_recent_activity_tool,
-            build_kill_session_for_user_tool,
-            build_mark_message_read_tool,
-            build_request_review_tool,
-            build_send_message_to_user_tool,
-        )
-        inbox_root = os.environ.get("OTAMAN_BRIDGE_INBOX_ROOT", "").strip()
-        self.inbox = Inbox(root=Path(inbox_root)) if inbox_root else Inbox()
-        self.mcp_server.register(build_send_message_to_user_tool(
-            inbox=self.inbox, session_store=self.session_store,
-        ))
-        self.mcp_server.register(build_check_messages_tool(inbox=self.inbox))
-        self.mcp_server.register(build_mark_message_read_tool(inbox=self.inbox))
-        self.mcp_server.register(build_request_review_tool(
-            inbox=self.inbox, session_store=self.session_store,
-        ))
-        self.mcp_server.register(build_get_recent_activity_tool(
-            inbox=self.inbox, runner_client=self._runner_client,
-        ))
-        # Pick the admin-gated EE builder when EE is installed; else CE's
-        # un-gated builder (Q2 (a) decision: CE = mutual-trust small team).
-        try:
-            from otaman_bridge_ee.mcp_tools_admin import (
-                build_kill_session_for_user_tool_admin as _build_kill_session,
-            )
-        except ImportError:
-            _build_kill_session = build_kill_session_for_user_tool
-        self.mcp_server.register(_build_kill_session(
-            runner_client=self._runner_client,
-        ))
-        _log.info("MCP: messaging tools registered (inbox=%s)", self.inbox.root)
+        # MCP tool registry + RunnerClient + Inbox. Extracted to
+        # McpDispatchService (F040 phase 5) — mcp_server, _runner_client,
+        # and inbox stay frozen forwarding properties below.
+        self._mcp_service = McpDispatchService(session_store=self.session_store)
 
         self._async = _AsyncLoopThread()
         # Tool-call approval table (hook blocked in handle_approval()
@@ -573,6 +508,35 @@ class BridgeDaemon:
 
     def get_or_build_dcr_mgmt_client(self):
         return self._auth_stack.get_or_build_dcr_mgmt_client()
+
+    # McpDispatchService owns this state (F040 phase 5). A couple of
+    # tests reach into these directly (daemon._runner_client = stub,
+    # daemon.mcp_server.register(...), daemon.inbox.write_message(...)),
+    # and the HTTP handler dispatches via daemon.mcp_server.handle_request.
+
+    @property
+    def mcp_server(self):
+        return self._mcp_service.mcp_server
+
+    @mcp_server.setter
+    def mcp_server(self, value) -> None:
+        self._mcp_service.mcp_server = value
+
+    @property
+    def _runner_client(self):
+        return self._mcp_service._runner_client
+
+    @_runner_client.setter
+    def _runner_client(self, value) -> None:
+        self._mcp_service._runner_client = value
+
+    @property
+    def inbox(self):
+        return self._mcp_service.inbox
+
+    @inbox.setter
+    def inbox(self, value) -> None:
+        self._mcp_service.inbox = value
 
     # ----- lifecycle ------------------------------------------------------
 
