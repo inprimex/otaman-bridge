@@ -85,6 +85,16 @@ def _load_state(project_root: Path) -> dict[str, float]:
     return out
 
 
+def load_surfaced_state(project_root: Path) -> dict[str, float]:
+    """Public accessor for the surfaced-state dedup map.
+
+    Used by ``BusSurfaceService``'s restart-recovery pass to tell which
+    already-surfaced bus cards still lack a decision. See ``_load_state``
+    for the on-disk format.
+    """
+    return _load_state(project_root)
+
+
 def _save_state(project_root: Path, state: dict[str, float]) -> None:
     path = _state_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
