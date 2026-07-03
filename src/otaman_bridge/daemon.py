@@ -40,6 +40,7 @@ from typing import Any
 
 from otaman_bridge.afk_service import AfkService
 from otaman_bridge.approval_service import ApprovalService
+from otaman_bridge.auth_stack import AuthStack
 from otaman_bridge.bus_surface_service import BusSurfaceService, _PendingBusDecision
 from otaman_bridge.bus_watcher import BusWatcher
 from otaman_bridge.core import (
@@ -362,101 +363,11 @@ class BridgeDaemon:
         self.pid = os.getpid()
         self.started_at = time.monotonic()
 
-        # Optional OIDC validator built from env. When unset, daemon
-        # serves loopback-bearer only (Mode 1 / local-trust pattern).
-        self.oidc_validator = _build_oidc_validator_from_env()
-        # Optional DCR shim (mcp-oauth wave chunk D3+). When enabled the
-        # daemon serves AS metadata overlay routes pointing at itself,
-        # so MCP clients (Claude Code) can do RFC 7591 against Zitadel
-        # which lacks native DCR. None = inert.
-        #
-        # DCR shim is EE-only (Phase 2b). CE-only builds (EE absent) skip
-        # idp_config entirely — no DCR routes, no metadata overlay.
-        self.idp_config = None
-        self._idp_metadata_cache = None
-        try:
-            from otaman_bridge_ee.dcr_shim import IdpConfig, MetadataCache
-            self.idp_config = IdpConfig.from_env()
-            if self.idp_config is not None:
-                self._idp_metadata_cache = MetadataCache(
-                    ttl_seconds=self.idp_config.metadata_cache_seconds
-                )
-        except ImportError:
-            _log.debug("EE package absent; DCR shim disabled")
-        if self.idp_config is not None:
-            _log.info(
-                "DCR shim enabled (type=%s mgmt=%s trust=%s cache=%ds)",
-                self.idp_config.type,
-                self.idp_config.management_base_url,
-                self.idp_config.registration_trust,
-                self.idp_config.metadata_cache_seconds,
-            )
-        # Optional web-login flow (Authorization Code + PKCE). Built from
-        # OIDC_AUDIENCE_BRIDGE + OIDC_BRIDGE_REDIRECT_URI. None disables
-        # /auth/login (returns 503).
-        _web_login = _build_web_login_flow_from_env()
-        self.web_login_flow = _web_login[0] if _web_login is not None else None
-        # Web-login support stack -- only built when web_login_flow is.
-        # Tests inject stubs onto these attributes after construction.
-        self.session_store = None
-        self.session_cookie = None
-        self.login_completer = None
-        if self.web_login_flow is not None:
-            # web_login_flow is only ever non-None when EE imports succeeded
-            # in _build_web_login_flow_from_env, so these imports always
-            # resolve here.
-            from otaman_bridge_ee.web_auth import LoginCompleter, TokenExchanger
-            from otaman_bridge_ee.web_session import SessionCookie, SessionStore
-            self.session_store = SessionStore()
-            # Cookie Secure flag derived from the registered redirect_uri
-            # scheme (https -> Secure, http -> not). Production always
-            # uses https; local dev / e2e harness can use http.
-            redirect_https = self.web_login_flow.config.redirect_uri.startswith("https://")
-            self.session_cookie = SessionCookie(secure=redirect_https)
-            self.login_completer = LoginCompleter(
-                token_exchanger=TokenExchanger(self.web_login_flow.config),
-                validator=self.oidc_validator,
-                session_store=self.session_store,
-                pending_store=self.web_login_flow.store,
-            )
-
-        # Auth provider seam (CE/EE split per
-        # otaman-meta/strategy/bridge-ce-ee-split.md §5).
-        # Phase 1: introduced the Protocol + CE providers in otaman_bridge.auth.
-        # Phase 2a: OIDCAuthProvider moved to otaman_bridge_ee.auth_oidc.
-        #
-        # The EE provider is imported conditionally so the CE-only build
-        # (no EE package installed) falls back to a loopback-only chain.
-        # When EE IS installed, OIDCAuthProvider is in the chain — its
-        # activity is gated on validator_getter() returning non-None at
-        # call time, so tests can reassign daemon.oidc_validator /
-        # session_store / session_cookie at runtime and have the auth
-        # chain track changes without rebuilding the composite.
-        from otaman_bridge.auth import CompositeAuthProvider, LoopbackAuthProvider
-        providers: list = []
-        try:
-            from otaman_bridge_ee.auth_oidc import OIDCAuthProvider
-        except ImportError:
-            _log.info("EE package not installed; CE-only auth chain (loopback only)")
-            OIDCAuthProvider = None  # type: ignore[assignment]
-        if OIDCAuthProvider is not None:
-            providers.append(OIDCAuthProvider(
-                validator_getter=lambda d=self: d.oidc_validator,
-                session_store_getter=lambda d=self: d.session_store,
-                session_cookie_getter=lambda d=self: d.session_cookie,
-                resource_url_fn=_resolve_public_resource_url,
-            ))
-        providers.append(LoopbackAuthProvider(token=self.token))
-        self.auth_provider = CompositeAuthProvider(providers=tuple(providers))
-
-        # EE DCR routes (/oauth/register + /.well-known/* overlay). When
-        # EE is absent, the handler is None and the daemon's do_POST /
-        # do_GET fall through to the catch-all 404.
-        try:
-            from otaman_bridge_ee.routes_dcr import try_handle as _ee_dcr_try_handle
-            self._ee_dcr_try_handle = _ee_dcr_try_handle
-        except ImportError:
-            self._ee_dcr_try_handle = None
+        # CE/EE auth wiring (OIDC validator, DCR shim, web-login stack,
+        # composite auth_provider chain). Extracted to AuthStack (F040
+        # phase 4) — every attribute it builds stays a frozen forwarding
+        # property below (auth_stack.py's module docstring explains why).
+        self._auth_stack = AuthStack(token=self.token)
 
         # MCP server: tool registry for the team-mode v0 cross-user
         # visibility flow. Always built (even when web_login_flow is
@@ -575,6 +486,94 @@ class BridgeDaemon:
     def _bus_watcher_future(self):
         return self._bus_service._bus_watcher_future
 
+    # AuthStack owns this state (F040 phase 4). 47 test call sites across
+    # 11 files reassign these post-construction, and EE's routes_dcr.py
+    # reaches into several of them directly — read/write forwarding
+    # properties so neither needed to change.
+
+    @property
+    def oidc_validator(self):
+        return self._auth_stack.oidc_validator
+
+    @oidc_validator.setter
+    def oidc_validator(self, value) -> None:
+        self._auth_stack.oidc_validator = value
+
+    @property
+    def idp_config(self):
+        return self._auth_stack.idp_config
+
+    @idp_config.setter
+    def idp_config(self, value) -> None:
+        self._auth_stack.idp_config = value
+
+    @property
+    def _idp_metadata_cache(self):
+        return self._auth_stack._idp_metadata_cache
+
+    @_idp_metadata_cache.setter
+    def _idp_metadata_cache(self, value) -> None:
+        self._auth_stack._idp_metadata_cache = value
+
+    @property
+    def _dcr_mgmt_client_cached(self):
+        return self._auth_stack._dcr_mgmt_client_cached
+
+    @_dcr_mgmt_client_cached.setter
+    def _dcr_mgmt_client_cached(self, value) -> None:
+        self._auth_stack._dcr_mgmt_client_cached = value
+
+    @property
+    def web_login_flow(self):
+        return self._auth_stack.web_login_flow
+
+    @web_login_flow.setter
+    def web_login_flow(self, value) -> None:
+        self._auth_stack.web_login_flow = value
+
+    @property
+    def session_store(self):
+        return self._auth_stack.session_store
+
+    @session_store.setter
+    def session_store(self, value) -> None:
+        self._auth_stack.session_store = value
+
+    @property
+    def session_cookie(self):
+        return self._auth_stack.session_cookie
+
+    @session_cookie.setter
+    def session_cookie(self, value) -> None:
+        self._auth_stack.session_cookie = value
+
+    @property
+    def login_completer(self):
+        return self._auth_stack.login_completer
+
+    @login_completer.setter
+    def login_completer(self, value) -> None:
+        self._auth_stack.login_completer = value
+
+    @property
+    def auth_provider(self):
+        return self._auth_stack.auth_provider
+
+    @auth_provider.setter
+    def auth_provider(self, value) -> None:
+        self._auth_stack.auth_provider = value
+
+    @property
+    def _ee_dcr_try_handle(self):
+        return self._auth_stack._ee_dcr_try_handle
+
+    @_ee_dcr_try_handle.setter
+    def _ee_dcr_try_handle(self, value) -> None:
+        self._auth_stack._ee_dcr_try_handle = value
+
+    def get_or_build_dcr_mgmt_client(self):
+        return self._auth_stack.get_or_build_dcr_mgmt_client()
+
     # ----- lifecycle ------------------------------------------------------
 
     def start(self) -> None:
@@ -658,7 +657,7 @@ class BridgeDaemon:
             and self.idp_config.dcr_shim
             and self.idp_config.cleanup_sweep_interval_seconds > 0
         ):
-            self._dcr_sweep_future = self._async.submit(self._dcr_cleanup_sweep_loop())
+            self._dcr_sweep_future = self._async.submit(self._auth_stack.dcr_cleanup_sweep_loop())
 
         _log.info(
             "bridge daemon listening on %s:%d (account=%s, transport=%s)",
@@ -909,81 +908,6 @@ class BridgeDaemon:
         self._approval_service.handle_snooze(
             reply.request_id, snooze_seconds=SNOOZE_SECONDS,
         )
-
-    async def _dcr_cleanup_sweep_loop(self):
-        """Background task that periodically prunes stale shim-managed apps.
-
-        Run when both ``idp_config.dcr_shim`` and ``cleanup_sweep_interval_seconds > 0``.
-        Each iteration sleeps for the interval first, then sweeps; this lets
-        the daemon finish startup before the first sweep request to Zitadel.
-        Failures are logged but never abort the loop.
-        """
-        from otaman_bridge_ee.dcr_shim import sweep_orphans
-        cfg = self.idp_config
-        interval = cfg.cleanup_sweep_interval_seconds
-        _log.info(
-            "DCR shim cleanup loop started "
-            "(interval=%ds ttl=%ds prefix=%s project=%s)",
-            interval, cfg.cleanup_ttl_seconds, cfg.managed_name_prefix, cfg.project_id,
-        )
-        while True:
-            try:
-                await asyncio.sleep(interval)
-            except asyncio.CancelledError:
-                _log.debug("DCR cleanup loop cancelled — daemon shutting down")
-                return
-            mgmt_client = self.get_or_build_dcr_mgmt_client()
-            if mgmt_client is None:
-                _log.debug("DCR cleanup skipped — mgmt client unavailable")
-                continue
-            try:
-                report = await asyncio.to_thread(
-                    sweep_orphans,
-                    mgmt_client=mgmt_client,
-                    project_id=cfg.project_id,
-                    name_prefix=cfg.managed_name_prefix,
-                    ttl_seconds=cfg.cleanup_ttl_seconds,
-                )
-                if report.deleted or report.failed:
-                    _log.info(
-                        "DCR sweep: found=%d eligible=%d deleted=%d failed=%d",
-                        report.found, report.eligible, report.deleted, report.failed,
-                    )
-                else:
-                    _log.debug("DCR sweep: nothing to delete (found=%d)", report.found)
-            except Exception as exc:  # noqa: BLE001
-                _log.warning("DCR sweep iteration failed: %s", exc)
-
-    def get_or_build_dcr_mgmt_client(self):
-        """Lazy-construct the Zitadel mgmt API client for the DCR shim.
-
-        Returns None when shim is enabled but credentials aren't fully
-        populated (route then returns 503 server_error). Tests can
-        monkey-patch self._dcr_mgmt_client to inject a stub.
-        """
-        if getattr(self, "_dcr_mgmt_client_cached", None) is not None:
-            return self._dcr_mgmt_client_cached
-        if self.idp_config is None or not self.idp_config.dcr_shim:
-            return None
-        cfg = self.idp_config
-        # Need at least one auth mode (PAT preferred) + org_id.
-        has_pat = bool(cfg.mgmt_pat)
-        has_client_creds = bool(cfg.machine_user_client_id and cfg.machine_user_client_secret)
-        if not cfg.org_id or not (has_pat or has_client_creds):
-            return None
-        from otaman_bridge_ee.dcr_shim import ZitadelMgmtClient
-        # token endpoint is the standard OIDC location on the mgmt host.
-        token_url = f"{cfg.management_base_url}/oauth/v2/token"
-        self._dcr_mgmt_client_cached = ZitadelMgmtClient(
-            base_url=cfg.management_base_url,
-            token_url=token_url,
-            client_id=cfg.machine_user_client_id,
-            client_secret=cfg.machine_user_client_secret,
-            pat=cfg.mgmt_pat,
-            org_id=cfg.org_id,
-            expected_host=cfg.expected_host,
-        )
-        return self._dcr_mgmt_client_cached
 
     def handle_status(self) -> tuple[int, dict[str, Any]]:
         return 200, {
