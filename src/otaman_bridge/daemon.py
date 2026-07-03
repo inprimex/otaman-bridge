@@ -38,10 +38,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from otaman_bridge.afk_service import AfkService
 from otaman_bridge.approval_service import ApprovalService
 from otaman_bridge.bus_surface_service import BusSurfaceService, _PendingBusDecision
 from otaman_bridge.bus_watcher import BusWatcher
-from otaman_bridge.idle_afk import IdleAFKMonitor
 from otaman_bridge.core import (
     ApprovalResponse,
     InboundReply,
@@ -546,12 +546,15 @@ class BridgeDaemon:
         self._bus_service = BusSurfaceService(
             transport=self.transport, async_loop=self._async, account=self.account,
         )
+        # Idle-auto-AFK monitor lifecycle + notifications. Extracted to
+        # AfkService (F040 phase 3).
+        self._afk_service = AfkService(
+            transport=self.transport, async_loop=self._async, account=self.account,
+        )
         self._server: ThreadingHTTPServer | None = None
         self._serve_thread: threading.Thread | None = None
         self._shutdown_requested = threading.Event()
         self._listener_future = None  # concurrent.futures.Future, set on start()
-        self._idle_monitor: IdleAFKMonitor | None = None
-        self._idle_monitor_future = None  # concurrent.futures.Future
 
     # ----- test/back-compat accessors --------------------------------------
     # BusSurfaceService owns this state; several tests reach into these
@@ -639,37 +642,11 @@ class BridgeDaemon:
         # Idle-auto-AFK monitor: enabled when idle_auto_afk_minutes > 0
         # AND an otaman workspace is configured (shares bus_watcher_root since
         # last-user-activity lives in the same .otaman/ directory).
-        if (self.idle_auto_afk_minutes > 0
-                and self.bus_watcher_root is not None):
-            from otaman_bridge.bus_surface import resolve_project_name  # noqa: PLC0415
-            idle_project = (
-                self.bus_watcher_project
-                or resolve_project_name(self.bus_watcher_root)
-            )
-            self._idle_monitor = IdleAFKMonitor(
-                project_root=self.bus_watcher_root,
-                idle_minutes=self.idle_auto_afk_minutes,
-                on_enabled=self._make_idle_notifier(
-                    account=self.account, project=idle_project,
-                    title="🌙 AFK auto-enabled",
-                    body_template=(
-                        "Idle auto-AFK triggered: {reason}.\n\n"
-                        "Approvals will route here until you return. "
-                        "Send a prompt in Claude to clear it."
-                    ),
-                ),
-                on_cleared=self._make_idle_notifier(
-                    account=self.account, project=idle_project,
-                    title="☀️ AFK cleared",
-                    body_template="User activity resumed — back to local prompts.",
-                    include_reason=False,
-                ),
-            )
-            self._idle_monitor_future = self._async.submit(self._idle_monitor.run())
-            _log.info(
-                "idle-afk monitor started (threshold=%d min)",
-                self.idle_auto_afk_minutes,
-            )
+        self._afk_service.start(
+            project_root=self.bus_watcher_root,
+            idle_minutes=self.idle_auto_afk_minutes,
+            project=self.bus_watcher_project,
+        )
 
         # DCR shim cleanup sweep (D6). Background task that periodically
         # prunes shim-managed apps older than ``cleanup_ttl_seconds``. Off
@@ -687,40 +664,6 @@ class BridgeDaemon:
             "bridge daemon listening on %s:%d (account=%s, transport=%s)",
             self.host, assigned_port, self.account, self.transport.name,
         )
-
-    # ----- idle-afk notifications ----------------------------------------
-
-    def _make_idle_notifier(
-        self, *, account: str, project: str,
-        title: str, body_template: str, include_reason: bool = True,
-    ):
-        """Build an async callback that sends a Telegram InfoMessage when
-        the IdleAFKMonitor flips AFK on or clears it.
-
-        Without these notifications the user would see approvals route to
-        their phone without warning ("why is my laptop silent?"); one
-        message per transition keeps expectations calibrated.
-        """
-        transport = self.transport
-
-        async def notify(reason: str = "") -> None:
-            body = body_template.format(reason=reason) if include_reason \
-                else body_template
-            info = InfoMessage(
-                account=account,
-                project=project,
-                severity="info",
-                title=title,
-                body=body,
-                source_agent="bridge-daemon",
-                bus_message_id="",
-            )
-            try:
-                await transport.send_info(info)
-            except Exception:  # noqa: BLE001
-                _log.exception("idle-afk: failed to send notification")
-
-        return notify
 
     def stop(self) -> None:
         """Graceful shutdown — remove endpoint file, cancel pending approvals.
@@ -775,18 +718,8 @@ class BridgeDaemon:
         # start() via BusSurfaceService._recover_undecided_pendings).
         self._bus_service.stop()
 
-        # Stop the idle-AFK monitor, if running. Same pattern as the bus
-        # watcher — event-driven graceful stop, future.cancel() as backstop.
-        if self._idle_monitor is not None:
-            self._idle_monitor.stop()
-        if self._idle_monitor_future is not None:
-            self._idle_monitor_future.cancel()
-            try:
-                self._idle_monitor_future.result(timeout=2.0)
-            except Exception:  # noqa: BLE001
-                pass
-            self._idle_monitor_future = None
-            self._idle_monitor = None
+        # Stop the idle-AFK monitor, if running.
+        self._afk_service.stop()
 
         # Give the async thread a chance to let a Transport.close() coroutine
         # run (e.g., TelegramTransport stops its Application's polling).
