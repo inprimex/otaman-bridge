@@ -227,6 +227,49 @@ class TestParseBusFile:
         p.write_text("just body, no frontmatter\n", encoding="utf-8")
         assert parse_bus_file(p) is None
 
+    def test_subject_prefers_frontmatter_over_body_scrape(self, tmp_path):
+        """2026-07-04 GAP audit finding: body-scraping produced garbage
+        subjects (e.g. the literal text "Subject: Approved: ...") when
+        the body's first line/heading wasn't the real subject. The
+        frontmatter subject:, when present, is authoritative."""
+        p = tmp_path / "20260424T100000-a-to-b-info.md"
+        p.write_text(
+            "---\n"
+            "id: 20260424T100000-test\n"
+            "from: a\n"
+            "to: b\n"
+            "priority: normal\n"
+            "type: info\n"
+            "subject: pluggable-secret-backend\n"
+            "timestamp: 2026-04-24T10:00:00Z\n"
+            "---\n\n"
+            "## Subject: Approved: pluggable-secret-backend\n\n"
+            "body text\n",
+            encoding="utf-8",
+        )
+        msg = parse_bus_file(p)
+        assert msg is not None
+        assert msg.subject == "pluggable-secret-backend"
+
+    def test_subject_falls_back_to_body_scrape_when_frontmatter_absent(self, tmp_path):
+        p = tmp_path / "20260424T100001-a-to-b-info.md"
+        p.write_text(
+            "---\n"
+            "id: 20260424T100001-test\n"
+            "from: a\n"
+            "to: b\n"
+            "priority: normal\n"
+            "type: info\n"
+            "timestamp: 2026-04-24T10:00:00Z\n"
+            "---\n\n"
+            "## Subject: proposed endpoint change\n\n"
+            "body text\n",
+            encoding="utf-8",
+        )
+        msg = parse_bus_file(p)
+        assert msg is not None
+        assert "proposed endpoint change" in msg.subject
+
     def test_malformed_yaml_returns_none(self, tmp_path):
         p = tmp_path / "bad.md"
         p.write_text("---\nkey: : :\n---\nbody\n", encoding="utf-8")
