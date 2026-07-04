@@ -167,11 +167,18 @@ class PmSyncHandler:
         spec_path: str | None = frontmatter.get("spec-path") or None
         jtbd_id: str | None = frontmatter.get("jtbd-id") or None
 
-        # spec-change-approved messages have no `change:` field — derive from subject
-        # format: "Approved: <change-name>: <description>" or "Approved: <change-name>"
+        # spec-change-approved messages without a `change:` frontmatter field
+        # are skipped rather than guessed at. A prior version derived
+        # change_name from the free-text subject (split on ":"), which
+        # produced garbage openspec/changes/ directories whenever the
+        # subject didn't match the expected "Approved: <change-name>"
+        # shape (see F040-adjacent finding, 2026-07-03 GAP audit).
         if msg_type == "spec-change-approved" and not change_name:
-            after = subject.removeprefix("Approved:").strip()
-            change_name = after.split(":")[0].strip() or None
+            logger.warning(
+                "pm_sync_handler: spec-change-approved message has no "
+                "'change:' frontmatter field; skipping PM sync (subject=%r)",
+                subject,
+            )
 
         self.handle_bus_event(msg_type, msg_from, msg_to, subject, spec_path, change_name, jtbd_id=jtbd_id)
 
@@ -510,12 +517,29 @@ class PmSyncHandler:
         return root / change_name / ".pm-sync.yaml"
 
     def _write_pm_sync_yaml(self, change_name: str, issue_id: int) -> None:
-        """Write/update .pm-sync.yaml with change_issue_id, preserving existing task entries."""
+        """Write/update .pm-sync.yaml with change_issue_id, preserving existing task entries.
+
+        Never creates the change directory itself -- only writes into
+        one that already exists. A prior version unconditionally
+        mkdir'd the parent, which meant any bad change_name (however
+        derived) turned into a real garbage directory under
+        openspec/changes/ (see F040-adjacent finding, 2026-07-03 GAP
+        audit). Refusing to create the directory here is the
+        structural guard: it fails safe regardless of what upstream
+        derivation bugs might produce in the future.
+        """
         path = self._pm_sync_file(change_name)
         if path is None:
             logger.warning(
                 "pm_sync_handler: cannot resolve spec dir for %r; skipping .pm-sync.yaml write",
                 change_name,
+            )
+            return
+        if not path.parent.is_dir():
+            logger.warning(
+                "pm_sync_handler: change directory %s does not exist; "
+                "refusing to create it -- skipping .pm-sync.yaml write for %r",
+                path.parent, change_name,
             )
             return
         try:
@@ -526,7 +550,6 @@ class PmSyncHandler:
                     existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
                 except Exception:
                     existing = {}
-            path.parent.mkdir(parents=True, exist_ok=True)
             data: dict = {
                 "provider": getattr(self.config, "provider", "") or "",
                 "base_url": getattr(self.config, "base_url", "") or "",

@@ -86,7 +86,12 @@ class BusMessage:
 
     @property
     def subject(self) -> str:
-        """Best-effort subject — first ## heading or first non-empty line."""
+        """Subject — frontmatter ``subject:`` field if present, else
+        best-effort scrape of the first ## heading or first non-empty
+        line of the body."""
+        fm_subject = self.frontmatter.get("subject")
+        if fm_subject:
+            return str(fm_subject).strip()
         for line in self.body.splitlines():
             stripped = line.strip()
             if stripped.startswith("##"):

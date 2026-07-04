@@ -646,7 +646,7 @@ class TestSpecChangeApprovedRichTitle:
             from_ = "spec-agent"
             to = "human"
             subject = "Approved: my-change"
-            frontmatter = {"jtbd-id": "JTBD-42", "spec-path": ""}
+            frontmatter = {"change": "my-change", "jtbd-id": "JTBD-42", "spec-path": ""}
 
         handler_with_openspec.handle_event(_FakeMsg())
         call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
@@ -660,11 +660,86 @@ class TestSpecChangeApprovedRichTitle:
             from_ = "spec-agent"
             to = "human"
             subject = "Approved: my-change"
-            frontmatter: dict = {}
+            frontmatter: dict = {"change": "my-change"}
 
         handler_with_openspec.handle_event(_FakeMsg())
         call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
         assert getattr(call_sc, "jtbd_id", "sentinel") is None
+
+
+# ---------------------------------------------------------------------------
+# Garbage-directory bug fix (2026-07-04 GAP audit finding)
+# ---------------------------------------------------------------------------
+
+
+class TestNoChangeFrontmatterSkipsRatherThanGuesses:
+    """handle_event() must not derive change_name from the free-text
+    subject for spec-change-approved events -- that produced garbage
+    openspec/changes/ directories (e.g. "Subject", or a full sentence
+    scraped from the body) whenever the subject didn't match the
+    expected "Approved: <change-name>" shape."""
+
+    def test_missing_change_frontmatter_skips_create_issue(
+        self, handler_with_openspec: PmSyncHandler, caplog
+    ) -> None:
+        class _FakeMsg:
+            type = "spec-change-approved"
+            from_ = "spec-agent"
+            to = "human"
+            subject = "Subject: Approved: pluggable-secret-backend"
+            frontmatter: dict = {}
+
+        handler_with_openspec.handle_event(_FakeMsg())
+        handler_with_openspec.adapter.create_issue.assert_not_called()
+        assert any(
+            "no 'change:' frontmatter field" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_valid_change_frontmatter_still_works(
+        self, handler_with_openspec: PmSyncHandler
+    ) -> None:
+        class _FakeMsg:
+            type = "spec-change-approved"
+            from_ = "spec-agent"
+            to = "human"
+            subject = "Subject: some unrelated free text"
+            frontmatter: dict = {"change": "my-change"}
+
+        handler_with_openspec.handle_event(_FakeMsg())
+        handler_with_openspec.adapter.create_issue.assert_called_once()
+
+
+class TestWriteNeverCreatesChangeDirectory:
+    """_write_pm_sync_yaml must never mkdir a change directory that
+    doesn't already exist -- that's the write site that turned any bad
+    change_name into a real garbage directory on disk."""
+
+    def test_nonexistent_change_dir_is_skipped_not_created(
+        self, handler: PmSyncHandler, workspace: Path, caplog
+    ) -> None:
+        # openspec/changes/ (the root) exists so _specs_root() resolves,
+        # but the specific change directory does not -- this is the
+        # exact shape of the bug: a bad/unexpected change_name.
+        (workspace / "openspec" / "changes").mkdir(parents=True)
+        target_dir = workspace / "openspec" / "changes" / "does-not-exist-yet"
+        assert not target_dir.exists()
+
+        handler._write_pm_sync_yaml("does-not-exist-yet", 99)
+
+        assert not target_dir.exists(), (
+            "_write_pm_sync_yaml must not create a new change directory"
+        )
+        assert any(
+            "refusing to create it" in rec.message for rec in caplog.records
+        )
+
+    def test_existing_change_dir_still_gets_written(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        handler_with_openspec._write_pm_sync_yaml("my-change", 123)
+        pm_sync = workspace / "openspec" / "changes" / "my-change" / ".pm-sync.yaml"
+        assert pm_sync.is_file()
 
 
 # ---------------------------------------------------------------------------
