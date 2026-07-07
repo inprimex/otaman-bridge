@@ -15,13 +15,24 @@ methods and the same forwarding-property attributes (``auth_provider``,
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
 from http.server import BaseHTTPRequestHandler
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from otaman_bridge.daemon import BridgeDaemon
+
+# CE auth for the /pm-sync/<provider> webhook: a single static shared
+# secret compared via a Bearer header, constant-time. F052 (2026-07-02
+# GAP audit, Security lens): this route previously accepted and acted
+# on completely unauthenticated payloads, writing real bus messages
+# addressed to other agents from attacker-controlled input. EE may
+# later add a stronger HMAC-over-raw-body signature scheme as an
+# alternative/upgrade; this env var is the CE baseline.
+_PM_SYNC_WEBHOOK_SECRET_ENV = "OTAMAN_BRIDGE_PM_SYNC_WEBHOOK_SECRET"
 
 _log = logging.getLogger("maestro.bridge.http_handler")
 
@@ -56,6 +67,30 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             use ``_auth_identify`` directly to surface the user.
             """
             return daemon.auth_provider.identify(self.headers) is not None
+
+        def _pm_sync_webhook_auth_ok(self) -> tuple[bool, int, str]:
+            """Check the pm-sync webhook's shared-secret Bearer header.
+
+            Independent of ``daemon.auth_provider`` -- this route is hit
+            by an external PM tool, not an otaman client, so it doesn't
+            participate in the OIDC/loopback identity chain. Returns
+            ``(ok, status_if_not_ok, message_if_not_ok)``.
+
+            Fails closed: if the secret isn't configured, the route is
+            disabled (503) rather than left open (the pre-fix behavior).
+            """
+            secret = os.environ.get(_PM_SYNC_WEBHOOK_SECRET_ENV, "").strip()
+            if not secret:
+                return False, 503, "pm-sync webhook auth not configured"
+            auth_header = self.headers.get("Authorization", "")
+            provided = (
+                auth_header[len("Bearer "):].strip()
+                if auth_header.startswith("Bearer ")
+                else ""
+            )
+            if not provided or not hmac.compare_digest(provided, secret):
+                return False, 401, "invalid or missing pm-sync webhook secret"
+            return True, 200, ""
 
         def _drain_body(self) -> None:
             """Consume the request body so Windows doesn't RST on close.
@@ -234,6 +269,14 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 self.end_headers()
                 return
             if route.startswith("/pm-sync/"):
+                # F052: shared-secret Bearer auth. This route accepts
+                # webhooks from an external PM tool and writes real bus
+                # messages from the payload -- it must not be reachable
+                # by anyone who can send it an HTTP request.
+                ok, status, message = self._pm_sync_webhook_auth_ok()
+                if not ok:
+                    self._reply_error(status, message)
+                    return
                 body = self._read_body()
                 if body is None:
                     self._reply_error(400, "invalid JSON body")
