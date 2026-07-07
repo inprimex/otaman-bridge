@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 _log = logging.getLogger("maestro.bridge.auth_stack")
 
@@ -49,7 +50,7 @@ class AuthStack:
     always was).
     """
 
-    def __init__(self, *, token: str) -> None:
+    def __init__(self, *, token: str, project_root: Path | None = None) -> None:
         from otaman_bridge.daemon import (
             _build_oidc_validator_from_env,
             _build_web_login_flow_from_env,
@@ -72,7 +73,7 @@ class AuthStack:
         self._dcr_mgmt_client_cached = None
         try:
             from otaman_bridge_ee.dcr_shim import IdpConfig, MetadataCache
-            self.idp_config = IdpConfig.from_env()
+            self.idp_config = IdpConfig.from_env(project_root=project_root)
             if self.idp_config is not None:
                 self._idp_metadata_cache = MetadataCache(
                     ttl_seconds=self.idp_config.metadata_cache_seconds

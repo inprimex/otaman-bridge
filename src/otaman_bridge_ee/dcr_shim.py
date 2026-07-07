@@ -24,9 +24,41 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 _log = logging.getLogger("otaman.bridge.dcr_shim")
+
+
+def _load_dcr_shim_trust_from_platform_yaml(project_root: Path) -> str | None:
+    """Read ``terminal.dcr_shim_trust`` from platform.yaml, if present.
+
+    F185 (2026-07-02 GAP audit, Security lens): DCR-shim client
+    registration trust used to be an env-var-only setting with a
+    hardcoded ``"open"`` Python fallback -- undiscoverable and unsafe
+    by default. ``terminal:`` is the existing top-level platform.yaml
+    block for bridge/EE runtime config (``additionalProperties: true``,
+    schema evolving) -- this is its first consumer.
+
+    Same absent/malformed-degrades-to-None pattern as
+    ``bus_surface.load_surface_overrides``: never raises.
+    """
+    try:
+        import yaml
+    except ImportError:
+        return None
+    platform_yaml = project_root / "platform.yaml"
+    if not platform_yaml.is_file():
+        return None
+    try:
+        data = yaml.safe_load(platform_yaml.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    terminal = data.get("terminal")
+    if not isinstance(terminal, dict):
+        return None
+    trust = terminal.get("dcr_shim_trust")
+    return str(trust).strip().lower() if trust else None
 
 
 # ---------------------------------------------------------------------------
@@ -90,8 +122,11 @@ class IdpConfig:
     # lookup + cleanup sweep — see design §6).
     managed_name_prefix: str = "dcr-shim:"
 
-    # "open" or "protected". See design §4.1.
-    registration_trust: str = "open"
+    # "open" or "protected". See design §4.1. Defaults to the safe
+    # value (F185) -- "open" must be explicitly opted into, via
+    # platform.yaml's terminal.dcr_shim_trust or (back-compat)
+    # OTAMAN_DCR_SHIM_TRUST.
+    registration_trust: str = "protected"
 
     # Cache TTL for the upstream AS metadata fetch (seconds).
     metadata_cache_seconds: int = 300
@@ -103,7 +138,12 @@ class IdpConfig:
     cleanup_ttl_seconds: int = 30 * 24 * 3600      # 30d default
 
     @classmethod
-    def from_env(cls, env: dict[str, str] | None = None) -> IdpConfig | None:
+    def from_env(
+        cls,
+        env: dict[str, str] | None = None,
+        *,
+        project_root: Path | None = None,
+    ) -> IdpConfig | None:
         """Build from environment, or return None when shim is disabled.
 
         Recognized env vars:
@@ -114,8 +154,15 @@ class IdpConfig:
             OIDC_PROJECT_ID             — reused as project_id
             OTAMAN_DCR_SHIM_CLIENT_ID   — mgmt machine-user client_id
             OTAMAN_DCR_SHIM_SECRET      — mgmt machine-user secret
-            OTAMAN_DCR_SHIM_TRUST       — "open" (default) or "protected"
+            OTAMAN_DCR_SHIM_TRUST       — "open" or "protected" (back-compat;
+                                           platform.yaml takes precedence)
             OTAMAN_DCR_SHIM_CACHE_SECS  — AS metadata cache TTL
+
+        Trust precedence (F185): platform.yaml's ``terminal.dcr_shim_trust``
+        (when ``project_root`` is given and the key is present) →
+        ``OTAMAN_DCR_SHIM_TRUST`` env var → ``"protected"`` default.
+        An invalid value from either source also falls back to
+        ``"protected"`` (not ``"open"``).
         """
         e = env if env is not None else os.environ
         if e.get("OTAMAN_DCR_SHIM", "").strip().lower() not in ("1", "true", "yes"):
@@ -128,10 +175,16 @@ class IdpConfig:
                 "OTAMAN_DCR_SHIM_MGMT_BASE are both empty; shim disabled"
             )
             return None
-        trust = e.get("OTAMAN_DCR_SHIM_TRUST", "open").strip().lower()
+        trust = None
+        if project_root is not None:
+            trust = _load_dcr_shim_trust_from_platform_yaml(project_root)
+        if trust is None:
+            trust = e.get("OTAMAN_DCR_SHIM_TRUST", "").strip().lower() or None
+        if trust is None:
+            trust = "protected"
         if trust not in ("open", "protected"):
-            _log.warning("invalid OTAMAN_DCR_SHIM_TRUST=%r, using 'open'", trust)
-            trust = "open"
+            _log.warning("invalid dcr_shim_trust=%r, using 'protected'", trust)
+            trust = "protected"
         try:
             cache_secs = int(e.get("OTAMAN_DCR_SHIM_CACHE_SECS", "300"))
         except ValueError:

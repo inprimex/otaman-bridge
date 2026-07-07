@@ -76,14 +76,23 @@ class TestIdpConfigFromEnv:
         })
         assert cfg.management_base_url == "http://mgmt.example"
 
-    def test_default_trust_is_open(self):
+    def test_default_trust_is_protected(self):
+        """F185: safe-by-default when nothing configures trust anywhere."""
         cfg = IdpConfig.from_env(env={
             "OTAMAN_DCR_SHIM": "1",
             "OIDC_ISSUER": "http://i",
         })
+        assert cfg.registration_trust == "protected"
+
+    def test_trust_open_via_env_backcompat(self):
+        cfg = IdpConfig.from_env(env={
+            "OTAMAN_DCR_SHIM": "1",
+            "OIDC_ISSUER": "http://i",
+            "OTAMAN_DCR_SHIM_TRUST": "open",
+        })
         assert cfg.registration_trust == "open"
 
-    def test_trust_protected(self):
+    def test_trust_protected_via_env(self):
         cfg = IdpConfig.from_env(env={
             "OTAMAN_DCR_SHIM": "1",
             "OIDC_ISSUER": "http://i",
@@ -91,13 +100,13 @@ class TestIdpConfigFromEnv:
         })
         assert cfg.registration_trust == "protected"
 
-    def test_invalid_trust_falls_back_to_open(self):
+    def test_invalid_trust_falls_back_to_protected(self):
         cfg = IdpConfig.from_env(env={
             "OTAMAN_DCR_SHIM": "1",
             "OIDC_ISSUER": "http://i",
             "OTAMAN_DCR_SHIM_TRUST": "weird-value",
         })
-        assert cfg.registration_trust == "open"
+        assert cfg.registration_trust == "protected"
 
     def test_default_type_is_zitadel(self):
         cfg = IdpConfig.from_env(env={
@@ -166,6 +175,95 @@ class TestIdpConfigFromEnv:
             "OTAMAN_DCR_SHIM_CACHE_SECS": "0",
         })
         assert cfg.metadata_cache_seconds == 1
+
+
+# ---- F185: platform.yaml terminal.dcr_shim_trust precedence -------------
+
+
+class TestTrustPrecedence:
+    """platform.yaml's terminal.dcr_shim_trust > OTAMAN_DCR_SHIM_TRUST env
+    var > "protected" default. Invalid values from either source also
+    fall back to "protected"."""
+
+    def _write_platform_yaml(self, tmp_path, terminal_block: str) -> None:
+        (tmp_path / "platform.yaml").write_text(terminal_block, encoding="utf-8")
+
+    def test_platform_yaml_wins_over_env(self, tmp_path):
+        self._write_platform_yaml(
+            tmp_path, "terminal:\n  dcr_shim_trust: open\n",
+        )
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_TRUST": "protected",
+            },
+            project_root=tmp_path,
+        )
+        assert cfg.registration_trust == "open"
+
+    def test_platform_yaml_absent_falls_to_env(self, tmp_path):
+        # No platform.yaml written at all.
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_TRUST": "open",
+            },
+            project_root=tmp_path,
+        )
+        assert cfg.registration_trust == "open"
+
+    def test_platform_yaml_present_but_no_dcr_shim_trust_key_falls_to_env(
+        self, tmp_path,
+    ):
+        self._write_platform_yaml(tmp_path, "terminal:\n  other_key: 1\n")
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_TRUST": "open",
+            },
+            project_root=tmp_path,
+        )
+        assert cfg.registration_trust == "open"
+
+    def test_no_project_root_no_env_defaults_to_protected(self, tmp_path):
+        cfg = IdpConfig.from_env(
+            env={"OTAMAN_DCR_SHIM": "1", "OIDC_ISSUER": "http://i"},
+            project_root=None,
+        )
+        assert cfg.registration_trust == "protected"
+
+    def test_invalid_platform_yaml_value_falls_back_to_protected(self, tmp_path):
+        self._write_platform_yaml(
+            tmp_path, "terminal:\n  dcr_shim_trust: nonsense\n",
+        )
+        cfg = IdpConfig.from_env(
+            env={"OTAMAN_DCR_SHIM": "1", "OIDC_ISSUER": "http://i"},
+            project_root=tmp_path,
+        )
+        assert cfg.registration_trust == "protected"
+
+    def test_malformed_platform_yaml_does_not_raise_falls_to_env(self, tmp_path):
+        self._write_platform_yaml(tmp_path, ": not: valid: yaml: [[[")
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_TRUST": "open",
+            },
+            project_root=tmp_path,
+        )
+        assert cfg.registration_trust == "open"
+
+    def test_terminal_block_not_a_dict_is_ignored(self, tmp_path):
+        self._write_platform_yaml(tmp_path, "terminal: not-a-dict\n")
+        cfg = IdpConfig.from_env(
+            env={"OTAMAN_DCR_SHIM": "1", "OIDC_ISSUER": "http://i"},
+            project_root=tmp_path,
+        )
+        assert cfg.registration_trust == "protected"
 
 
 # ---- MetadataCache -------------------------------------------------------

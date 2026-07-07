@@ -369,7 +369,10 @@ class BridgeDaemon:
         # composite auth_provider chain). Extracted to AuthStack (F040
         # phase 4) — every attribute it builds stays a frozen forwarding
         # property below (auth_stack.py's module docstring explains why).
-        self._auth_stack = AuthStack(token=self.token)
+        # project_root=bus_watcher_root lets the DCR shim's trust level
+        # (F185) read platform.yaml's terminal.dcr_shim_trust when a
+        # workspace is configured; None in env-only/--no-config mode.
+        self._auth_stack = AuthStack(token=self.token, project_root=self.bus_watcher_root)
 
         # MCP tool registry + RunnerClient + Inbox. Extracted to
         # McpDispatchService (F040 phase 5) — mcp_server, _runner_client,
