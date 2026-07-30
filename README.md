@@ -67,8 +67,8 @@ The daemon writes an endpoint file to `~/.otaman/bridge.endpoint` (mode 0600) so
 - [ADR-010 (user binding + seat licensing)](https://github.com/inprimex/otaman-meta/blob/main/adrs/ADR-010-user-binding-and-seat-licensing.md) — auth model
 - [polyrepo-structure.md](https://github.com/inprimex/otaman-meta/blob/main/polyrepo-structure.md) — ownership map
 - [phased-roadmap.md](https://github.com/inprimex/otaman-meta/blob/main/phased-roadmap.md) — Step 1–7 sequencing
-- [otaman.dev](https://otaman.dev) — platform docs
+- [otaman.ai](https://otaman.ai) — platform docs
 
 ## License
 
-AGPL-3.0 (community edition). Commercial license available for teams that cannot ship source — see [otaman.dev](https://otaman.dev).
+AGPL-3.0 (community edition). Commercial license available for teams that cannot ship source — see [otaman.ai](https://otaman.ai).
