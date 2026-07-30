@@ -18,7 +18,7 @@ and publish the advisory simultaneously with the patch release.
 
 **Fallback channel — email:**
 
-Email starikov@inprimex.com with subject line beginning `[otaman-security]`.
+Email security@otaman.ai with subject line beginning `[otaman-security]`.
 PGP key available on request. We aim to acknowledge within 5 business days.
 
 ## Scope
