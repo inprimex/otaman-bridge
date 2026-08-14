@@ -37,7 +37,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-_log = logging.getLogger("maestro.bridge.auth_stack")
+_log = logging.getLogger("maestro.bridge.auth_stack")  # legacy: logger renamed at otaman-core 1.0
 
 
 class AuthStack:

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from otaman_bridge.core import Transport
     from otaman_bridge.daemon import _AsyncLoopThread
 
-_log = logging.getLogger("maestro.bridge.afk_service")
+_log = logging.getLogger("maestro.bridge.afk_service")  # legacy: logger renamed at otaman-core 1.0
 
 
 class AfkService:

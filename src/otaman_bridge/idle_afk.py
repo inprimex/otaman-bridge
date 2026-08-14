@@ -48,8 +48,8 @@ def _state_dir(project_root: Path) -> Path:
 
 
 def _resolve_state_file(project_root: Path, filename: str) -> Path:
-    """Return the path for a state file, preferring .otaman/ over .maestro/
-    (legacy: fallback until otaman-core 1.0).
+    """Return the path for a state file, preferring .otaman/ over
+    .maestro/ (legacy: fallback until otaman-core 1.0).
     """
     preferred = _state_dir(project_root) / filename
     if preferred.is_file():

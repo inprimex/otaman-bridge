@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from otaman_bridge.core import Transport
     from otaman_bridge.daemon import _AsyncLoopThread
 
-_log = logging.getLogger("maestro.bridge.bus_surface_service")
+_log = logging.getLogger("maestro.bridge.bus_surface_service")  # legacy: renamed at core 1.0
 
 
 class _PendingBusDecision:

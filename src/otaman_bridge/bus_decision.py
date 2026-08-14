@@ -19,8 +19,7 @@ decide`` CLI or by tests.
 itself. The broadcast message points humans at ``/otaman:approve`` /
 ``openspec new change`` for the actual spec creation. The daemon's
 job is to durably record the *decision*; executing it stays in
-``cli/maestro.py`` (which has the OpenSpec-detection code path).
-# legacy: cli/maestro.py renamed at otaman-core 1.0
+``cli/maestro.py`` (legacy: renamed at otaman-core 1.0; has the OpenSpec-detection code path).
 """
 
 from __future__ import annotations
@@ -42,8 +41,7 @@ def _now_ts() -> tuple[str, str]:
 
 
 def _slug(text: str) -> str:
-    """Lowercase slug for filenames — same shape as cli/maestro.py uses."""
-    # legacy: cli/maestro.py renamed at otaman-core 1.0
+    """Lowercase slug — same shape as cli/maestro.py uses (legacy: renamed at otaman-core 1.0)."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:30] or "decision"
 
 
@@ -78,10 +76,9 @@ def broadcast_decision(
     """Write a ``spec-change-{approved,rejected}`` message to the active bus.
 
     Mirrors the format emitted by ``/otaman:approve`` locally (see
-    ``cli/maestro.py``), so downstream agents running
-    # legacy: cli/maestro.py renamed at otaman-core 1.0
-    ``/otaman:check`` can't tell whether the decision came from
-    Telegram or the terminal.
+    ``cli/maestro.py``, legacy: renamed at otaman-core 1.0), so downstream
+    agents running ``/otaman:check`` can't tell whether the decision came
+    from Telegram or the terminal.
     """
     if decision not in ("approved", "rejected"):
         raise ValueError(f"decision must be 'approved' or 'rejected', got {decision!r}")

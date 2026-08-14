@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 # alternative/upgrade; this env var is the CE baseline.
 _PM_SYNC_WEBHOOK_SECRET_ENV = "OTAMAN_BRIDGE_PM_SYNC_WEBHOOK_SECRET"
 
-_log = logging.getLogger("maestro.bridge.http_handler")
+_log = logging.getLogger("maestro.bridge.http_handler")  # legacy: logger renamed at otaman-core 1.0
 
 
 def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:

@@ -47,10 +47,8 @@ def resolve_maestro_cli() -> Path:
     """Locate the otaman CLI wrapper (legacy: cli/maestro.sh, renamed at otaman-core 1.0).
 
     Resolution chain (post-Step-1 carve):
-    1. Sibling otaman-cli checkout: ../otaman-cli/cli/maestro.sh
-       # legacy: script renamed at otaman-core 1.0
-    2. Sibling legacy maestro-plugin checkout: ../maestro-plugin/cli/maestro.sh
-       # legacy: until maestro-plugin is retired
+    1. Sibling otaman-cli: ../otaman-cli/cli/maestro.sh (legacy: renamed at otaman-core 1.0)
+    2. Sibling maestro-plugin: ../maestro-plugin/cli/maestro.sh (legacy: until plugin retired)
     3. ``otaman`` / ``maestro`` on PATH (legacy: maestro alias removed at otaman-core 1.0)
     """
     here = Path(__file__).resolve()
@@ -68,8 +66,8 @@ def resolve_maestro_cli() -> Path:
         if candidate2.is_file():
             return candidate2
     found = shutil.which("otaman") or shutil.which(
-        "maestro"
-    )  # legacy: maestro alias removed at otaman-core 1.0
+        "maestro"  # legacy: maestro alias removed at otaman-core 1.0
+    )
     if found:
         return Path(found).resolve()
     raise RuntimeError(  # legacy: cli/maestro.sh renamed at otaman-core 1.0
@@ -301,8 +299,8 @@ def uninstall_systemd(
     # `check=False` because either may not exist — best-effort cleanup.
     for prefix in (
         "otaman-bridge",
-        "maestro-bridge",
-    ):  # legacy: maestro-bridge kept for Phase C+ cleanup
+        "maestro-bridge",  # legacy: maestro-bridge kept for Phase C+ cleanup
+    ):
         service = f"{prefix}@{account}.service"
         runner(["systemctl", "--user", "stop", service], check=False)
         results.append(f"Stopped: {service}")
@@ -443,7 +441,7 @@ def install_windows(target: InstallTarget, **_kwargs) -> list[str]:  # noqa: ARG
         "  - Run `otaman bridge run --account <name>` in a dedicated terminal\n"
         "  - Install NSSM (https://nssm.cc/) and wrap the daemon manually\n"
         # legacy: maestro.sh renamed at otaman-core 1.0
-        "  - Use Task Scheduler with trigger At log on, action = maestro.sh\n"
+        "  - Use Task Scheduler with trigger At log on, action = maestro.sh\n"  # legacy: renamed
         "Tracking: design §5.7 scopes this for a future release."
     )
 

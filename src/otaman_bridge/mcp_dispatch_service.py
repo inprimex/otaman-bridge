@@ -20,7 +20,7 @@ import logging
 import os
 from pathlib import Path
 
-_log = logging.getLogger("maestro.bridge.mcp_dispatch_service")
+_log = logging.getLogger("maestro.bridge.mcp_dispatch_service")  # legacy: renamed at core 1.0
 
 
 class McpDispatchService:
