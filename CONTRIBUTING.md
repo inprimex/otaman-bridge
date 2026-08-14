@@ -6,14 +6,14 @@ Thanks for your interest in contributing.
 
 This project is licensed under the **GNU Affero General Public License v3.0**
 (AGPL-3.0). However, contributions are accepted under a **Contributor License
-Agreement (CLA)** that licenses your contribution to inprimex under the
+Agreement (CLA)** that licenses your contribution to Inprimex Lab LLC under the
 **Apache License 2.0**.
 
 By submitting a pull request or other contribution, you agree:
 
 - You have the right to license your contribution.
-- Your contribution is licensed to inprimex under Apache 2.0.
-- inprimex may relicense the combined work — including your contribution —
+- Your contribution is licensed to Inprimex Lab LLC under Apache 2.0.
+- Inprimex Lab LLC may relicense the combined work — including your contribution —
   under AGPL-3.0 for distribution to the community, or under a commercial
   license for proprietary integrators.
 
