@@ -356,4 +356,42 @@ class TestConfigDrivenRun:
         )
         assert result.returncode == 1
         assert "missing" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# --watch-bus auto-detect — single-bus-per-program
+
+
+class TestWatchBusAutoDetect:
+    """Bare --watch-bus must land on a program bus root, never an
+    org-level `.agents` (the P1 split-brain failure mode)."""
+
+    def test_auto_detect_rejects_non_program_root(self, sandbox_home, tmp_path):
+        """Auto-resolved root with .agents/bus but no platform.yaml
+        (org-level shape) → hard error, not a silent empty-bus watch."""
+        maestro = tmp_path / "my-maestro"
+        maestro.mkdir()
+        (maestro / "platform.yaml").write_text("project: x\n", encoding="utf-8")
+        (maestro / ".agents").mkdir()
+        (maestro / "launch-settings.yaml").write_text(
+            "accounts:\n  demo:\n    config_dir: ~/.claude-demo\n    transport: null\n",
+            encoding="utf-8",
+        )
+        # Org-level shape: has a bus directory but no platform.yaml.
+        org_root = tmp_path / "org-root"
+        (org_root / ".agents" / "bus" / "active").mkdir(parents=True)
+
+        env = _env_with_home(sandbox_home)
+        env["OTAMAN_ROOT"] = str(org_root)  # workspace finder lands here
+        result = subprocess.run(
+            BRIDGE_CLI + ["run", "--account", "demo", "--transport", "null", "--watch-bus"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+            cwd=maestro,
+        )
+        assert result.returncode == 1
+        assert "not a program bus root" in result.stderr
+        assert "--watch-bus" in result.stderr  # remediation named
         assert "not in" in result.stderr

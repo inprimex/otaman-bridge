@@ -36,6 +36,7 @@ and stay quiet regardless.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,8 @@ try:
     import yaml  # type: ignore
 except ImportError:
     yaml = None  # type: ignore[assignment]
+
+_log = logging.getLogger("maestro.bridge.bus_surface")  # legacy: renamed at core 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +86,16 @@ class BusMessage:
     @property
     def priority(self) -> str:
         return str(self.frontmatter.get("priority", "normal")).lower()
+
+    @property
+    def from_org(self) -> str:
+        """Sender org — inter-org-envelope schema v2 projection field."""
+        return str(self.frontmatter.get("from_org", "") or "").strip()
+
+    @property
+    def to_org(self) -> str:
+        """Target org — inter-org-envelope schema v2 projection field."""
+        return str(self.frontmatter.get("to_org", "") or "").strip()
 
     @property
     def subject(self) -> str:
@@ -139,6 +152,19 @@ def _is_to_human(to: str) -> bool:
     return t in ("human", "humans", "user")
 
 
+def is_cross_org(msg: BusMessage) -> bool:
+    """True when the envelope's org projections name two different orgs.
+
+    ``from_org``/``to_org`` (inter-org-envelope, schema v2) are projections
+    of the canonical ``otaman://`` URIs (single-bus-per-program Q4). A
+    message on our program bus whose org segments disagree crossed an org
+    boundary — which has no transport yet (ADR-012 Phase 5+). A missing
+    field means "local org" (intra-org sends may omit the projection), so
+    only envelopes carrying BOTH fields with different values are cross-org.
+    """
+    return bool(msg.from_org and msg.to_org and msg.from_org.lower() != msg.to_org.lower())
+
+
 def _override_for(overrides: dict[str, Any], key: str) -> bool | None:
     """Translate ``surface`` override keys (review_request, task_complete…)
     to message types (review-request, task-complete…)."""
@@ -175,6 +201,21 @@ def decide(
     buzzes).
     """
     overrides = overrides or {}
+
+    # 0. Cross-org envelopes — rejected until a network transport exists
+    #    (ADR-012 Phase 5+ / single-bus-per-program Q4). Trumps urgent:
+    #    a foreign-org message must not reach the human via this bridge.
+    if is_cross_org(msg):
+        _log.warning(
+            "cross-org routing not yet implemented: not surfacing %s (from_org=%r, to_org=%r)",
+            msg.stem,
+            msg.from_org,
+            msg.to_org,
+        )
+        return SurfaceDecision(
+            surface=False,
+            reason=f"cross-org routing not yet implemented (to_org={msg.to_org})",
+        )
 
     # 1. Urgent — always blocking, regardless of type
     if msg.priority == "urgent":
