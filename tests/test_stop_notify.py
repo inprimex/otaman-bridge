@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import subprocess
 import sys
-import threading
 import time
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).parent.parent
 HELPER_INVOKE = [sys.executable, "-m", "otaman_bridge.stop_notify"]
@@ -29,13 +25,7 @@ def _bridge_env() -> dict:
 
 
 # afk + stop_notify now importable as package modules
-from otaman_bridge import afk
-
-
-
-
-from otaman_bridge import stop_notify
-
+from otaman_bridge import afk, stop_notify
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -46,7 +36,8 @@ def maestro_folder(tmp_path):
     root = tmp_path / "my-maestro"
     root.mkdir()
     (root / "platform.yaml").write_text(
-        "project: smoke\nversion: '1.0'\nrepos: []\n", encoding="utf-8",
+        "project: smoke\nversion: '1.0'\nrepos: []\n",
+        encoding="utf-8",
     )
     (root / ".agents").mkdir()
     (root / ".maestro").mkdir()
@@ -70,15 +61,23 @@ def _write_transcript(
 ) -> None:
     lines: list[str] = []
     if user_first:
-        lines.append(json.dumps({
-            "type": "user",
-            "message": {"content": [{"type": "text", "text": "some prompt"}]},
-        }))
+        lines.append(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "some prompt"}]},
+                }
+            )
+        )
     for text in assistant_texts:
-        lines.append(json.dumps({
-            "type": "assistant",
-            "message": {"content": [{"type": "text", "text": text}]},
-        }))
+        lines.append(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": text}]},
+                }
+            )
+        )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -96,14 +95,28 @@ class TestLoadLastAssistantText:
         t = tmp_path / "t.jsonl"
         lines = [
             json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "q"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [
-                {"type": "text", "text": "I'll check"},
-                {"type": "tool_use", "name": "Read", "input": {}},
-            ]}}),
-            json.dumps({"type": "assistant", "message": {"content": [
-                {"type": "thinking", "thinking": "…"},
-                {"type": "text", "text": "Done. Which one?"},
-            ]}}),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "I'll check"},
+                            {"type": "tool_use", "name": "Read", "input": {}},
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "thinking", "thinking": "…"},
+                            {"type": "text", "text": "Done. Which one?"},
+                        ]
+                    },
+                }
+            ),
         ]
         t.write_text("\n".join(lines) + "\n", encoding="utf-8")
         assert stop_notify.load_last_assistant_text(t) == "Done. Which one?"
@@ -120,9 +133,10 @@ class TestLoadLastAssistantText:
         t = tmp_path / "t.jsonl"
         t.write_text(
             "not json\n"
-            + json.dumps({"type": "assistant", "message": {"content": [
-                {"type": "text", "text": "hello"}
-            ]}}) + "\n"
+            + json.dumps(
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": "hello"}]}}
+            )
+            + "\n"
             + "also not json\n",
             encoding="utf-8",
         )
@@ -152,7 +166,9 @@ class TestLooksLikeQuestion:
 class TestDebounce:
     def test_first_call_allowed(self, tmp_path):
         assert stop_notify.debounce_ok(
-            tmp_path / "state.json", "sess-1", "hash-1",
+            tmp_path / "state.json",
+            "sess-1",
+            "hash-1",
         )
 
     def test_duplicate_hash_suppressed(self, tmp_path, monkeypatch):
@@ -178,10 +194,15 @@ class TestDebounce:
     def test_prunes_entries_older_than_24h(self, tmp_path, monkeypatch):
         state = tmp_path / "state.json"
         # Seed with an old-looking entry.
-        state.write_text(json.dumps({
-            "old-session": {"ts": 1, "hash": "old"},  # ts from 1970
-            "fresh": {"ts": int(time.time()), "hash": "new"},
-        }), encoding="utf-8")
+        state.write_text(
+            json.dumps(
+                {
+                    "old-session": {"ts": 1, "hash": "old"},  # ts from 1970
+                    "fresh": {"ts": int(time.time()), "hash": "new"},
+                }
+            ),
+            encoding="utf-8",
+        )
         stop_notify.debounce_ok(state, "another", "hash")
         reloaded = json.loads(state.read_text(encoding="utf-8"))
         assert "old-session" not in reloaded
@@ -213,8 +234,11 @@ def _run_helper(stdin_payload: dict, *, cwd: Path, home: Path, env_extra=None):
     return subprocess.run(
         HELPER_INVOKE,
         input=json.dumps(stdin_payload),
-        capture_output=True, text=True, timeout=15,
-        cwd=cwd, env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=cwd,
+        env=env,
     )
 
 
@@ -224,7 +248,8 @@ class TestIntegrationAfkOff:
         _write_transcript(transcript, ["Which way? Decide."])
         result = _run_helper(
             {"session_id": "s", "transcript_path": str(transcript)},
-            cwd=maestro_folder, home=maestro_folder,
+            cwd=maestro_folder,
+            home=maestro_folder,
         )
         assert result.returncode == 0
         assert result.stdout == ""
@@ -238,13 +263,13 @@ class TestIntegrationAfkOnNoDaemon:
         _write_transcript(transcript, ["Which one should I pick?"])
         result = _run_helper(
             {"session_id": "s", "transcript_path": str(transcript)},
-            cwd=maestro_folder, home=maestro_folder,
+            cwd=maestro_folder,
+            home=maestro_folder,
             env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
         )
         assert result.returncode == 0
         # Goes to stderr — "daemon endpoint missing"
-        assert "endpoint missing" in result.stderr.lower() \
-            or "daemon" in result.stderr.lower()
+        assert "endpoint missing" in result.stderr.lower() or "daemon" in result.stderr.lower()
 
     def test_non_question_skips_even_with_afk(self, maestro_folder):
         _set_afk_on(maestro_folder)
@@ -252,7 +277,8 @@ class TestIntegrationAfkOnNoDaemon:
         _write_transcript(transcript, ["Done. Results are ready."])
         result = _run_helper(
             {"session_id": "s", "transcript_path": str(transcript)},
-            cwd=maestro_folder, home=maestro_folder,
+            cwd=maestro_folder,
+            home=maestro_folder,
             env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
         )
         assert result.returncode == 0
@@ -269,10 +295,13 @@ class TestIntegrationAfkOnNoDaemon:
 def _start_daemon(account: str, home: Path):
     from otaman_bridge.daemon import BridgeDaemon
     from otaman_bridge.transports.null import NullTransport
+
     transport = NullTransport(allowlist={"*"})
     endpoint = home / ".maestro" / f"bridge-{account}.endpoint"
     daemon = BridgeDaemon(
-        account=account, transport=transport, endpoint_file=endpoint,
+        account=account,
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.start()
     return daemon, transport
@@ -288,7 +317,8 @@ class TestIntegrationWithDaemon:
             _write_transcript(transcript, [question])
             result = _run_helper(
                 {"session_id": "test-sess", "transcript_path": str(transcript)},
-                cwd=maestro_folder, home=maestro_folder,
+                cwd=maestro_folder,
+                home=maestro_folder,
                 env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
             )
             assert result.returncode == 0
@@ -314,8 +344,12 @@ class TestIntegrationWithDaemon:
             _write_transcript(transcript, ["Continue?"])
             payload = {"session_id": "rep", "transcript_path": str(transcript)}
 
-            _run_helper(payload, cwd=maestro_folder, home=maestro_folder,
-                        env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"})
+            _run_helper(
+                payload,
+                cwd=maestro_folder,
+                home=maestro_folder,
+                env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
+            )
             for _ in range(40):
                 if transport.sent_infos:
                     break
@@ -323,12 +357,14 @@ class TestIntegrationWithDaemon:
             assert len(transport.sent_infos) == 1
 
             # Second call immediately after — same content hash → suppressed
-            _run_helper(payload, cwd=maestro_folder, home=maestro_folder,
-                        env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"})
-            time.sleep(0.3)
-            assert len(transport.sent_infos) == 1, (
-                "debounce should have suppressed the duplicate"
+            _run_helper(
+                payload,
+                cwd=maestro_folder,
+                home=maestro_folder,
+                env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
             )
+            time.sleep(0.3)
+            assert len(transport.sent_infos) == 1, "debounce should have suppressed the duplicate"
         finally:
             daemon.stop()
 
@@ -343,7 +379,8 @@ class TestIntegrationWithDaemon:
             for sess in ("sess-A", "sess-B"):
                 _run_helper(
                     {"session_id": sess, "transcript_path": str(transcript)},
-                    cwd=maestro_folder, home=maestro_folder,
+                    cwd=maestro_folder,
+                    home=maestro_folder,
                     env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
                 )
             for _ in range(40):

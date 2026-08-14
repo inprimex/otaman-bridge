@@ -14,7 +14,8 @@ Design §5.7:
 
 The generated unit locks the Python interpreter used at install time
 (``MAESTRO_PYTHON`` env var) so the service keeps working even if the
-user's shell PATH / conda env / nvm state drifts later.  # legacy: MAESTRO_PYTHON env var renamed at otaman-core 1.0
+user's shell PATH / conda env / nvm state drifts later.
+# legacy: MAESTRO_PYTHON env var renamed at otaman-core 1.0
 """
 
 from __future__ import annotations
@@ -23,9 +24,8 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Platform detection + path resolution
@@ -47,15 +47,17 @@ def resolve_maestro_cli() -> Path:
     """Locate the otaman CLI wrapper (legacy: cli/maestro.sh, renamed at otaman-core 1.0).
 
     Resolution chain (post-Step-1 carve):
-    1. Sibling otaman-cli checkout: ../otaman-cli/cli/maestro.sh  # legacy: script renamed at otaman-core 1.0
-    2. Sibling legacy maestro-plugin checkout: ../maestro-plugin/cli/maestro.sh  # legacy: until maestro-plugin is retired
+    1. Sibling otaman-cli checkout: ../otaman-cli/cli/maestro.sh
+       # legacy: script renamed at otaman-core 1.0
+    2. Sibling legacy maestro-plugin checkout: ../maestro-plugin/cli/maestro.sh
+       # legacy: until maestro-plugin is retired
     3. ``otaman`` / ``maestro`` on PATH (legacy: maestro alias removed at otaman-core 1.0)
     """
     here = Path(__file__).resolve()
     # src/otaman_bridge/install.py → otaman-bridge/ → otaman/
     project_root = here.parent.parent.parent
     for sibling, rel in (
-        ("otaman-cli", "cli/maestro.sh"),   # legacy: script renamed at otaman-core 1.0
+        ("otaman-cli", "cli/maestro.sh"),  # legacy: script renamed at otaman-core 1.0
         ("maestro-plugin", "cli/maestro.sh"),  # legacy: until maestro-plugin is retired
     ):
         candidate = project_root.parent / sibling / rel
@@ -65,7 +67,9 @@ def resolve_maestro_cli() -> Path:
         candidate2 = project_root / sibling / rel
         if candidate2.is_file():
             return candidate2
-    found = shutil.which("otaman") or shutil.which("maestro")  # legacy: maestro alias removed at otaman-core 1.0
+    found = shutil.which("otaman") or shutil.which(
+        "maestro"
+    )  # legacy: maestro alias removed at otaman-core 1.0
     if found:
         return Path(found).resolve()
     raise RuntimeError(  # legacy: cli/maestro.sh renamed at otaman-core 1.0
@@ -79,14 +83,18 @@ def resolve_working_dir(override: Path | str | None = None) -> Path:
 
     Falls back through:
       1. Explicit ``override`` (from --working-dir).
-      2. ``find_maestro_root()`` from the current process's cwd.  # legacy: renamed find_otaman_root at otaman-core 1.0
+      2. ``find_maestro_root()`` from the current process's cwd.
+         # legacy: renamed find_otaman_root at otaman-core 1.0
       3. Current cwd.
     """
     if override:
         return Path(override).expanduser().resolve()
     try:
         # Lazy import so this module stays usable outside an otaman workspace.
-        from otaman_core._resolve import find_maestro_root  # legacy: renamed find_otaman_root at otaman-core 1.0
+        from otaman_core._resolve import (
+            find_maestro_root,  # legacy: renamed find_otaman_root at otaman-core 1.0
+        )
+
         root = find_maestro_root()
         if root is not None:
             return root
@@ -108,10 +116,10 @@ class InstallTarget:
     """
 
     account: str
-    python: str           # absolute path to the Python interpreter
-    maestro_cli: Path     # legacy: cli/maestro.sh (or `maestro`) — renamed at otaman-core 1.0
-    working_dir: Path     # cwd for the service; should contain launch-settings.yaml
-    system: str           # linux-systemd | macos-launchd | windows-nssm
+    python: str  # absolute path to the Python interpreter
+    maestro_cli: Path  # legacy: cli/maestro.sh (or `maestro`) — renamed at otaman-core 1.0
+    working_dir: Path  # cwd for the service; should contain launch-settings.yaml
+    system: str  # linux-systemd | macos-launchd | windows-nssm
     watch_bus: bool = True  # pass --watch-bus so installed services drain the bus
     idle_auto_afk_minutes: int = 0  # 0 = disabled; positive = auto-enable AFK after N min idle
 
@@ -152,7 +160,9 @@ def make_install_target(
 # before the rename keep working — their unit files stay on disk, systemd keeps
 # managing them — and per-project migration (Phase C+) removes them.
 SYSTEMD_UNIT_NAME = "otaman-bridge@.service"
-LEGACY_SYSTEMD_UNIT_NAME = "maestro-bridge@.service"  # legacy: pre-rename unit name, kept for Phase C+ cleanup
+LEGACY_SYSTEMD_UNIT_NAME = (
+    "maestro-bridge@.service"  # legacy: pre-rename unit name, kept for Phase C+ cleanup
+)
 
 SYSTEMD_UNIT_TEMPLATE = """\
 [Unit]
@@ -206,7 +216,8 @@ def legacy_systemd_unit_path() -> Path:
 def render_systemd_unit(target: InstallTarget) -> str:
     idle_flag = (
         f" --idle-auto-afk-minutes {target.idle_auto_afk_minutes}"
-        if target.idle_auto_afk_minutes > 0 else ""
+        if target.idle_auto_afk_minutes > 0
+        else ""
     )
     return SYSTEMD_UNIT_TEMPLATE.format(
         workdir=target.working_dir,
@@ -268,8 +279,7 @@ def install_systemd(
             results.append("Warning: could not determine username for enable-linger")
         else:
             runner(["loginctl", "enable-linger", user], check=True)
-            results.append(f"Enabled linger for user: {user} "
-                           f"(service survives logout)")
+            results.append(f"Enabled linger for user: {user} (service survives logout)")
 
     return results
 
@@ -289,7 +299,10 @@ def uninstall_systemd(
     # Phase B-0a-3 of the CE/EE migration: stop both the new otaman-bridge
     # unit AND the legacy: maestro-bridge unit (if either was installed).
     # `check=False` because either may not exist — best-effort cleanup.
-    for prefix in ("otaman-bridge", "maestro-bridge"):  # legacy: maestro-bridge kept for Phase C+ cleanup
+    for prefix in (
+        "otaman-bridge",
+        "maestro-bridge",
+    ):  # legacy: maestro-bridge kept for Phase C+ cleanup
         service = f"{prefix}@{account}.service"
         runner(["systemctl", "--user", "stop", service], check=False)
         results.append(f"Stopped: {service}")
@@ -394,8 +407,7 @@ def install_launchd(
     results.append(f"Loaded: com.otaman.bridge.{target.account}")
 
     if start:
-        runner(["launchctl", "start", f"com.otaman.bridge.{target.account}"],
-               check=False)
+        runner(["launchctl", "start", f"com.otaman.bridge.{target.account}"], check=False)
         results.append(f"Started: com.otaman.bridge.{target.account}")
 
     return results
@@ -430,7 +442,8 @@ def install_windows(target: InstallTarget, **_kwargs) -> list[str]:  # noqa: ARG
         "Windows service install is not yet implemented. Options:\n"
         "  - Run `otaman bridge run --account <name>` in a dedicated terminal\n"
         "  - Install NSSM (https://nssm.cc/) and wrap the daemon manually\n"
-        "  - Use Task Scheduler with trigger At log on, action = maestro.sh\n"  # legacy: maestro.sh renamed at otaman-core 1.0
+        # legacy: maestro.sh renamed at otaman-core 1.0
+        "  - Use Task Scheduler with trigger At log on, action = maestro.sh\n"
         "Tracking: design §5.7 scopes this for a future release."
     )
 

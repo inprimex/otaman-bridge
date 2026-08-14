@@ -12,11 +12,8 @@ via the otaman_bridge_ee.mcp_tools_admin wrapper.
 
 from __future__ import annotations
 
-import pytest
-
 from otaman_bridge.mcp_server import CallContext
 from otaman_bridge.mcp_tools import build_kill_session_for_user_tool
-from otaman_bridge.runner_client import SessionNotFoundError
 
 
 class _StubRunnerClient:

@@ -41,29 +41,39 @@ class TestDcrShimTrustWiring:
         monkeypatch.setenv("OIDC_ISSUER", "http://idp.example")
 
     def test_platform_yaml_dcr_shim_trust_reaches_idp_config(
-        self, tmp_path, workspace, monkeypatch,
+        self,
+        tmp_path,
+        workspace,
+        monkeypatch,
     ):
         self._enable_shim_env(monkeypatch)
         (workspace / "platform.yaml").write_text(
-            "terminal:\n  dcr_shim_trust: open\n", encoding="utf-8",
+            "terminal:\n  dcr_shim_trust: open\n",
+            encoding="utf-8",
         )
         daemon = _make_daemon(tmp_path, workspace)
         assert daemon.idp_config is not None
         assert daemon.idp_config.registration_trust == "open"
 
     def test_no_platform_yaml_key_defaults_to_protected(
-        self, tmp_path, workspace, monkeypatch,
+        self,
+        tmp_path,
+        workspace,
+        monkeypatch,
     ):
         self._enable_shim_env(monkeypatch)
         (workspace / "platform.yaml").write_text(
-            "project: test\n", encoding="utf-8",
+            "project: test\n",
+            encoding="utf-8",
         )
         daemon = _make_daemon(tmp_path, workspace)
         assert daemon.idp_config is not None
         assert daemon.idp_config.registration_trust == "protected"
 
     def test_no_bus_watcher_root_falls_back_to_env(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         """env-only / --no-config mode: no project_root to read
         platform.yaml from at all -- env var still works."""

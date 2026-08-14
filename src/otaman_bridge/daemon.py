@@ -150,7 +150,9 @@ class _AsyncLoopThread:
         self.loop: asyncio.AbstractEventLoop | None = None
         self._started = threading.Event()
         self._thread = threading.Thread(
-            target=self._run, name="bridge-asyncio", daemon=True,
+            target=self._run,
+            name="bridge-asyncio",
+            daemon=True,
         )
 
     def start(self) -> None:
@@ -227,6 +229,7 @@ def _build_oidc_validator_from_env():
         )
         return None
     from otaman_core.auth_oidc import OIDCConfig, OIDCValidator
+
     cfg = OIDCConfig(
         issuer=issuer,
         audience=audience,
@@ -308,7 +311,9 @@ def _build_web_login_flow_from_env():
         _log.warning(
             "OTAMAN_AUTH_MODE=oidc but web-login env incomplete; "
             "/auth/login disabled (issuer=%s client=%s redirect=%s)",
-            bool(issuer), bool(client_id), bool(redirect_uri),
+            bool(issuer),
+            bool(client_id),
+            bool(redirect_uri),
         )
         return None
     try:
@@ -384,7 +389,8 @@ class BridgeDaemon:
         # waiting for a human tap). Extracted to ApprovalService (F040
         # phase 1) — see approval_service.py for the state + lock it owns.
         self._approval_service = ApprovalService(
-            transport=self.transport, async_loop=self._async,
+            transport=self.transport,
+            async_loop=self._async,
         )
         # Bus spec-change-request surfacing (watcher lifecycle + pending-
         # decision registry). Extracted to BusSurfaceService (F040 phase 2)
@@ -394,12 +400,16 @@ class BridgeDaemon:
         # _dispatch_inbound_reply, _surface_details — do so as two
         # independent lookups).
         self._bus_service = BusSurfaceService(
-            transport=self.transport, async_loop=self._async, account=self.account,
+            transport=self.transport,
+            async_loop=self._async,
+            account=self.account,
         )
         # Idle-auto-AFK monitor lifecycle + notifications. Extracted to
         # AfkService (F040 phase 3).
         self._afk_service = AfkService(
-            transport=self.transport, async_loop=self._async, account=self.account,
+            transport=self.transport,
+            async_loop=self._async,
+            account=self.account,
         )
         self._server: ThreadingHTTPServer | None = None
         self._serve_thread: threading.Thread | None = None
@@ -629,7 +639,10 @@ class BridgeDaemon:
 
         _log.info(
             "bridge daemon listening on %s:%d (account=%s, transport=%s)",
-            self.host, assigned_port, self.account, self.transport.name,
+            self.host,
+            assigned_port,
+            self.account,
+            self.transport.name,
         )
 
     def stop(self) -> None:
@@ -650,12 +663,14 @@ class BridgeDaemon:
 
         # Cancel pending approvals so hooks get an immediate "daemon-shutdown"
         # response instead of waiting for their timeouts.
-        self._approval_service.cancel_all(lambda request_id: ApprovalResponse(
-            decision="ask",  # fail-safe: let Claude's native prompt show
-            request_id=request_id,
-            responder="daemon:shutdown",
-            message="bridge daemon shutting down",
-        ))
+        self._approval_service.cancel_all(
+            lambda request_id: ApprovalResponse(
+                decision="ask",  # fail-safe: let Claude's native prompt show
+                request_id=request_id,
+                responder="daemon:shutdown",
+                message="bridge daemon shutting down",
+            )
+        )
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
@@ -792,16 +807,20 @@ class BridgeDaemon:
             # comment / unknown — not a decision, not a view action.
             _log.info(
                 "inbound: non-decision action %r for request_id=%s (ignored)",
-                reply.action, reply.request_id,
+                reply.action,
+                reply.request_id,
             )
             return
 
-        resolved = self._approval_service.resolve(reply.request_id, ApprovalResponse(
-            decision=decision,  # type: ignore[arg-type]
-            request_id=reply.request_id,
-            responder=reply.responder,
-            message=reply.comment,
-        ))
+        resolved = self._approval_service.resolve(
+            reply.request_id,
+            ApprovalResponse(
+                decision=decision,  # type: ignore[arg-type]
+                request_id=reply.request_id,
+                responder=reply.responder,
+                message=reply.comment,
+            ),
+        )
         if not resolved:
             _log.info(
                 "inbound: no pending approval for request_id=%s (already resolved?)",
@@ -829,7 +848,7 @@ class BridgeDaemon:
 
         # Prefer the tool-call pending (has richer repo/agent framing);
         # fall back to the bus one (same shape, just sourced differently).
-        req = (pending.request if pending is not None else bus_pending.request)  # type: ignore[union-attr]
+        req = pending.request if pending is not None else bus_pending.request  # type: ignore[union-attr]
         body_lines = [
             f"Tool: {req.tool_name}",
             f"Agent: {req.agent}",
@@ -853,6 +872,7 @@ class BridgeDaemon:
         body_lines.append("```")
 
         from otaman_bridge.core import InfoMessage
+
         info = InfoMessage(
             account=req.account,
             project=req.project,
@@ -874,7 +894,8 @@ class BridgeDaemon:
         import time) so tests can monkeypatch it down for speed.
         """
         self._approval_service.handle_snooze(
-            reply.request_id, snooze_seconds=SNOOZE_SECONDS,
+            reply.request_id,
+            snooze_seconds=SNOOZE_SECONDS,
         )
 
     def handle_status(self) -> tuple[int, dict[str, Any]]:
@@ -929,9 +950,11 @@ def _endpoint_is_live(endpoint_data: dict[str, Any], timeout: float = 1.0) -> bo
         return False
     import urllib.error
     import urllib.request
+
     try:
         urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/status", timeout=timeout,
+            f"http://127.0.0.1:{port}/status",
+            timeout=timeout,
         )
         return True
     except urllib.error.HTTPError:

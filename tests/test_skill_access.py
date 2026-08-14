@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from otaman_bridge.mcp_server import CallContext
 from otaman_bridge.skill_access import check_skill_access, is_zitadel_mode
 
@@ -72,17 +70,26 @@ class TestIsZitadelMode:
 class TestCofounterTokenPasses:
     def test_cofounder_role_allowed(self, tmp_path):
         p = _platform_yaml(tmp_path, zitadel=True)
-        result = check_skill_access(INVESTOR_SKILL, COFOUNDER_ONLY, _ctx("cofounder"), platform_yaml_path=p)
+        result = check_skill_access(
+            INVESTOR_SKILL, COFOUNDER_ONLY, _ctx("cofounder"), platform_yaml_path=p
+        )
         assert result is None
 
     def test_cofounder_among_multiple_roles_passes(self, tmp_path):
         p = _platform_yaml(tmp_path, zitadel=True)
-        result = check_skill_access(INVESTOR_SKILL, COFOUNDER_ONLY, _ctx("cofounder", "member", "admin"), platform_yaml_path=p)
+        result = check_skill_access(
+            INVESTOR_SKILL,
+            COFOUNDER_ONLY,
+            _ctx("cofounder", "member", "admin"),
+            platform_yaml_path=p,
+        )
         assert result is None
 
     def test_cofounder_allowed_for_financial_skill(self, tmp_path):
         p = _platform_yaml(tmp_path, zitadel=True)
-        result = check_skill_access(FINANCIAL_SKILL, COFOUNDER_ONLY, _ctx("cofounder"), platform_yaml_path=p)
+        result = check_skill_access(
+            FINANCIAL_SKILL, COFOUNDER_ONLY, _ctx("cofounder"), platform_yaml_path=p
+        )
         assert result is None
 
 
@@ -102,13 +109,17 @@ class TestNonCofounterBlocked:
 
     def test_member_role_blocked(self, tmp_path):
         p = _platform_yaml(tmp_path, zitadel=True)
-        result = check_skill_access(INVESTOR_SKILL, COFOUNDER_ONLY, _ctx("member"), platform_yaml_path=p)
+        result = check_skill_access(
+            INVESTOR_SKILL, COFOUNDER_ONLY, _ctx("member"), platform_yaml_path=p
+        )
         assert result is not None
         assert result["error"] == "skill_access_denied"
 
     def test_admin_without_cofounder_blocked(self, tmp_path):
         p = _platform_yaml(tmp_path, zitadel=True)
-        result = check_skill_access(INVESTOR_SKILL, COFOUNDER_ONLY, _ctx("admin"), platform_yaml_path=p)
+        result = check_skill_access(
+            INVESTOR_SKILL, COFOUNDER_ONLY, _ctx("admin"), platform_yaml_path=p
+        )
         assert result is not None
         assert result["error"] == "skill_access_denied"
 
@@ -119,7 +130,9 @@ class TestNonCofounterBlocked:
 
     def test_error_shape_matches_spec(self, tmp_path):
         p = _platform_yaml(tmp_path, zitadel=True)
-        result = check_skill_access(FINANCIAL_SKILL, COFOUNDER_ONLY, _ctx("member"), platform_yaml_path=p)
+        result = check_skill_access(
+            FINANCIAL_SKILL, COFOUNDER_ONLY, _ctx("member"), platform_yaml_path=p
+        )
         assert result == {
             "error": "skill_access_denied",
             "skill": FINANCIAL_SKILL,
@@ -144,7 +157,9 @@ class TestMode1Defers:
 
     def test_non_cofounder_passes_in_mode1(self, tmp_path):
         p = _platform_yaml(tmp_path, zitadel=False)
-        result = check_skill_access(INVESTOR_SKILL, COFOUNDER_ONLY, _ctx("member"), platform_yaml_path=p)
+        result = check_skill_access(
+            INVESTOR_SKILL, COFOUNDER_ONLY, _ctx("member"), platform_yaml_path=p
+        )
         assert result is None
 
     def test_both_cofounder_only_skills_pass_in_mode1(self, tmp_path):

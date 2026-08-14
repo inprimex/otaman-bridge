@@ -39,7 +39,7 @@ __all__ = [
 ]
 
 
-def is_zitadel_mode(platform_yaml_path: "Path | str | None") -> bool:
+def is_zitadel_mode(platform_yaml_path: Path | str | None) -> bool:
     """Return True when platform.yaml declares ``identity.provider: zitadel``."""
     if platform_yaml_path is None or _yaml is None:
         return False
@@ -60,9 +60,9 @@ def is_zitadel_mode(platform_yaml_path: "Path | str | None") -> bool:
 def check_skill_access(
     skill_id: str,
     skill_access: str,
-    call_context: "CallContext",
+    call_context: CallContext,
     *,
-    platform_yaml_path: "Path | str | None" = None,
+    platform_yaml_path: Path | str | None = None,
 ) -> dict | None:
     """Gate cofounder-only skills in Mode 2+ (Zitadel).
 

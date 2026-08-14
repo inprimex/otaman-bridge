@@ -18,7 +18,6 @@ from otaman_bridge.daemon import BridgeDaemon, read_endpoint_file
 from otaman_bridge.transports.null import NullTransport
 from otaman_bridge_ee.web_session import SessionCookie, SessionStore
 
-
 # ---- Fixtures ---------------------------------------------------------
 
 
@@ -27,7 +26,9 @@ def running_daemon(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     # Wire web-auth so session_store + MCP list_team_sessions are built.
     # BridgeDaemon.__init__ already did this if env was set; here we
@@ -36,11 +37,14 @@ def running_daemon(tmp_path):
     daemon.session_cookie = SessionCookie(secure=False)
     # Re-register the tool now that session_store exists.
     from otaman_bridge.mcp_tools import build_list_team_sessions_tool
+
     if "list_team_sessions" not in daemon.mcp_server.tools:
-        daemon.mcp_server.register(build_list_team_sessions_tool(
-            runner_client=daemon._runner_client,
-            session_store=daemon.session_store,
-        ))
+        daemon.mcp_server.register(
+            build_list_team_sessions_tool(
+                runner_client=daemon._runner_client,
+                session_store=daemon.session_store,
+            )
+        )
     daemon.start()
     try:
         yield daemon, endpoint
@@ -70,8 +74,10 @@ def _daemon_url(endpoint_file: Path) -> str:
 
 class _StubRunner:
     """Stub RunnerClient -- minimal interface for the tool."""
+
     def __init__(self, sessions=None):
         self.sessions = sessions or []
+
     def list_sessions(self):
         return self.sessions
 
@@ -83,17 +89,28 @@ class TestMCPAuth:
     def test_unauthenticated_request_returns_401(self, running_daemon):
         daemon, endpoint = running_daemon
         base = _daemon_url(endpoint)
-        code, _, _ = _post(f"{base}/mcp", body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
-        })
+        code, _, _ = _post(
+            f"{base}/mcp",
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+            },
+        )
         assert code == 401
 
     def test_loopback_bearer_authenticates(self, running_daemon):
         daemon, endpoint = running_daemon
         base = _daemon_url(endpoint)
-        code, _, body = _post(f"{base}/mcp", token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
-        })
+        code, _, body = _post(
+            f"{base}/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+            },
+        )
         assert code == 200
         resp = json.loads(body)
         assert "result" in resp
@@ -101,7 +118,9 @@ class TestMCPAuth:
     def test_session_cookie_authenticates(self, running_daemon):
         daemon, endpoint = running_daemon
         sess = daemon.session_store.create(
-            user_id="user-A", email="a@x", roles=("otaman:developer",),
+            user_id="user-A",
+            email="a@x",
+            roles=("otaman:developer",),
         )
         base = _daemon_url(endpoint)
         code, _, body = _post(
@@ -119,9 +138,15 @@ class TestMCPDispatch:
     def test_tools_list_returns_list_team_sessions(self, running_daemon):
         daemon, endpoint = running_daemon
         base = _daemon_url(endpoint)
-        _, _, body = _post(f"{base}/mcp", token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
-        })
+        _, _, body = _post(
+            f"{base}/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+            },
+        )
         resp = json.loads(body)
         tools = resp["result"]["tools"]
         assert any(t["name"] == "list_team_sessions" for t in tools)
@@ -129,37 +154,61 @@ class TestMCPDispatch:
     def test_initialize_returns_capabilities(self, running_daemon):
         daemon, endpoint = running_daemon
         base = _daemon_url(endpoint)
-        _, _, body = _post(f"{base}/mcp", token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {},
-        })
+        _, _, body = _post(
+            f"{base}/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {},
+            },
+        )
         resp = json.loads(body)
         assert resp["result"]["serverInfo"]["name"] == "otaman-bridge"
 
     def test_tools_call_invokes_tool_with_caller_context(self, running_daemon):
         daemon, endpoint = running_daemon
         # Inject a stub runner that returns one session for a different user
-        daemon._runner_client = _StubRunner(sessions=[
-            {"session_id": "s1", "user": "user-B", "agent": "x",
-             "repo": "auth-service", "session_name": "n1",
-             "started_at": "2026-05-17T00:00:00Z"},
-        ])
+        daemon._runner_client = _StubRunner(
+            sessions=[
+                {
+                    "session_id": "s1",
+                    "user": "user-B",
+                    "agent": "x",
+                    "repo": "auth-service",
+                    "session_name": "n1",
+                    "started_at": "2026-05-17T00:00:00Z",
+                },
+            ]
+        )
         # Re-register the tool with the new runner stub
         from otaman_bridge.mcp_tools import build_list_team_sessions_tool
+
         daemon.mcp_server.tools.pop("list_team_sessions", None)
-        daemon.mcp_server.register(build_list_team_sessions_tool(
-            runner_client=daemon._runner_client,
-            session_store=daemon.session_store,
-        ))
+        daemon.mcp_server.register(
+            build_list_team_sessions_tool(
+                runner_client=daemon._runner_client,
+                session_store=daemon.session_store,
+            )
+        )
 
         # Caller is user-A via session cookie
         sess = daemon.session_store.create(
-            user_id="user-A", email="a@x", roles=(),
+            user_id="user-A",
+            email="a@x",
+            roles=(),
         )
         base = _daemon_url(endpoint)
         _, _, body = _post(
-            f"{base}/mcp", cookie=f"otaman_bridge_sid={sess.id}",
-            body={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                  "params": {"name": "list_team_sessions", "arguments": {}}},
+            f"{base}/mcp",
+            cookie=f"otaman_bridge_sid={sess.id}",
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "list_team_sessions", "arguments": {}},
+            },
         )
         resp = json.loads(body)
         sessions = resp["result"]["structuredContent"]["sessions"]
@@ -177,7 +226,8 @@ class TestMCPErrors:
         base = _daemon_url(endpoint)
         # Send raw non-JSON body with bearer auth
         req = urllib.request.Request(
-            f"{base}/mcp", data=b"not-json-at-all",
+            f"{base}/mcp",
+            data=b"not-json-at-all",
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {daemon.token}",
@@ -199,8 +249,14 @@ class TestMCPErrors:
     def test_unknown_method_returns_method_not_found(self, running_daemon):
         daemon, endpoint = running_daemon
         base = _daemon_url(endpoint)
-        _, _, body = _post(f"{base}/mcp", token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 1, "method": "not/a/method",
-        })
+        _, _, body = _post(
+            f"{base}/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "not/a/method",
+            },
+        )
         resp = json.loads(body)
         assert resp["error"]["code"] == -32601  # METHOD_NOT_FOUND

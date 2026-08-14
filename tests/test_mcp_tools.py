@@ -6,13 +6,11 @@ import pytest
 
 from otaman_bridge.mcp_server import CallContext
 from otaman_bridge.mcp_tools import (
-    PRIVACY_EMAILS,
     PRIVACY_OPAQUE,
     build_list_team_sessions_tool,
 )
 from otaman_bridge.runner_client import RunnerAuthError, RunnerUnreachableError
 from otaman_bridge_ee.web_session import SessionStore
-
 
 # ---- Stubs ------------------------------------------------------------
 
@@ -65,12 +63,15 @@ def session_store_with_users():
 
 class TestHappyPath:
     def test_returns_other_users_sessions_by_default(self, ctx_a, session_store_with_users):
-        runner = _StubRunner(sessions=[
-            _session_row("s1", "user-A"),
-            _session_row("s2", "user-B"),
-        ])
+        runner = _StubRunner(
+            sessions=[
+                _session_row("s1", "user-A"),
+                _session_row("s2", "user-B"),
+            ]
+        )
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
         )
         result = tool.handler({}, ctx_a)
         sessions = result["structuredContent"]["sessions"]
@@ -81,12 +82,15 @@ class TestHappyPath:
         assert sessions[0]["is_self"] is False
 
     def test_include_self_returns_all(self, ctx_a, session_store_with_users):
-        runner = _StubRunner(sessions=[
-            _session_row("s1", "user-A"),
-            _session_row("s2", "user-B"),
-        ])
+        runner = _StubRunner(
+            sessions=[
+                _session_row("s1", "user-A"),
+                _session_row("s2", "user-B"),
+            ]
+        )
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
         )
         result = tool.handler({"include_self": True}, ctx_a)
         sessions = result["structuredContent"]["sessions"]
@@ -97,7 +101,8 @@ class TestHappyPath:
     def test_email_included_in_default_privacy_mode(self, ctx_a, session_store_with_users):
         runner = _StubRunner(sessions=[_session_row("s2", "user-B")])
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
         )
         result = tool.handler({}, ctx_a)
         assert result["structuredContent"]["sessions"][0]["user_email"] == "b@example"
@@ -105,7 +110,8 @@ class TestHappyPath:
     def test_text_content_renders_emails(self, ctx_a, session_store_with_users):
         runner = _StubRunner(sessions=[_session_row("s2", "user-B", repo="my-repo")])
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
         )
         result = tool.handler({}, ctx_a)
         text = result["content"][0]["text"]
@@ -115,7 +121,8 @@ class TestHappyPath:
     def test_empty_list_text_says_no_sessions(self, ctx_a, session_store_with_users):
         runner = _StubRunner(sessions=[])
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
         )
         result = tool.handler({}, ctx_a)
         assert result["structuredContent"]["sessions"] == []
@@ -129,7 +136,8 @@ class TestPrivacyMode:
     def test_opaque_mode_strips_email(self, ctx_a, session_store_with_users):
         runner = _StubRunner(sessions=[_session_row("s2", "user-B")])
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
             privacy_mode=PRIVACY_OPAQUE,
         )
         result = tool.handler({}, ctx_a)
@@ -140,7 +148,8 @@ class TestPrivacyMode:
     def test_opaque_mode_text_falls_back_to_user_id(self, ctx_a, session_store_with_users):
         runner = _StubRunner(sessions=[_session_row("s2", "user-B")])
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
             privacy_mode=PRIVACY_OPAQUE,
         )
         result = tool.handler({}, ctx_a)
@@ -152,7 +161,8 @@ class TestPrivacyMode:
         runner = _StubRunner()
         with pytest.raises(ValueError, match="invalid privacy_mode"):
             build_list_team_sessions_tool(
-                runner_client=runner, session_store=SessionStore(),
+                runner_client=runner,
+                session_store=SessionStore(),
                 privacy_mode="bogus",
             )
 
@@ -164,7 +174,8 @@ class TestErrorPaths:
     def test_runner_unreachable_returns_mcp_error_result(self, ctx_a, session_store_with_users):
         runner = _StubRunner(raise_exc=RunnerUnreachableError("connection refused"))
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
         )
         result = tool.handler({}, ctx_a)
         assert result["isError"] is True
@@ -174,7 +185,8 @@ class TestErrorPaths:
     def test_runner_auth_error_returns_mcp_error_result(self, ctx_a, session_store_with_users):
         runner = _StubRunner(raise_exc=RunnerAuthError("HTTP 401"))
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
         )
         result = tool.handler({}, ctx_a)
         assert result["isError"] is True
@@ -189,7 +201,8 @@ class TestEmailLookup:
         store = SessionStore()  # empty -- user-B has no session here
         runner = _StubRunner(sessions=[_session_row("s2", "user-B")])
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=store,
+            runner_client=runner,
+            session_store=store,
         )
         result = tool.handler({}, ctx_a)
         entry = result["structuredContent"]["sessions"][0]
@@ -199,7 +212,8 @@ class TestEmailLookup:
         """Sessions spawned without a user (system / pre-team-mode) have user=''."""
         runner = _StubRunner(sessions=[_session_row("s9", "")])
         tool = build_list_team_sessions_tool(
-            runner_client=runner, session_store=session_store_with_users,
+            runner_client=runner,
+            session_store=session_store_with_users,
         )
         result = tool.handler({}, ctx_a)
         entry = result["structuredContent"]["sessions"][0]

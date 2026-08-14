@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 from otaman_bridge import install as install_mod
 from otaman_bridge.install import (
     InstallTarget,
@@ -49,11 +48,13 @@ def target(sandbox_home, tmp_path):
 def fake_runner():
     """Collect subprocess.run calls without executing them."""
     calls: list[list] = []
+
     def _run(cmd, **kwargs):
         calls.append(list(cmd))
         result = MagicMock()
         result.returncode = 0
         return result
+
     _run.calls = calls
     return _run
 
@@ -91,15 +92,12 @@ class TestSystemdUnit:
         assert "Description=Otaman bridge daemon" in unit
         assert "After=network-online.target" in unit
         assert f"WorkingDirectory={target.working_dir}" in unit
-        assert f'OTAMAN_PYTHON={target.python}' in unit
+        assert f"OTAMAN_PYTHON={target.python}" in unit
         # Endpoint files land in ~/.otaman/ via the OTAMAN_BRIDGE_DIR env
         # var the unit exports; legacy daemons keep using ~/.maestro/.
-        assert 'OTAMAN_BRIDGE_DIR=%h/.otaman' in unit
+        assert "OTAMAN_BRIDGE_DIR=%h/.otaman" in unit
         # watch_bus defaults to True, so the ExecStart ends with --watch-bus.
-        assert (
-            f"ExecStart={target.maestro_cli} bridge run --account %i --watch-bus"
-            in unit
-        )
+        assert f"ExecStart={target.maestro_cli} bridge run --account %i --watch-bus" in unit
         assert "Restart=on-failure" in unit
         assert "WantedBy=default.target" in unit
 
@@ -137,7 +135,10 @@ class TestInstallSystemd:
         assert any("Wrote:" in m for m in msgs)
 
     def test_skips_write_when_content_identical(
-        self, sandbox_home, target, fake_runner,
+        self,
+        sandbox_home,
+        target,
+        fake_runner,
     ):
         install_systemd(target, runner=fake_runner)
         msgs = install_systemd(target, runner=fake_runner)
@@ -148,20 +149,14 @@ class TestInstallSystemd:
     def test_runs_daemon_reload(self, sandbox_home, target, fake_runner):
         install_systemd(target, runner=fake_runner)
         cmds = fake_runner.calls
-        assert any(
-            cmd == ["systemctl", "--user", "daemon-reload"]
-            for cmd in cmds
-        )
+        assert any(cmd == ["systemctl", "--user", "daemon-reload"] for cmd in cmds)
 
     def test_enable_and_start_together(self, sandbox_home, target, fake_runner):
         """Default path: `systemctl --user enable --now`."""
         install_systemd(target, enable=True, start=True, runner=fake_runner)
         cmds = fake_runner.calls
         service = "otaman-bridge@personal.service"
-        assert any(
-            cmd == ["systemctl", "--user", "enable", "--now", service]
-            for cmd in cmds
-        )
+        assert any(cmd == ["systemctl", "--user", "enable", "--now", service] for cmd in cmds)
 
     def test_enable_only(self, sandbox_home, target, fake_runner):
         install_systemd(target, enable=True, start=False, runner=fake_runner)
@@ -194,10 +189,7 @@ class TestInstallSystemd:
         monkeypatch.setenv("USER", "romans")
         install_systemd(target, linger=True, runner=fake_runner)
         cmds = fake_runner.calls
-        assert any(
-            cmd == ["loginctl", "enable-linger", "romans"]
-            for cmd in cmds
-        )
+        assert any(cmd == ["loginctl", "enable-linger", "romans"] for cmd in cmds)
 
 
 class TestUninstallSystemd:
@@ -205,8 +197,7 @@ class TestUninstallSystemd:
         msgs = uninstall_systemd("personal", runner=fake_runner)
         cmds = fake_runner.calls
         assert any(
-            cmd == ["systemctl", "--user", "stop", "otaman-bridge@personal.service"]
-            for cmd in cmds
+            cmd == ["systemctl", "--user", "stop", "otaman-bridge@personal.service"] for cmd in cmds
         )
         assert any(
             cmd == ["systemctl", "--user", "disable", "otaman-bridge@personal.service"]
@@ -274,7 +265,7 @@ class TestLaunchdPlist:
         plist = render_launchd_plist(target)
         # Basic XML shape checks
         assert plist.startswith("<?xml")
-        assert "<plist version=\"1.0\">" in plist
+        assert '<plist version="1.0">' in plist
         assert plist.rstrip().endswith("</plist>")
 
 
@@ -291,10 +282,7 @@ class TestInstallLaunchd:
         # Should unload (even if not loaded) then load, then start
         assert any(cmd[:2] == ["launchctl", "unload"] for cmd in cmds)
         assert any(cmd[:2] == ["launchctl", "load"] for cmd in cmds)
-        assert any(
-            cmd == ["launchctl", "start", "com.otaman.bridge.personal"]
-            for cmd in cmds
-        )
+        assert any(cmd == ["launchctl", "start", "com.otaman.bridge.personal"] for cmd in cmds)
         assert any("Wrote:" in m for m in msgs)
         assert any("Loaded:" in m for m in msgs)
 
@@ -304,10 +292,7 @@ class TestInstallLaunchd:
         # launchctl start NOT issued when start=False (but load still happens)
         cmds = fake_runner.calls
         assert any(cmd[:2] == ["launchctl", "load"] for cmd in cmds)
-        assert not any(
-            cmd == ["launchctl", "start", "com.otaman.bridge.personal"]
-            for cmd in cmds
-        )
+        assert not any(cmd == ["launchctl", "start", "com.otaman.bridge.personal"] for cmd in cmds)
 
 
 class TestUninstallLaunchd:
@@ -385,12 +370,15 @@ class TestMakeInstallTarget:
         stub_cli = tmp_path / "cli" / "maestro.sh"
         stub_cli.parent.mkdir(parents=True, exist_ok=True)
         stub_cli.write_text("#!/bin/bash\n", encoding="utf-8")
-        t = make_install_target("x", system="macos-launchd", python="/p", working_dir="/w", maestro_cli=stub_cli)
+        t = make_install_target(
+            "x", system="macos-launchd", python="/p", working_dir="/w", maestro_cli=stub_cli
+        )
         assert t.system == "macos-launchd"
 
     def test_to_dict_json_safe(self, target):
         """InstallTarget.to_dict produces JSON-compatible types."""
         import json
+
         s = json.dumps(target.to_dict())
         assert "personal" in s
         assert "linux-systemd" in s

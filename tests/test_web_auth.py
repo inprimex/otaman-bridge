@@ -43,7 +43,8 @@ class TestWebAuthConfig:
     def test_strips_trailing_slash_on_issuer(self):
         cfg = WebAuthConfig(
             issuer="https://otaman.example/auth/",
-            client_id="x", redirect_uri="https://x/cb",
+            client_id="x",
+            redirect_uri="https://x/cb",
         )
         assert cfg.authorize_endpoint() == "https://otaman.example/auth/oauth/v2/authorize"
 
@@ -55,7 +56,9 @@ class TestWebAuthConfig:
 
     def test_project_id_adds_aud_scope(self):
         cfg = WebAuthConfig(
-            issuer="https://x", client_id="c", redirect_uri="https://x/cb",
+            issuer="https://x",
+            client_id="c",
+            redirect_uri="https://x/cb",
             project_id="proj-123",
         )
         scopes = cfg.effective_scopes()
@@ -151,9 +154,11 @@ class TestLoginFlowStart:
         flow = LoginFlow(config, PendingLoginStore())
         result = flow.start()
         params = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(result.authorize_url).query))
-        expected = base64.urlsafe_b64encode(
-            hashlib.sha256(result.code_verifier.encode("ascii")).digest()
-        ).rstrip(b"=").decode("ascii")
+        expected = (
+            base64.urlsafe_b64encode(hashlib.sha256(result.code_verifier.encode("ascii")).digest())
+            .rstrip(b"=")
+            .decode("ascii")
+        )
         assert params["code_challenge"] == expected
 
     def test_state_is_registered_in_pending_store(self, config):
@@ -176,7 +181,9 @@ class TestLoginFlowStart:
 
     def test_project_id_extends_scope_in_url(self):
         cfg = WebAuthConfig(
-            issuer="https://x", client_id="c", redirect_uri="https://x/cb",
+            issuer="https://x",
+            client_id="c",
+            redirect_uri="https://x/cb",
             project_id="proj-42",
         )
         flow = LoginFlow(cfg, PendingLoginStore())

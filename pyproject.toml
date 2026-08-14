@@ -29,6 +29,19 @@ packages = ["src/otaman_bridge", "src/otaman_bridge_ee"]
 testpaths = ["tests"]
 pythonpath = ["src", "../otaman-core/src", "../otaman-adapters/src"]
 
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# These tests set up invocation constants / import-path context before
+# importing the package under test; the import order is intentional.
+"tests/test_bridge_approval.py" = ["E402"]
+"tests/test_stop_notify.py" = ["E402"]
+
 [dependency-groups]
 dev = [
     "watchdog>=6.0.0",

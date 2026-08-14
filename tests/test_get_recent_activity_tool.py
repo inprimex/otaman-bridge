@@ -30,7 +30,6 @@ from otaman_bridge.runner_client import (
     RunnerUnreachableError,
 )
 
-
 # ---- _iso_since_hours_ago -----------------------------------------------
 
 
@@ -74,6 +73,7 @@ class TestIsoSinceHoursAgo:
 @dataclass
 class _M:
     """Stand-in for StoredMessage with the attrs the summarizer reads."""
+
     type: str = "chat"
     priority: str = "normal"
     read_at: str | None = None
@@ -89,11 +89,13 @@ class TestSummarizeMessages:
         assert s == {"total": 0, "unread": 0, "by_type": {}, "by_priority": {}}
 
     def test_counts(self):
-        s = _summarize_messages([
-            _M(type="chat", priority="normal", read_at=None),
-            _M(type="chat", priority="high",  read_at="2026-05-18T16:00:00Z"),
-            _M(type="review-request", priority="high", read_at=None),
-        ])
+        s = _summarize_messages(
+            [
+                _M(type="chat", priority="normal", read_at=None),
+                _M(type="chat", priority="high", read_at="2026-05-18T16:00:00Z"),
+                _M(type="review-request", priority="high", read_at=None),
+            ]
+        )
         assert s["total"] == 3
         assert s["unread"] == 2
         assert s["by_type"] == {"chat": 2, "review-request": 1}
@@ -132,7 +134,7 @@ class TestSummarizeTeamSessions:
 
     def test_excludes_caller(self):
         sessions = [
-            {"user_id": "me",    "repo": "auth-service"},
+            {"user_id": "me", "repo": "auth-service"},
             {"user_id": "other", "repo": "web-app"},
         ]
         s = _summarize_team_sessions(sessions, exclude_user_id="me")
@@ -156,7 +158,8 @@ class TestSummarizeTeamSessions:
             {"user": "373388695945871363", "repo": "web-app"},
         ]
         s = _summarize_team_sessions(
-            sessions, exclude_user_id="373388691550240771",
+            sessions,
+            exclude_user_id="373388691550240771",
         )
         assert s == {"total": 1, "by_repo": {"web-app": 1}}
 
@@ -188,11 +191,22 @@ class TestFormatRecentActivity:
 
     def test_with_messages(self):
         msgs = [
-            _M(type="review-request", priority="high", subject="JWT rotation",
-               from_user="dev-b", sent_at="2026-05-18T15:32:00Z", read_at=None),
-            _M(type="chat", priority="normal", subject="hello",
-               from_user="dev-b", sent_at="2026-05-18T15:14:00Z",
-               read_at="2026-05-18T16:00:00Z"),
+            _M(
+                type="review-request",
+                priority="high",
+                subject="JWT rotation",
+                from_user="dev-b",
+                sent_at="2026-05-18T15:32:00Z",
+                read_at=None,
+            ),
+            _M(
+                type="chat",
+                priority="normal",
+                subject="hello",
+                from_user="dev-b",
+                sent_at="2026-05-18T15:14:00Z",
+                read_at="2026-05-18T16:00:00Z",
+            ),
         ]
         summary = _summarize_messages(msgs)
         out = _format_recent_activity(
@@ -208,10 +222,7 @@ class TestFormatRecentActivity:
         assert "[normal, chat, read]" in out
 
     def test_truncates_long_lists(self):
-        msgs = [
-            _M(subject=f"msg {i}", read_at=None)
-            for i in range(15)
-        ]
+        msgs = [_M(subject=f"msg {i}", read_at=None) for i in range(15)]
         out = _format_recent_activity(
             window_hours=24,
             inbox_summary=_summarize_messages(msgs),
@@ -283,15 +294,24 @@ class _FakeRunner:
 @pytest.fixture
 def tool():
     return build_get_recent_activity_tool(
-        inbox=_FakeInbox(messages=[
-            _M(id="m-1", subject="hello", read_at=None),
-            _M(id="m-2", subject="review", type="review-request",
-               priority="high", read_at="2026-05-18T16:00:00Z"),
-        ]),
-        runner_client=_FakeRunner(sessions=[
-            {"user_id": "other-A", "repo": "auth-service"},
-            {"user_id": "other-B", "repo": "web-app"},
-        ]),
+        inbox=_FakeInbox(
+            messages=[
+                _M(id="m-1", subject="hello", read_at=None),
+                _M(
+                    id="m-2",
+                    subject="review",
+                    type="review-request",
+                    priority="high",
+                    read_at="2026-05-18T16:00:00Z",
+                ),
+            ]
+        ),
+        runner_client=_FakeRunner(
+            sessions=[
+                {"user_id": "other-A", "repo": "auth-service"},
+                {"user_id": "other-B", "repo": "web-app"},
+            ]
+        ),
     )
 
 

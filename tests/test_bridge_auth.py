@@ -11,16 +11,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
 from otaman_bridge.auth import (
     CompositeAuthProvider,
     LoopbackAuthProvider,
     SimpleAuthProvider,
 )
-from otaman_bridge.mcp_server import CallContext
 from otaman_bridge_ee.auth_oidc import OIDCAuthProvider
-
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -176,10 +172,14 @@ def _const(value):
 
 class TestOIDCAuthProviderBearer:
     def test_valid_bearer_returns_user_context(self):
-        validator = _StubValidator(_OIDCResult(
-            ok=True, user_id="sub-123", email="u@example.com",
-            roles=("admin",),
-        ))
+        validator = _StubValidator(
+            _OIDCResult(
+                ok=True,
+                user_id="sub-123",
+                email="u@example.com",
+                roles=("admin",),
+            )
+        )
         provider = OIDCAuthProvider(validator_getter=_const(validator))
         ctx = provider.identify({"Authorization": "Bearer eyJfoo"})
         assert ctx is not None
@@ -220,9 +220,15 @@ class TestOIDCAuthProviderBearer:
 
 class TestOIDCAuthProviderSessionCookie:
     def test_valid_session_returns_user_context(self):
-        store = _StubSessionStore({"sid-1": _Session(
-            user_id="user-A", email="a@example.com", roles=("user",),
-        )})
+        store = _StubSessionStore(
+            {
+                "sid-1": _Session(
+                    user_id="user-A",
+                    email="a@example.com",
+                    roles=("user",),
+                )
+            }
+        )
         provider = OIDCAuthProvider(
             validator_getter=_const(_StubValidator(_OIDCResult(ok=False))),
             session_store_getter=_const(store),
@@ -267,7 +273,10 @@ class TestOIDCAuthProviderChallenge:
         )
         ch = provider.challenge("bridge.example.com")
         assert ch is not None
-        assert 'resource_metadata="https://bridge.example.com/.well-known/oauth-protected-resource"' in ch
+        assert (
+            'resource_metadata="https://bridge.example.com/.well-known/oauth-protected-resource"'
+            in ch
+        )
         assert 'error="invalid_token"' in ch
 
     def test_challenge_with_error_overrides_error_code(self):
@@ -278,7 +287,7 @@ class TestOIDCAuthProviderChallenge:
         ch = provider.challenge_with_error("bridge.example.com", "insufficient_scope")
         assert ch is not None
         assert 'error="insufficient_scope"' in ch
-        assert 'invalid_token' not in ch
+        assert "invalid_token" not in ch
 
     def test_default_resource_url_fn_uses_loopback(self):
         provider = OIDCAuthProvider(
@@ -295,32 +304,40 @@ class TestOIDCAuthProviderChallenge:
 
 class TestCompositeAuthProvider:
     def test_first_non_none_identify_wins(self):
-        provider = CompositeAuthProvider(providers=(
-            SimpleAuthProvider(env_user=None),
-            LoopbackAuthProvider(token="abc"),
-        ))
+        provider = CompositeAuthProvider(
+            providers=(
+                SimpleAuthProvider(env_user=None),
+                LoopbackAuthProvider(token="abc"),
+            )
+        )
         ctx = provider.identify({"Authorization": "Bearer abc"})
         assert ctx is not None
         assert ctx.user_id == ""  # loopback semantics
 
     def test_simple_wins_over_loopback_when_header_present(self):
-        provider = CompositeAuthProvider(providers=(
-            SimpleAuthProvider(env_user=None),
-            LoopbackAuthProvider(token="abc"),
-        ))
+        provider = CompositeAuthProvider(
+            providers=(
+                SimpleAuthProvider(env_user=None),
+                LoopbackAuthProvider(token="abc"),
+            )
+        )
         # Both providers could fire; SimpleAuthProvider is ordered first.
-        ctx = provider.identify({
-            "X-Otaman-User": "alice",
-            "Authorization": "Bearer abc",
-        })
+        ctx = provider.identify(
+            {
+                "X-Otaman-User": "alice",
+                "Authorization": "Bearer abc",
+            }
+        )
         assert ctx is not None
         assert ctx.user_id == "alice"
 
     def test_all_none_returns_none(self):
-        provider = CompositeAuthProvider(providers=(
-            SimpleAuthProvider(env_user=None),
-            LoopbackAuthProvider(token="abc"),
-        ))
+        provider = CompositeAuthProvider(
+            providers=(
+                SimpleAuthProvider(env_user=None),
+                LoopbackAuthProvider(token="abc"),
+            )
+        )
         assert provider.identify({}) is None
 
     def test_first_non_none_challenge_wins(self):
@@ -328,35 +345,39 @@ class TestCompositeAuthProvider:
             validator_getter=_const(_StubValidator(_OIDCResult(ok=False))),
             resource_url_fn=lambda h: f"https://{h}",
         )
-        provider = CompositeAuthProvider(providers=(
-            oidc,
-            LoopbackAuthProvider(token="abc"),
-        ))
+        provider = CompositeAuthProvider(
+            providers=(
+                oidc,
+                LoopbackAuthProvider(token="abc"),
+            )
+        )
         ch = provider.challenge("bridge.example.com")
         assert ch is not None
         assert "https://bridge.example.com" in ch
 
     def test_no_challenge_when_all_providers_return_none(self):
-        provider = CompositeAuthProvider(providers=(
-            SimpleAuthProvider(env_user=None),
-            LoopbackAuthProvider(token="abc"),
-        ))
+        provider = CompositeAuthProvider(
+            providers=(
+                SimpleAuthProvider(env_user=None),
+                LoopbackAuthProvider(token="abc"),
+            )
+        )
         assert provider.challenge("any.host") is None
 
     def test_first_of_type_finds_oidc(self):
         oidc = OIDCAuthProvider(
             validator_getter=_const(_StubValidator(_OIDCResult(ok=False))),
         )
-        provider = CompositeAuthProvider(providers=(
-            LoopbackAuthProvider(token="abc"),
-            oidc,
-        ))
+        provider = CompositeAuthProvider(
+            providers=(
+                LoopbackAuthProvider(token="abc"),
+                oidc,
+            )
+        )
         assert provider.first_of_type(OIDCAuthProvider) is oidc
 
     def test_first_of_type_returns_none_when_absent(self):
-        provider = CompositeAuthProvider(providers=(
-            LoopbackAuthProvider(token="abc"),
-        ))
+        provider = CompositeAuthProvider(providers=(LoopbackAuthProvider(token="abc"),))
         assert provider.first_of_type(OIDCAuthProvider) is None
 
     def test_empty_composite_returns_none(self):

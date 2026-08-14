@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-import pytest
-
 
 from otaman_bridge.bus_surface import (
     BusMessage,
@@ -29,8 +25,10 @@ def _make_msg(
 ) -> BusMessage:
     fm = {
         "id": "20260424T100000-test",
-        "from": from_, "to": to,
-        "priority": priority, "type": type,
+        "from": from_,
+        "to": to,
+        "priority": priority,
+        "type": type,
         "timestamp": "2026-04-24T10:00:00Z",
     }
     return BusMessage(
@@ -130,34 +128,28 @@ class TestConfigurableDefaultOff:
 
 class TestGlobalOverrides:
     def test_turn_on_review_request(self):
-        d = decide(_make_msg(type="review-request"),
-                   overrides={"review_request": True})
+        d = decide(_make_msg(type="review-request"), overrides={"review_request": True})
         assert d.surface
         assert d.severity == "info"
 
     def test_dashed_and_underscored_both_work(self):
         """Accept `review-request` or `review_request` as override key."""
-        d1 = decide(_make_msg(type="review-request"),
-                    overrides={"review-request": True})
-        d2 = decide(_make_msg(type="review-request"),
-                    overrides={"review_request": True})
+        d1 = decide(_make_msg(type="review-request"), overrides={"review-request": True})
+        d2 = decide(_make_msg(type="review-request"), overrides={"review_request": True})
         assert d1.surface and d2.surface
 
     def test_explicit_false_keeps_off(self):
-        d = decide(_make_msg(type="review-request"),
-                   overrides={"review_request": False})
+        d = decide(_make_msg(type="review-request"), overrides={"review_request": False})
         assert not d.surface
 
     def test_cannot_override_never(self):
         """`task-assignment` (never) stays off even if user tries to turn it on."""
-        d = decide(_make_msg(type="task-assignment"),
-                   overrides={"task_assignment": True})
+        d = decide(_make_msg(type="task-assignment"), overrides={"task_assignment": True})
         assert not d.surface
 
     def test_cannot_override_always(self):
         """`spec-change-request` (always) stays on even with explicit false."""
-        d = decide(_make_msg(type="spec-change-request"),
-                   overrides={"spec_change_request": False})
+        d = decide(_make_msg(type="spec-change-request"), overrides={"spec_change_request": False})
         # Always-rows are structural; override table only applies to configurable.
         assert d.surface
 
@@ -172,12 +164,12 @@ class TestByAgentOverrides:
             },
         }
         # Another agent's review: surfaces
-        d_other = decide(_make_msg(type="review-request", from_="sec-observer"),
-                         overrides=overrides)
+        d_other = decide(
+            _make_msg(type="review-request", from_="sec-observer"), overrides=overrides
+        )
         assert d_other.surface
         # cto-reviewer's: muted
-        d_cto = decide(_make_msg(type="review-request", from_="cto-reviewer"),
-                       overrides=overrides)
+        d_cto = decide(_make_msg(type="review-request", from_="cto-reviewer"), overrides=overrides)
         assert not d_cto.surface
 
     def test_per_agent_on(self):
@@ -188,10 +180,12 @@ class TestByAgentOverrides:
                 "cto-reviewer": {"review_request": True},
             },
         }
-        assert not decide(_make_msg(type="review-request", from_="other"),
-                          overrides=overrides).surface
-        assert decide(_make_msg(type="review-request", from_="cto-reviewer"),
-                      overrides=overrides).surface
+        assert not decide(
+            _make_msg(type="review-request", from_="other"), overrides=overrides
+        ).surface
+        assert decide(
+            _make_msg(type="review-request", from_="cto-reviewer"), overrides=overrides
+        ).surface
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +291,8 @@ class TestIterBusMessages:
         acks = bus / "acks"
         acks.mkdir(parents=True)
         (bus / "20260424T100000-a-to-b-info.md").write_text(
-            "---\nid: m\nfrom: a\nto: b\ntype: info\n---\n", encoding="utf-8",
+            "---\nid: m\nfrom: a\nto: b\ntype: info\n---\n",
+            encoding="utf-8",
         )
         (acks / "ignored.md").write_text("shouldn't count", encoding="utf-8")
         msgs = iter_bus_messages(tmp_path)
@@ -310,7 +305,8 @@ class TestIterBusMessages:
         bus = tmp_path / ".agents" / "bus" / "active"
         bus.mkdir(parents=True)
         (bus / "good.md").write_text(
-            "---\nid: good\nfrom: a\nto: b\ntype: info\n---\n", encoding="utf-8",
+            "---\nid: good\nfrom: a\nto: b\ntype: info\n---\n",
+            encoding="utf-8",
         )
         (bus / "bad.md").write_text("no frontmatter", encoding="utf-8")
         assert len(iter_bus_messages(tmp_path)) == 1
@@ -326,13 +322,15 @@ class TestResolveProjectName:
 
     def test_reads_project_field(self, tmp_path):
         (tmp_path / "platform.yaml").write_text(
-            "project: watchtower\nversion: '1.0'\n", encoding="utf-8",
+            "project: watchtower\nversion: '1.0'\n",
+            encoding="utf-8",
         )
         assert resolve_project_name(tmp_path) == "watchtower"
 
     def test_reads_quoted_project(self, tmp_path):
         (tmp_path / "platform.yaml").write_text(
-            'project: "my-project-2"\n', encoding="utf-8",
+            'project: "my-project-2"\n',
+            encoding="utf-8",
         )
         assert resolve_project_name(tmp_path) == "my-project-2"
 
@@ -345,7 +343,8 @@ class TestResolveProjectName:
         folder = tmp_path / "maestro-folder"
         folder.mkdir()
         (folder / "platform.yaml").write_text(
-            "version: '1.0'\nrepos: []\n", encoding="utf-8",
+            "version: '1.0'\nrepos: []\n",
+            encoding="utf-8",
         )
         assert resolve_project_name(folder) == "maestro-folder"
 
@@ -353,7 +352,8 @@ class TestResolveProjectName:
         folder = tmp_path / "watchtower-maestro"
         folder.mkdir()
         (folder / "platform.yaml").write_text(
-            "project: : :\n not: valid: yaml:\n", encoding="utf-8",
+            "project: : :\n not: valid: yaml:\n",
+            encoding="utf-8",
         )
         # Cheap scan rejects structural-looking values; YAML parse fails
         # → folder name. Must never return the garbage value itself.
@@ -366,7 +366,8 @@ class TestResolveProjectName:
         folder = tmp_path / "legit-folder"
         folder.mkdir()
         (folder / "platform.yaml").write_text(
-            'project: has spaces here\n', encoding="utf-8",
+            "project: has spaces here\n",
+            encoding="utf-8",
         )
         # Cheap scan rejects (contains spaces); YAML parser accepts
         # "has spaces here" as a valid scalar — so we get that value.
@@ -381,7 +382,8 @@ class TestResolveProjectName:
         folder = tmp_path / "m"
         folder.mkdir()
         (folder / "platform.yaml").write_text(
-            "project:\nrepos: []\n", encoding="utf-8",
+            "project:\nrepos: []\n",
+            encoding="utf-8",
         )
         assert resolve_project_name(folder) == "m"
 
@@ -406,6 +408,7 @@ class TestLoadSurfaceOverrides:
 
     def test_no_surface_block_empty(self, tmp_path):
         (tmp_path / "platform.yaml").write_text(
-            "project: test\n", encoding="utf-8",
+            "project: test\n",
+            encoding="utf-8",
         )
         assert load_surface_overrides(tmp_path) == {}

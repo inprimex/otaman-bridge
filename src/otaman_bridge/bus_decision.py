@@ -19,7 +19,8 @@ decide`` CLI or by tests.
 itself. The broadcast message points humans at ``/otaman:approve`` /
 ``openspec new change`` for the actual spec creation. The daemon's
 job is to durably record the *decision*; executing it stays in
-``cli/maestro.py`` (which has the OpenSpec-detection code path).  # legacy: cli/maestro.py renamed at otaman-core 1.0
+``cli/maestro.py`` (which has the OpenSpec-detection code path).
+# legacy: cli/maestro.py renamed at otaman-core 1.0
 """
 
 from __future__ import annotations
@@ -41,7 +42,8 @@ def _now_ts() -> tuple[str, str]:
 
 
 def _slug(text: str) -> str:
-    """Lowercase slug for filenames — same shape as cli/maestro.py uses."""  # legacy: cli/maestro.py renamed at otaman-core 1.0
+    """Lowercase slug for filenames — same shape as cli/maestro.py uses."""
+    # legacy: cli/maestro.py renamed at otaman-core 1.0
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:30] or "decision"
 
 
@@ -76,7 +78,8 @@ def broadcast_decision(
     """Write a ``spec-change-{approved,rejected}`` message to the active bus.
 
     Mirrors the format emitted by ``/otaman:approve`` locally (see
-    ``cli/maestro.py``), so downstream agents running  # legacy: cli/maestro.py renamed at otaman-core 1.0
+    ``cli/maestro.py``), so downstream agents running
+    # legacy: cli/maestro.py renamed at otaman-core 1.0
     ``/otaman:check`` can't tell whether the decision came from
     Telegram or the terminal.
     """
@@ -106,7 +109,8 @@ status: pending
 
 ## Subject: Approved: {subject}
 
-The spec-change-request from **{proposer}** has been **approved** via the remote bridge.{responder_line}
+The spec-change-request from **{proposer}** has been **approved** via the \
+remote bridge.{responder_line}
 
 **Original proposal**: {msg.stem}
 {comment_section}
@@ -132,7 +136,8 @@ status: pending
 
 ## Subject: Rejected: {subject}
 
-The spec-change-request from **{proposer}** has been **rejected** via the remote bridge.{responder_line}
+The spec-change-request from **{proposer}** has been **rejected** via the \
+remote bridge.{responder_line}
 
 **Original proposal**: {msg.stem}
 
@@ -145,7 +150,9 @@ No spec changes will be made. Adjust your approach and re-propose if needed.
     out_file.write_text(body, encoding="utf-8")
     _log.info(
         "bus decision: wrote %s (%s) for %s",
-        out_file.name, decision, msg.stem,
+        out_file.name,
+        decision,
+        msg.stem,
     )
     return out_file
 
@@ -161,8 +168,11 @@ def record_decision(
     """Convenience: ack + broadcast in one call. Returns (ack_path, broadcast_path)."""
     ack = write_approval_ack(project_root, msg.stem, decision=decision)
     broadcast = broadcast_decision(
-        project_root, msg,
-        decision=decision, responder=responder, comment=comment,
+        project_root,
+        msg,
+        decision=decision,
+        responder=responder,
+        comment=comment,
     )
     return ack, broadcast
 
@@ -217,7 +227,9 @@ in_reply_to: {msg.stem}
 """
     out_file.write_text(body, encoding="utf-8")
     _log.info(
-        "bus reply: wrote %s (in_reply_to=%s)", out_file.name, msg.stem,
+        "bus reply: wrote %s (in_reply_to=%s)",
+        out_file.name,
+        msg.stem,
     )
     return out_file
 
@@ -249,6 +261,9 @@ def write_acknowledge(
     reply_file: Path | None = None
     if comment:
         reply_file = write_reply_message(
-            project_root, msg, text=comment, responder=responder,
+            project_root,
+            msg,
+            text=comment,
+            responder=responder,
         )
     return ack_file, reply_file

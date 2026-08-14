@@ -21,10 +21,10 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+
+from otaman_bridge import install as install_mod  # noqa: E402
 
 # Ensure bridge/ and scripts/ are importable when run directly.
-
 from otaman_bridge.config import (  # noqa: E402
     list_accounts_from_settings,
     load_account_config,
@@ -35,7 +35,6 @@ from otaman_bridge.daemon import (  # noqa: E402
     endpoint_path,
     read_endpoint_file,
 )
-from otaman_bridge import install as install_mod  # noqa: E402
 
 
 def _iter_account_names(settings_path: Path) -> list[str]:
@@ -57,7 +56,10 @@ def _iter_account_names(settings_path: Path) -> list[str]:
 
 def _resolve_settings_path() -> Path:
     """Find launch-settings.yaml via the otaman workspace resolver."""
-    from otaman_core._resolve import find_maestro_root  # legacy: renamed find_otaman_root at otaman-core 1.0  # lazy import
+    from otaman_core._resolve import (
+        find_maestro_root,  # legacy: renamed find_otaman_root at otaman-core 1.0  # lazy import
+    )
+
     root = find_maestro_root()  # legacy: renamed find_otaman_root at otaman-core 1.0
     if root is None:
         return Path.cwd() / "launch-settings.yaml"
@@ -106,7 +108,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     return 1
         elif transport_name is None:
             print(
-                f"ERROR: no launch-settings.yaml found and no --transport given",
+                "ERROR: no launch-settings.yaml found and no --transport given",
                 file=sys.stderr,
             )
             return 1
@@ -133,12 +135,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         else:
             transport = transport_cls(transport_config)
     except (ValueError, ImportError) as e:
-        print(f"ERROR: failed to construct {transport_name!r} transport: {e}",
-              file=sys.stderr)
+        print(f"ERROR: failed to construct {transport_name!r} transport: {e}", file=sys.stderr)
         return 1
 
-    endpoint_file = Path(args.endpoint_file).expanduser() if args.endpoint_file \
-        else endpoint_path(args.account)
+    endpoint_file = (
+        Path(args.endpoint_file).expanduser() if args.endpoint_file else endpoint_path(args.account)
+    )
 
     bus_watcher_root: Path | None = None
     bus_watcher_project = ""
@@ -148,7 +150,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             bus_watcher_root = Path(args.watch_bus).expanduser().resolve()
         else:
             # Auto-resolve via the otaman workspace resolver.
-            from otaman_core._resolve import find_maestro_root  # legacy: renamed find_otaman_root at otaman-core 1.0  # noqa: PLC0415
+            from otaman_core._resolve import (
+                # legacy: renamed find_otaman_root at otaman-core 1.0
+                find_maestro_root,  # noqa: PLC0415
+            )
+
             resolved = find_maestro_root()  # legacy: renamed find_otaman_root at otaman-core 1.0
             if resolved is None:
                 print(
@@ -166,6 +172,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             bus_watcher_project = args.watch_bus_project
         else:
             from otaman_bridge.bus_surface import resolve_project_name  # noqa: PLC0415
+
             bus_watcher_project = resolve_project_name(bus_watcher_root)
         if not (bus_watcher_root / ".agents" / "bus").is_dir():
             print(
@@ -217,6 +224,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 def _install_signal_handlers():
     """Return a threading.Event set when SIGINT / SIGTERM is received."""
     import threading
+
     stop_event = threading.Event()
 
     def handler(signum, frame):  # noqa: ARG001
@@ -244,8 +252,10 @@ def cmd_status(args: argparse.Namespace) -> int:
     else:
         accounts = _iter_account_names(_resolve_settings_path())
         if not accounts:
-            print("No accounts configured (launch-settings.yaml is missing "
-                  "or has no `accounts:` block).")
+            print(
+                "No accounts configured (launch-settings.yaml is missing "
+                "or has no `accounts:` block)."
+            )
             return 0
 
     rows: list[tuple[str, str, str]] = []
@@ -258,23 +268,27 @@ def cmd_status(args: argparse.Namespace) -> int:
 
         port = data.get("port", 0)
         try:
-            resp = urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/status", timeout=2.0
-            )
+            resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=2.0)
             status = json.loads(resp.read().decode("utf-8"))
-            rows.append((
-                account,
-                "running",
-                f"pid={status['pid']} "
-                f"transport={status['transport']} "
-                f"port={status['port']} "
-                f"pending={status['pending_approvals']} "
-                f"uptime={status['uptime_seconds']}s",
-            ))
+            rows.append(
+                (
+                    account,
+                    "running",
+                    f"pid={status['pid']} "
+                    f"transport={status['transport']} "
+                    f"port={status['port']} "
+                    f"pending={status['pending_approvals']} "
+                    f"uptime={status['uptime_seconds']}s",
+                )
+            )
         except (OSError, urllib.error.URLError, ValueError, KeyError):
-            rows.append((
-                account, "stale", f"endpoint file but daemon unreachable on port {port}",
-            ))
+            rows.append(
+                (
+                    account,
+                    "stale",
+                    f"endpoint file but daemon unreachable on port {port}",
+                )
+            )
 
     w_acct = max(len("ACCOUNT"), *(len(r[0]) for r in rows))
     w_state = max(len("STATE"), *(len(r[1]) for r in rows))
@@ -330,12 +344,16 @@ def cmd_stop(args: argparse.Namespace) -> int:
         # user can `otaman bridge run` again without manual `rm`.
         reason = str(e).lower()
         if any(s in reason for s in ("refused", "timeout", "timed out", "no route")):
-            print(f"Daemon on port {port} not responding — process appears dead, "
-                  f"cleaning up stale endpoint file.")
+            print(
+                f"Daemon on port {port} not responding — process appears dead, "
+                f"cleaning up stale endpoint file."
+            )
             try:
                 endpoint_file.unlink()
-                print(f"Stale endpoint removed. Run `otaman bridge run "
-                      f"--account {args.account}` to start a fresh daemon.")
+                print(
+                    f"Stale endpoint removed. Run `otaman bridge run "
+                    f"--account {args.account}` to start a fresh daemon."
+                )
                 return 0
             except OSError as ue:
                 print(f"Failed to remove {endpoint_file}: {ue}", file=sys.stderr)
@@ -356,9 +374,11 @@ def cmd_stop(args: argparse.Namespace) -> int:
         time.sleep(0.1)
 
     import urllib.error as _err
+
     try:
         urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/status", timeout=1.0,
+            f"http://127.0.0.1:{port}/status",
+            timeout=1.0,
         )
         still_alive = True
     except (_err.URLError, OSError, _err.HTTPError):
@@ -377,8 +397,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
     # Daemon stopped responding but the endpoint file is stale — clean up.
     print(
-        f"Daemon stopped but left a stale endpoint file; removing "
-        f"{endpoint_file}",
+        f"Daemon stopped but left a stale endpoint file; removing {endpoint_file}",
     )
     try:
         endpoint_file.unlink()
@@ -422,8 +441,7 @@ def cmd_dcr_cleanup(args: argparse.Namespace) -> int:
 
     cfg = IdpConfig.from_env()
     if cfg is None:
-        print("DCR shim not enabled (OTAMAN_DCR_SHIM is off). Nothing to clean.",
-              file=sys.stderr)
+        print("DCR shim not enabled (OTAMAN_DCR_SHIM is off). Nothing to clean.", file=sys.stderr)
         return 2
     if not (cfg.machine_user_client_id and cfg.machine_user_client_secret and cfg.org_id):
         print(
@@ -484,9 +502,7 @@ def _resolve_accounts(settings_path: Path, cli_account: str | None, all_flag: bo
     if all_flag:
         names = list_accounts_from_settings(settings_path)
         if not names:
-            raise RuntimeError(
-                f"--all requested but no accounts configured in {settings_path}"
-            )
+            raise RuntimeError(f"--all requested but no accounts configured in {settings_path}")
         return names
     if cli_account:
         return [cli_account]
@@ -497,7 +513,9 @@ def cmd_install(args: argparse.Namespace) -> int:
     """Install the bridge daemon as a system service."""
     try:
         accounts = _resolve_accounts(
-            _resolve_settings_path(), args.account, args.all,
+            _resolve_settings_path(),
+            args.account,
+            args.all,
         )
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -515,9 +533,11 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         import json as _json
+
         for account in accounts:
             target = install_mod.make_install_target(
-                account, system=system,
+                account,
+                system=system,
                 working_dir=args.working_dir,
                 watch_bus=not args.no_watch_bus,
                 idle_auto_afk_minutes=args.idle_auto_afk_minutes,
@@ -539,13 +559,17 @@ def cmd_install(args: argparse.Namespace) -> int:
     for account in accounts:
         print(f"Installing bridge service for account '{account}'...")
         target = install_mod.make_install_target(
-            account, system=system,
+            account,
+            system=system,
             working_dir=args.working_dir,
         )
         try:
             if system == "linux-systemd":
                 msgs = install_mod.install(
-                    target, enable=enable, start=start, linger=args.linger,
+                    target,
+                    enable=enable,
+                    start=start,
+                    linger=args.linger,
                 )
             else:  # macos-launchd
                 msgs = install_mod.install(target, start=start)
@@ -573,7 +597,9 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     """Stop + disable the bridge daemon service (keeps the unit template)."""
     try:
         accounts = _resolve_accounts(
-            _resolve_settings_path(), args.account, args.all,
+            _resolve_settings_path(),
+            args.account,
+            args.all,
         )
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -628,97 +654,118 @@ def main(argv: list[str] | None = None) -> int:
     subs = parser.add_subparsers(dest="subcommand", required=True)
 
     p_run = subs.add_parser("run", help="Start the daemon in the foreground")
-    p_run.add_argument("--account", required=True,
-                       help="Account name (e.g. personal, riseapps)")
-    p_run.add_argument("--transport",
-                       help="Force transport (overrides launch-settings.yaml)")
-    p_run.add_argument("--no-config", action="store_true",
-                       help="Don't read launch-settings.yaml (uses --transport only)")
-    p_run.add_argument("--port", type=int, default=0,
-                       help="Bind port (0 = OS-assigned ephemeral)")
-    p_run.add_argument("--endpoint-file",
-                       help="Override endpoint file path")
+    p_run.add_argument("--account", required=True, help="Account name (e.g. personal, riseapps)")
+    p_run.add_argument("--transport", help="Force transport (overrides launch-settings.yaml)")
     p_run.add_argument(
-        "--watch-bus", nargs="?", const="-", default=None,
+        "--no-config",
+        action="store_true",
+        help="Don't read launch-settings.yaml (uses --transport only)",
+    )
+    p_run.add_argument("--port", type=int, default=0, help="Bind port (0 = OS-assigned ephemeral)")
+    p_run.add_argument("--endpoint-file", help="Override endpoint file path")
+    p_run.add_argument(
+        "--watch-bus",
+        nargs="?",
+        const="-",
+        default=None,
         help="Poll .agents/bus/active/ and surface new messages to the "
-             "transport. Pass a path to the otaman workspace to watch, or use "
-             "bare --watch-bus to auto-resolve via the workspace finder.",
+        "transport. Pass a path to the otaman workspace to watch, or use "
+        "bare --watch-bus to auto-resolve via the workspace finder.",
     )
     p_run.add_argument(
-        "--watch-bus-project", default="",
+        "--watch-bus-project",
+        default="",
         help="Project name used in surfaced message titles (defaults to "
-             "the workspace folder name).",
+        "the workspace folder name).",
     )
     p_run.add_argument(
-        "--idle-auto-afk-minutes", type=int, default=0,
+        "--idle-auto-afk-minutes",
+        type=int,
+        default=0,
         help="Minutes of UserPromptSubmit inactivity before auto-enabling "
-             "AFK (0 = disabled). Needs --watch-bus (shares the same "
-             "otaman workspace root). Clears the auto-entry when you come back.",
+        "AFK (0 = disabled). Needs --watch-bus (shares the same "
+        "otaman workspace root). Clears the auto-entry when you come back.",
     )
     p_run.set_defaults(func=cmd_run)
 
     p_status = subs.add_parser("status", help="Show daemon health")
-    p_status.add_argument("--account",
-                          help="Only show this account (default: all configured)")
+    p_status.add_argument("--account", help="Only show this account (default: all configured)")
     p_status.set_defaults(func=cmd_status)
 
     p_stop = subs.add_parser("stop", help="Gracefully stop a running daemon")
-    p_stop.add_argument("--account", required=True,
-                        help="Account name of the daemon to stop")
+    p_stop.add_argument("--account", required=True, help="Account name of the daemon to stop")
     p_stop.set_defaults(func=cmd_stop)
 
     p_dcr = subs.add_parser(
         "dcr-cleanup",
         help="Delete DCR-shim-managed Zitadel OIDC apps older than TTL "
-             "(orphans from stale fingerprints). Reads shim config from env.",
+        "(orphans from stale fingerprints). Reads shim config from env.",
     )
     p_dcr.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Report what would be deleted without actually deleting.",
     )
     p_dcr.add_argument(
         "--ttl",
         help="Override OTAMAN_DCR_SHIM_TTL (e.g. 7d / 24h / 1h). "
-             "Apps with creation age greater than this are eligible for delete.",
+        "Apps with creation age greater than this are eligible for delete.",
     )
     p_dcr.set_defaults(func=cmd_dcr_cleanup)
 
     p_install = subs.add_parser(
         "install",
-        help="Install the bridge as a system service (systemd on Linux, "
-             "launchd on macOS)",
+        help="Install the bridge as a system service (systemd on Linux, launchd on macOS)",
     )
     g_install = p_install.add_mutually_exclusive_group()
     g_install.add_argument("--account", help="Account name to install a service for")
-    g_install.add_argument("--all", action="store_true",
-                           help="Install services for every account in launch-settings.yaml")
-    p_install.add_argument("--system",
-                           choices=["linux-systemd", "macos-launchd", "windows-nssm"],
-                           help="Override auto-detected platform (mostly for testing)")
-    p_install.add_argument("--working-dir",
-                           help="Override WorkingDirectory (default: resolved otaman workspace root)")
-    p_install.add_argument("--no-enable", action="store_true",
-                           help="Linux only — skip `systemctl enable` (won't autostart on boot)")
-    p_install.add_argument("--no-start", action="store_true",
-                           help="Don't start the service now (install only)")
-    p_install.add_argument("--linger", action="store_true",
-                           help="Linux only — `loginctl enable-linger` so the "
-                                "service survives SSH logout")
+    g_install.add_argument(
+        "--all",
+        action="store_true",
+        help="Install services for every account in launch-settings.yaml",
+    )
     p_install.add_argument(
-        "--no-watch-bus", action="store_true",
+        "--system",
+        choices=["linux-systemd", "macos-launchd", "windows-nssm"],
+        help="Override auto-detected platform (mostly for testing)",
+    )
+    p_install.add_argument(
+        "--working-dir", help="Override WorkingDirectory (default: resolved otaman workspace root)"
+    )
+    p_install.add_argument(
+        "--no-enable",
+        action="store_true",
+        help="Linux only — skip `systemctl enable` (won't autostart on boot)",
+    )
+    p_install.add_argument(
+        "--no-start", action="store_true", help="Don't start the service now (install only)"
+    )
+    p_install.add_argument(
+        "--linger",
+        action="store_true",
+        help="Linux only — `loginctl enable-linger` so the service survives SSH logout",
+    )
+    p_install.add_argument(
+        "--no-watch-bus",
+        action="store_true",
         help="Omit --watch-bus from the service command. By default the "
-             "installed service drains .agents/bus/active/ and surfaces "
-             "bus messages (T2d); pass this if you only want the bridge "
-             "for PreToolUse approvals.",
+        "installed service drains .agents/bus/active/ and surfaces "
+        "bus messages (T2d); pass this if you only want the bridge "
+        "for PreToolUse approvals.",
     )
     p_install.add_argument(
-        "--idle-auto-afk-minutes", type=int, default=0,
+        "--idle-auto-afk-minutes",
+        type=int,
+        default=0,
         help="Auto-enable AFK after N minutes of UserPromptSubmit inactivity "
-             "(0 = disabled). The daemon watches .otaman/last-user-activity "
-             "and flips AFK on/off based on human presence.",
+        "(0 = disabled). The daemon watches .otaman/last-user-activity "
+        "and flips AFK on/off based on human presence.",
     )
-    p_install.add_argument("--dry-run", action="store_true",
-                           help="Print the resolved target + unit file without writing anything")
+    p_install.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the resolved target + unit file without writing anything",
+    )
     p_install.set_defaults(func=cmd_install)
 
     p_uninstall = subs.add_parser(
@@ -727,11 +774,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     g_un = p_uninstall.add_mutually_exclusive_group()
     g_un.add_argument("--account", help="Account name to uninstall")
-    g_un.add_argument("--all", action="store_true",
-                      help="Uninstall services for every configured account")
-    p_uninstall.add_argument("--system",
-                             choices=["linux-systemd", "macos-launchd", "windows-nssm"],
-                             help="Override auto-detected platform")
+    g_un.add_argument(
+        "--all", action="store_true", help="Uninstall services for every configured account"
+    )
+    p_uninstall.add_argument(
+        "--system",
+        choices=["linux-systemd", "macos-launchd", "windows-nssm"],
+        help="Override auto-detected platform",
+    )
     p_uninstall.set_defaults(func=cmd_uninstall)
 
     args = parser.parse_args(argv)

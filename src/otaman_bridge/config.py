@@ -55,8 +55,8 @@ except ImportError:
     )
     raise
 
-from otaman_core._secrets import SecretRef, resolve as resolve_secret  # noqa: E402
-
+from otaman_core._secrets import SecretRef  # noqa: E402
+from otaman_core._secrets import resolve as resolve_secret
 
 # Short-form sugar: account fields that get auto-promoted to transport:
 # + transport_config: when `transport:` isn't explicitly set.
@@ -178,9 +178,7 @@ def load_account_config(
     # one release window. If both present, profiles: wins.
     accounts = settings.get("routing") or settings.get("accounts") or {}
     if not isinstance(accounts, dict) or account not in accounts:
-        raise KeyError(
-            f"Routing {account!r} not defined in {settings_path}"
-        )
+        raise KeyError(f"Routing {account!r} not defined in {settings_path}")
 
     raw = accounts[account] or {}
     if not isinstance(raw, dict):
@@ -192,7 +190,8 @@ def load_account_config(
     unresolved: dict[str, SecretRef] = {}
     if resolve_secrets:
         transport_config, unresolved = _resolve_secrets_in_config(
-            transport_config, maestro_root=root,
+            transport_config,
+            maestro_root=root,
         )
     else:
         # Keep SecretRefs as-is but still report them so callers can inspect.

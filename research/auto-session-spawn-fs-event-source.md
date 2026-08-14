@@ -24,7 +24,8 @@ latency and zero missed events under burst load.
 @dataclass(frozen=True)
 class BusFileEvent:
     path: Path
-    detected_at: float   # time.monotonic()
+    detected_at: float  # time.monotonic()
+
 
 class FileSystemEventSource:
     def __init__(
@@ -35,14 +36,14 @@ class FileSystemEventSource:
         loop: asyncio.AbstractEventLoop | None = None,
     ): ...
 
-    def start(self) -> None: ...   # launches watchdog Observer thread
-    def stop(self) -> None: ...    # stops and joins observer thread
+    def start(self) -> None: ...  # launches watchdog Observer thread
+    def stop(self) -> None: ...  # stops and joins observer thread
 
     def schedule_in_loop(
         self,
         async_handler: Callable[[BusFileEvent], Coroutine],
         loop: asyncio.AbstractEventLoop,
-    ) -> None: ...   # bridges watchdog thread to asyncio event loop
+    ) -> None: ...  # bridges watchdog thread to asyncio event loop
 ```
 
 ### Internal handler
@@ -65,6 +66,7 @@ The watchdog observer runs in its own thread. To hand events to an asyncio event
 def schedule_in_loop(self, async_handler, loop):
     def sync_wrapper(evt):
         asyncio.run_coroutine_threadsafe(async_handler(evt), loop)
+
     self._dispatcher = sync_wrapper
     # re-schedule observer with updated dispatcher
 ```

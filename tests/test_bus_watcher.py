@@ -4,20 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
-import time
 from pathlib import Path
 
 import pytest
 
-
+from otaman_bridge.bus_surface import BusMessage
 from otaman_bridge.bus_watcher import (
-    POLL_INTERVAL_SECONDS,
     BusWatcher,
     build_approval_request,
     build_info_message,
 )
-from otaman_bridge.bus_surface import BusMessage
 
 
 @pytest.fixture
@@ -27,15 +23,22 @@ def project_root(tmp_path):
     root.mkdir()
     (root / ".agents" / "bus" / "active").mkdir(parents=True)
     (root / "platform.yaml").write_text(
-        "project: test\nversion: '1.0'\nrepos: []\n", encoding="utf-8",
+        "project: test\nversion: '1.0'\nrepos: []\n",
+        encoding="utf-8",
     )
     return root
 
 
-def _write_bus_msg(project_root: Path, stem: str, *, type: str = "info",
-                   from_: str = "agent-a", to: str = "agent-b",
-                   priority: str = "normal",
-                   subject: str = "test") -> Path:
+def _write_bus_msg(
+    project_root: Path,
+    stem: str,
+    *,
+    type: str = "info",
+    from_: str = "agent-a",
+    to: str = "agent-b",
+    priority: str = "normal",
+    subject: str = "test",
+) -> Path:
     """Create a minimal bus message file and return its path."""
     bus = project_root / ".agents" / "bus" / "active"
     p = bus / f"{stem}.md"
@@ -97,15 +100,13 @@ class TestScanOnce:
         assert recorder.infos == [] and recorder.approvals == []
 
     def test_info_broadcast_does_not_surface(self, project_root, recorder):
-        _write_bus_msg(project_root, "20260424T100000-a-to-all-info",
-                       type="info", to="all")
+        _write_bus_msg(project_root, "20260424T100000-a-to-all-info", type="info", to="all")
         n = asyncio.run(_make_watcher(project_root, recorder)._scan_once())
         assert n == 0
         assert recorder.infos == []
 
     def test_task_assignment_does_not_surface(self, project_root, recorder):
-        _write_bus_msg(project_root, "20260424T100000-a-to-b-task",
-                       type="task-assignment")
+        _write_bus_msg(project_root, "20260424T100000-a-to-b-task", type="task-assignment")
         n = asyncio.run(_make_watcher(project_root, recorder)._scan_once())
         assert n == 0
 
@@ -113,7 +114,8 @@ class TestScanOnce:
         _write_bus_msg(
             project_root,
             "20260424T100000-agent-to-human-scr",
-            type="spec-change-request", to="human",
+            type="spec-change-request",
+            to="human",
             subject="please approve endpoint v2",
         )
         n = asyncio.run(_make_watcher(project_root, recorder)._scan_once())
@@ -130,7 +132,8 @@ class TestScanOnce:
         _write_bus_msg(
             project_root,
             "20260424T100000-a-to-b-alert",
-            type="review-request", priority="urgent",
+            type="review-request",
+            priority="urgent",
         )
         n = asyncio.run(_make_watcher(project_root, recorder)._scan_once())
         assert n == 1
@@ -145,34 +148,36 @@ class TestScanOnce:
 
 class TestDedup:
     def test_message_only_surfaces_once_across_scans(
-        self, project_root, recorder,
+        self,
+        project_root,
+        recorder,
     ):
-        _write_bus_msg(project_root, "dup-1",
-                       type="spec-change-request", to="human")
+        _write_bus_msg(project_root, "dup-1", type="spec-change-request", to="human")
         w = _make_watcher(project_root, recorder)
         asyncio.run(w._scan_once())
         asyncio.run(w._scan_once())
         assert len(recorder.approvals) == 1
 
     def test_new_message_added_between_scans_surfaces(
-        self, project_root, recorder,
+        self,
+        project_root,
+        recorder,
     ):
-        _write_bus_msg(project_root, "first",
-                       type="spec-change-request", to="human")
+        _write_bus_msg(project_root, "first", type="spec-change-request", to="human")
         w = _make_watcher(project_root, recorder)
         asyncio.run(w._scan_once())
         assert len(recorder.approvals) == 1
 
-        _write_bus_msg(project_root, "second",
-                       type="spec-change-request", to="human")
+        _write_bus_msg(project_root, "second", type="spec-change-request", to="human")
         asyncio.run(w._scan_once())
         assert len(recorder.approvals) == 2
 
     def test_state_file_persists_across_watcher_instances(
-        self, project_root, recorder,
+        self,
+        project_root,
+        recorder,
     ):
-        _write_bus_msg(project_root, "persistent",
-                       type="spec-change-request", to="human")
+        _write_bus_msg(project_root, "persistent", type="spec-change-request", to="human")
         # Watcher 1 surfaces
         asyncio.run(_make_watcher(project_root, recorder)._scan_once())
         assert len(recorder.approvals) == 1
@@ -183,8 +188,7 @@ class TestDedup:
         assert len(r2.approvals) == 0
 
     def test_state_file_format_is_json(self, project_root, recorder):
-        _write_bus_msg(project_root, "stateful",
-                       type="spec-change-request", to="human")
+        _write_bus_msg(project_root, "stateful", type="spec-change-request", to="human")
         asyncio.run(_make_watcher(project_root, recorder)._scan_once())
         state_file = project_root / ".otaman" / "bus-surfaced.state"
         assert state_file.is_file()
@@ -199,15 +203,15 @@ class TestDedup:
 
 class TestOverridesApplied:
     def test_platform_yaml_turn_on_review_request(
-        self, project_root, recorder,
+        self,
+        project_root,
+        recorder,
     ):
         (project_root / "platform.yaml").write_text(
-            "project: test\nversion: '1.0'\nrepos: []\n"
-            "surface:\n  review_request: true\n",
+            "project: test\nversion: '1.0'\nrepos: []\nsurface:\n  review_request: true\n",
             encoding="utf-8",
         )
-        _write_bus_msg(project_root, "rev",
-                       type="review-request", from_="cto-reviewer")
+        _write_bus_msg(project_root, "rev", type="review-request", from_="cto-reviewer")
         n = asyncio.run(_make_watcher(project_root, recorder)._scan_once())
         assert n == 1
         assert recorder.infos[0].severity == "info"
@@ -219,7 +223,8 @@ class TestOverridesApplied:
 
 class TestDispatchFailureIsolates:
     def test_one_bad_dispatch_doesnt_block_others(
-        self, project_root,
+        self,
+        project_root,
     ):
         """If on_info throws on one message, other messages still surface."""
         attempts = []
@@ -234,20 +239,18 @@ class TestDispatchFailureIsolates:
 
         # Override surface so all three types surface as info
         (project_root / "platform.yaml").write_text(
-            "project: test\nversion: '1.0'\nrepos: []\n"
-            "surface:\n  review_request: true\n",
+            "project: test\nversion: '1.0'\nrepos: []\nsurface:\n  review_request: true\n",
             encoding="utf-8",
         )
 
-        _write_bus_msg(project_root, "good-1", type="review-request",
-                       from_="a", subject="ok 1")
-        _write_bus_msg(project_root, "bad-fail", type="review-request",
-                       from_="b", subject="boom")
-        _write_bus_msg(project_root, "good-2", type="review-request",
-                       from_="c", subject="ok 2")
+        _write_bus_msg(project_root, "good-1", type="review-request", from_="a", subject="ok 1")
+        _write_bus_msg(project_root, "bad-fail", type="review-request", from_="b", subject="boom")
+        _write_bus_msg(project_root, "good-2", type="review-request", from_="c", subject="ok 2")
 
         w = BusWatcher(
-            project_root=project_root, account="personal", project="test",
+            project_root=project_root,
+            account="personal",
+            project="test",
             on_info=flaky_on_info,
             on_approval=on_approval,
             poll_interval=0.05,
@@ -257,9 +260,7 @@ class TestDispatchFailureIsolates:
         # All three were attempted
         assert len(attempts) == 3
         # The failed one should NOT be in state (will retry next scan)
-        state = json.loads(
-            (project_root / ".otaman" / "bus-surfaced.state").read_text()
-        )
+        state = json.loads((project_root / ".otaman" / "bus-surfaced.state").read_text())
         assert "good-1" in state
         assert "good-2" in state
         assert "bad-fail" not in state
@@ -287,6 +288,7 @@ class TestOnEvent:
 
     def test_on_event_exception_does_not_prevent_state_recording(self, project_root, recorder):
         """An exception in on_event must not drop the message from surfaced state."""
+
         def on_event(msg):
             raise RuntimeError("pm sync exploded")
 
@@ -296,9 +298,7 @@ class TestOnEvent:
         asyncio.run(w._scan_once())
 
         # Message must still be recorded as surfaced
-        state = json.loads(
-            (project_root / ".otaman" / "bus-surfaced.state").read_text()
-        )
+        state = json.loads((project_root / ".otaman" / "bus-surfaced.state").read_text())
         assert "msg-boom" in state
 
     def test_on_event_none_is_noop(self, project_root, recorder):
@@ -341,8 +341,7 @@ class TestOnEvent:
 
 class TestRunStop:
     def test_run_surfaces_and_exits_on_stop(self, project_root, recorder):
-        _write_bus_msg(project_root, "run-test",
-                       type="spec-change-request", to="human")
+        _write_bus_msg(project_root, "run-test", type="spec-change-request", to="human")
         w = _make_watcher(project_root, recorder)
 
         async def driver():
@@ -366,7 +365,8 @@ class TestRunStop:
 class TestBuildInfoMessage:
     def test_includes_type_and_parties_in_title(self):
         msg = BusMessage(
-            path=Path("x.md"), stem="x",
+            path=Path("x.md"),
+            stem="x",
             frontmatter={"id": "x", "from": "a", "to": "b", "type": "review-request"},
             body="## Subject: s\n\nbody",
         )
@@ -377,7 +377,8 @@ class TestBuildInfoMessage:
     def test_long_body_truncated(self):
         long = "x" * 2000
         msg = BusMessage(
-            path=Path("x.md"), stem="x",
+            path=Path("x.md"),
+            stem="x",
             frontmatter={"from": "a", "to": "b", "type": "info"},
             body=f"## Subject: s\n\n{long}",
         )
@@ -389,9 +390,9 @@ class TestBuildInfoMessage:
 class TestBuildApprovalRequest:
     def test_request_id_is_message_stem(self):
         msg = BusMessage(
-            path=Path("x.md"), stem="20260424T100000-unique-id",
-            frontmatter={"from": "a", "to": "human",
-                         "type": "spec-change-request"},
+            path=Path("x.md"),
+            stem="20260424T100000-unique-id",
+            frontmatter={"from": "a", "to": "human", "type": "spec-change-request"},
             body="## Subject: change\n\nbody",
         )
         req = build_approval_request(msg, account="p", project="p")

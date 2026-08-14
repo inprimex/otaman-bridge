@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+
 import pytest
 
 from otaman_bridge.inbox import Inbox
@@ -27,8 +28,10 @@ def tool(inbox):
 
 def _put(inbox, to_user, body):
     return inbox.write_message(
-        from_user="user-A", from_email="a@x",
-        to_user=to_user, body=body,
+        from_user="user-A",
+        from_email="a@x",
+        to_user=to_user,
+        body=body,
     )
 
 
@@ -53,13 +56,14 @@ class TestMarkHappyPath:
         assert result["structuredContent"]["marked"] == 0
 
     def test_mark_all_before(self, tool, inbox, ctx_b):
-        m1 = _put(inbox, "user-B", "m1")
+        _put(inbox, "user-B", "m1")
         time.sleep(1.1)
         m2 = _put(inbox, "user-B", "m2")
         time.sleep(1.1)
         m3 = _put(inbox, "user-B", "m3")
         result = tool.handler(
-            {"message_id": m2.id, "mark_all_before": True}, ctx_b,
+            {"message_id": m2.id, "mark_all_before": True},
+            ctx_b,
         )
         assert result["structuredContent"]["marked"] == 2
         # m3 still unread

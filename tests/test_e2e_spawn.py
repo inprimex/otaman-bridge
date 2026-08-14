@@ -89,7 +89,9 @@ def _runner_request(ep: dict, method: str, path: str, body: dict | None = None):
         return exc.code, json.loads(body_txt) if body_txt else {}
 
 
-def _write_task_assignment(bus_active: Path, *, stem: str, change: str, human: str = "roman") -> Path:
+def _write_task_assignment(
+    bus_active: Path, *, stem: str, change: str, human: str = "roman"
+) -> Path:
     content = (
         f"---\n"
         f"id: {stem}\n"
@@ -102,7 +104,7 @@ def _write_task_assignment(bus_active: Path, *, stem: str, change: str, human: s
         f"change: {change}\n"
         f"---\n"
         f"\n"
-        f"## Subject: Tasks assigned from \"{change}\"\n"
+        f'## Subject: Tasks assigned from "{change}"\n'
         f"\n"
         f"- [ ] 1.1 @otaman-specs [headless] Run `/otaman:check` and report status. *(e2e-test)*\n"
     )
@@ -131,6 +133,7 @@ def bus_dir(tmp_path):
 @pytest.fixture
 def registry(tmp_path):
     from otaman_bridge.session_registry import SqliteSessionRegistry
+
     r = SqliteSessionRegistry(db_path=tmp_path / "e2e-sessions.db")
     yield r
     r.close()
@@ -139,6 +142,7 @@ def registry(tmp_path):
 @pytest.fixture
 def runner_client():
     from otaman_bridge.runner_client import RunnerClient
+
     return RunnerClient()
 
 
@@ -148,7 +152,6 @@ def runner_client():
 
 
 class TestE2ESpawnDecision:
-
     def test_spawn_decision_calls_runner_and_claims_session(
         self, ep, bus_dir, registry, runner_client
     ):
@@ -183,23 +186,23 @@ class TestE2ESpawnDecision:
         assert outcome.session_id is not None
 
         # Registry must reflect the claim
-        assert registry.is_sessioned("spec-agent", "roman"), \
+        assert registry.is_sessioned("spec-agent", "roman"), (
             "Session not recorded in registry after spawn"
+        )
 
         # Runner must show the session
         status, data = _runner_request(ep, "GET", "/sessions")
         assert status == 200
         session_ids = [s["session_id"] for s in data.get("sessions", [])]
-        assert outcome.session_id in session_ids, \
+        assert outcome.session_id in session_ids, (
             f"Session {outcome.session_id} not in runner /sessions: {session_ids}"
+        )
 
         # Cleanup — kill the spawned session
         _runner_request(ep, "POST", "/kill", {"session_id": outcome.session_id})
         registry.release_session("spec-agent", "roman", outcome.session_id)
 
-    def test_dedup_no_second_spawn_when_session_warm(
-        self, ep, bus_dir, registry, runner_client
-    ):
+    def test_dedup_no_second_spawn_when_session_warm(self, ep, bus_dir, registry, runner_client):
         """Second identical task-assignment → warm-session, no second runner call."""
         from otaman_bridge.spawn_decision import handle_bus_event
 
@@ -237,18 +240,19 @@ class TestE2ESpawnDecision:
             trigger_source="e2e-test",
         )
         assert o2 is not None
-        assert o2.action == "warm-session", \
+        assert o2.action == "warm-session", (
             f"Expected 'warm-session' for duplicate, got {o2.action!r}"
+        )
 
         # Runner must still have only one session for spec-agent/roman (new ones)
         status, data = _runner_request(ep, "GET", "/sessions")
         assert status == 200
         spec_sessions = [
-            s for s in data.get("sessions", [])
+            s
+            for s in data.get("sessions", [])
             if s.get("agent") == "spec-agent" and s.get("user") == "roman"
         ]
-        assert len(spec_sessions) == 1, \
-            f"Expected 1 spec-agent session, got {len(spec_sessions)}"
+        assert len(spec_sessions) == 1, f"Expected 1 spec-agent session, got {len(spec_sessions)}"
 
         # Cleanup
         _runner_request(ep, "POST", "/kill", {"session_id": o1.session_id})

@@ -37,9 +37,9 @@ import datetime as _dt
 import json
 import logging
 import os
-from dataclasses import field
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 try:
     from telegram import (  # type: ignore[import-not-found]
@@ -55,6 +55,7 @@ try:
         MessageHandler,
         filters,
     )
+
     _HAS_TELEGRAM = True
 except ImportError:  # pragma: no cover — tests mock the library
     Bot = None  # type: ignore[assignment]
@@ -172,21 +173,16 @@ class TelegramTransport:
             )
         group_id = config.get("group_id")
         if group_id is None:
-            raise ValueError(
-                "TelegramTransport: group_id is required (Telegram supergroup ID)"
-            )
+            raise ValueError("TelegramTransport: group_id is required (Telegram supergroup ID)")
 
         self.bot_token: str = str(bot_token)
         self.group_id: int = int(group_id)
-        self.allowed_user_ids: set[int] = {
-            int(x) for x in config.get("allowed_user_ids", [])
-        }
+        self.allowed_user_ids: set[int] = {int(x) for x in config.get("allowed_user_ids", [])}
         self.topic_map: dict[str, int] = {
             str(k): int(v) for k, v in (config.get("topic_map") or {}).items()
         }
         self.default_topic_id: int | None = (
-            int(config["default_topic_id"])
-            if config.get("default_topic_id") is not None else None
+            int(config["default_topic_id"]) if config.get("default_topic_id") is not None else None
         )
         # Auto-create topics for unmapped projects unless explicitly disabled.
         self.auto_create_topics: bool = bool(
@@ -199,9 +195,8 @@ class TelegramTransport:
         else:
             account = config.get("account_name") or "default"
             from otaman_bridge.daemon import endpoint_path as _ep  # noqa: PLC0415
-            self.topic_cache_file = (
-                _ep(account).parent / f"bridge-{account}-topics.json"
-            )
+
+            self.topic_cache_file = _ep(account).parent / f"bridge-{account}-topics.json"
 
         self._bot = Bot(token=self.bot_token)
         self._app: Any = None  # Application, lazily started in listen()
@@ -311,7 +306,7 @@ class TelegramTransport:
         if not user_id.startswith("telegram:"):
             return False
         try:
-            uid = int(user_id[len("telegram:"):])
+            uid = int(user_id[len("telegram:") :])
         except ValueError:
             return False
         return uid in self.allowed_user_ids
@@ -402,7 +397,8 @@ class TelegramTransport:
                     self._write_topic_cache(cache)
                     _log.info(
                         "telegram: created forum topic for %r → thread_id=%d",
-                        project, thread_id,
+                        project,
+                        thread_id,
                     )
                     return thread_id
                 _log.warning(
@@ -416,7 +412,8 @@ class TelegramTransport:
                     "falling back to default topic; will retry next message. "
                     "Fix by promoting the bot to admin with 'Manage topics' "
                     "permission in the group.",
-                    project, e,
+                    project,
+                    e,
                 )
 
             # No caching of failures — next message retries.
@@ -431,9 +428,7 @@ class TelegramTransport:
                 data = json.loads(
                     self.topic_cache_file.read_text(encoding="utf-8"),
                 )
-                self._cached_topics = {
-                    str(k): int(v) for k, v in (data or {}).items()
-                }
+                self._cached_topics = {str(k): int(v) for k, v in (data or {}).items()}
                 return self._cached_topics
             except (OSError, ValueError):
                 _log.warning(
@@ -468,17 +463,21 @@ class TelegramTransport:
             # acknowledge InboundReply objects. filters.REPLY narrows to
             # messages that carry reply_to_message so we don't buzz on
             # normal chatter.
-            app.add_handler(MessageHandler(
-                filters.REPLY & filters.TEXT & ~filters.COMMAND,
-                self._on_reply_message,
-            ))
+            app.add_handler(
+                MessageHandler(
+                    filters.REPLY & filters.TEXT & ~filters.COMMAND,
+                    self._on_reply_message,
+                )
+            )
             await app.initialize()
             await app.start()
             await app.updater.start_polling(drop_pending_updates=True)
             self._app = app
 
     async def _on_callback_query(
-        self, update: Any, context: Any,  # noqa: ARG002
+        self,
+        update: Any,
+        context: Any,  # noqa: ARG002
     ) -> None:
         """CallbackQueryHandler: button tap → InboundReply on the queue."""
         query = getattr(update, "callback_query", None)
@@ -510,7 +509,9 @@ class TelegramTransport:
         await self._inbound.put(reply)
 
     async def _on_reply_message(
-        self, update: Any, context: Any,  # noqa: ARG002
+        self,
+        update: Any,
+        context: Any,  # noqa: ARG002
     ) -> None:
         """MessageHandler: reply-to-card → InboundReply(action="comment").
 
@@ -535,7 +536,8 @@ class TelegramTransport:
         if uid not in self.allowed_user_ids:
             _log.warning(
                 "telegram: rejected reply from uid=%s to request %s",
-                uid, request_id,
+                uid,
+                request_id,
             )
             return
 

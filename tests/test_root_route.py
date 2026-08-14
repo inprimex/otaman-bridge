@@ -23,7 +23,9 @@ def running_daemon(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.start()
     try:
@@ -70,7 +72,8 @@ class TestRootRoute:
         daemon, endpoint = running_daemon
         _wire_session(daemon)
         sess = daemon.session_store.create(
-            user_id="user-42", email="dev-a@example",
+            user_id="user-42",
+            email="dev-a@example",
             roles=("otaman:developer",),
         )
         base = _daemon_url(endpoint)

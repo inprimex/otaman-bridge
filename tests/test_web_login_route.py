@@ -40,11 +40,16 @@ def _request(url: str, *, allow_redirects: bool = False) -> tuple[int, dict[str,
     """Issue a GET. When allow_redirects is False, treat 3xx as the final
     response (return its status + headers + body) instead of following.
     """
+
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **kw):  # noqa: ARG002
             return None
 
-    opener = urllib.request.build_opener(_NoRedirect()) if not allow_redirects else urllib.request.build_opener()
+    opener = (
+        urllib.request.build_opener(_NoRedirect())
+        if not allow_redirects
+        else urllib.request.build_opener()
+    )
     req = urllib.request.Request(url, method="GET")
     try:
         with opener.open(req, timeout=2) as resp:
@@ -55,6 +60,7 @@ def _request(url: str, *, allow_redirects: bool = False) -> tuple[int, dict[str,
 
 def _daemon_url(endpoint_file: Path) -> str:
     from otaman_bridge.daemon import read_endpoint_file
+
     fields = read_endpoint_file(endpoint_file)
     return f"http://127.0.0.1:{fields['port']}"
 
@@ -82,7 +88,7 @@ class TestAuthLoginRoute:
 
     def test_302_redirect_when_configured(self, running_daemon):
         daemon, endpoint = running_daemon
-        flow = _wire_web_login(daemon)
+        _wire_web_login(daemon)
         base = _daemon_url(endpoint)
         code, headers, _ = _request(f"{base}/auth/login")
         assert code == 302
@@ -92,7 +98,7 @@ class TestAuthLoginRoute:
 
     def test_redirect_url_carries_pkce_params(self, running_daemon):
         daemon, endpoint = running_daemon
-        flow = _wire_web_login(daemon)
+        _wire_web_login(daemon)
         base = _daemon_url(endpoint)
         _, headers, _ = _request(f"{base}/auth/login")
         loc = headers.get("Location") or headers.get("location")

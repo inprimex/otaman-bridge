@@ -34,7 +34,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0  # noqa: E402
+# legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0
+from otaman_core._resolve import (  # noqa: E402
+    active_routing_env,
+    find_maestro_root,
+    read_expected_account,
+)
+
 from otaman_bridge.afk import read_afk
 
 
@@ -86,7 +92,7 @@ def _derive_account(project_root: Path) -> str | None:
     if config_dir:
         base = os.path.basename(config_dir.rstrip("/\\"))
         if base.startswith(".claude-"):
-            return base[len(".claude-"):]
+            return base[len(".claude-") :]
         if base in ("", ".claude"):
             return "default"
 
@@ -102,6 +108,7 @@ def _endpoint_file(account: str) -> Path:
     ``OTAMAN_BRIDGE_DIR`` override applies here too.
     """
     from otaman_bridge.daemon import endpoint_path
+
     return endpoint_path(account)
 
 
@@ -131,6 +138,7 @@ def _session_project(project_root: Path) -> str:
     """
     try:
         from otaman_bridge.bus_surface import resolve_project_name  # noqa: PLC0415
+
         return resolve_project_name(project_root)
     except ImportError:
         # Minimal fallback — mirrors resolve_project_name's first pass.
@@ -216,7 +224,9 @@ def main() -> int:
     # --- Build the ApprovalRequest payload ---
     # Timeout: default 9 minutes to stay under Claude Code's 10-minute hook cap.
     timeout_seconds = int(os.environ.get("MAESTRO_BRIDGE_TIMEOUT", "540"))
-    priority = str(tool_input.get("priority", "normal")) if isinstance(tool_input, dict) else "normal"
+    priority = (
+        str(tool_input.get("priority", "normal")) if isinstance(tool_input, dict) else "normal"
+    )
 
     payload = {
         "account": account,
@@ -242,10 +252,7 @@ def main() -> int:
         with urllib.request.urlopen(req, timeout=timeout_seconds + 15) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError) as e:
-        _log_warn(
-            f"daemon unreachable (account={account}): {e}. "
-            f"Falling back to native prompt."
-        )
+        _log_warn(f"daemon unreachable (account={account}): {e}. Falling back to native prompt.")
         _emit_allow_and_exit()
         return 0  # unreachable
 

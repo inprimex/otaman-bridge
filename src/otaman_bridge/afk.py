@@ -54,8 +54,11 @@ except ImportError:
     )
     sys.exit(1)
 
-from otaman_core._resolve import find_maestro_root, active_routing_env  # legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0  # noqa: E402
-
+# legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0
+from otaman_core._resolve import (  # noqa: E402
+    active_routing_env,
+    find_maestro_root,
+)
 
 AFK_FILENAME = "afk"
 # "ssh-auto" kept for backwards-compat with files written before the
@@ -103,8 +106,7 @@ def parse_duration(text: str) -> timedelta:
         m = _DURATION_CHUNK.match(stripped, idx)
         if not m or m.start() != idx:
             raise ValueError(
-                f"invalid duration {text!r}: expected NN{{s|m|h|d|w}} "
-                f"(e.g. 30s, 15m, 1h30m)"
+                f"invalid duration {text!r}: expected NN{{s|m|h|d|w}} (e.g. 30s, 15m, 1h30m)"
             )
         count = int(m.group(1))
         unit = m.group(2)
@@ -167,7 +169,7 @@ class AfkState:
         return out
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AfkState":
+    def from_dict(cls, data: dict[str, Any]) -> AfkState:
         enabled_at = _parse_iso(data.get("enabled_at"))
         if enabled_at is None:
             raise ValueError("afk state missing enabled_at")
@@ -229,6 +231,7 @@ def read_afk(maestro_root: Path) -> AfkState | None:
         if legacy.is_file():
             if not _warned_legacy_afk:
                 import logging as _logging
+
                 _logging.getLogger("maestro.bridge.afk").warning(  # legacy: logger renamed at 1.0
                     "legacy: found afk file under .maestro/; "
                     "rename directory to .otaman/ before otaman-core 1.0"
@@ -305,12 +308,13 @@ def _resolve_account_for_notify() -> str | None:
     if config_dir:
         base = os.path.basename(config_dir.rstrip("/\\"))
         if base.startswith(".claude-"):
-            return base[len(".claude-"):]
+            return base[len(".claude-") :]
         if base in ("", ".claude"):
             return "default"
 
     try:
         from otaman_core._resolve import read_expected_account  # noqa: PLC0415
+
         marker = read_expected_account(Path.cwd())
         if marker:
             return marker
@@ -328,6 +332,7 @@ def _resolve_project_for_notify(maestro_root: Path) -> str:
     """
     try:
         from otaman_bridge.bus_surface import resolve_project_name  # noqa: PLC0415
+
         return resolve_project_name(maestro_root)
     except Exception:  # noqa: BLE001
         try:
@@ -345,11 +350,18 @@ def _resolve_project_for_notify(maestro_root: Path) -> str:
 
 
 def _post_info_to_daemon(
-    maestro_root: Path, *, title: str, body: str, severity: str = "info",
+    maestro_root: Path,
+    *,
+    title: str,
+    body: str,
+    severity: str = "info",
 ) -> bool:
     """POST an InfoMessage to the local daemon. Returns True on success."""
     # legacy: MAESTRO_AFK_NO_NOTIFY accepted until otaman-core 1.0
-    if os.environ.get("OTAMAN_AFK_NO_NOTIFY") == "1" or os.environ.get("MAESTRO_AFK_NO_NOTIFY") == "1":
+    if (
+        os.environ.get("OTAMAN_AFK_NO_NOTIFY") == "1"
+        or os.environ.get("MAESTRO_AFK_NO_NOTIFY") == "1"
+    ):
         return False
     account = _resolve_account_for_notify()
     if not account:
@@ -357,6 +369,7 @@ def _post_info_to_daemon(
     # Use the shared endpoint_path resolver so OTAMAN_BRIDGE_DIR override
     # works consistently (otaman-native deploys point at ~/.otaman/).
     from otaman_bridge.daemon import endpoint_path as _endpoint_path
+
     endpoint_file = _endpoint_path(account)
     if not endpoint_file.is_file():
         return False
@@ -380,7 +393,9 @@ def _post_info_to_daemon(
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}/notify", data=data, method="POST",
+        f"http://127.0.0.1:{port}/notify",
+        data=data,
+        method="POST",
     )
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {token}")
@@ -392,7 +407,10 @@ def _post_info_to_daemon(
 
 
 def notify_afk_enabled(
-    maestro_root: Path, state: AfkState, *, reason: str = "",
+    maestro_root: Path,
+    state: AfkState,
+    *,
+    reason: str = "",
 ) -> bool:
     """Send 'AFK enabled' Telegram notification. Best-effort."""
     parts = [f"Source: {state.source}"]
@@ -403,8 +421,7 @@ def notify_afk_enabled(
             f"(at {state.expires_at.astimezone().strftime('%H:%M %Z')})."
         )
     else:
-        parts.append("No expiry — clear with `otaman afk off` or by "
-                     "starting a new Claude session.")
+        parts.append("No expiry — clear with `otaman afk off` or by starting a new Claude session.")
     if reason:
         parts.append(f"Note: {reason}")
     parts.append("")
@@ -417,7 +434,10 @@ def notify_afk_enabled(
 
 
 def notify_afk_cleared(
-    maestro_root: Path, *, prior_source: str = "", reason: str = "",
+    maestro_root: Path,
+    *,
+    prior_source: str = "",
+    reason: str = "",
 ) -> bool:
     """Send 'AFK cleared' Telegram notification. Best-effort."""
     parts: list[str] = []
@@ -550,27 +570,33 @@ def main(argv: list[str] | None = None) -> int:
 
     p_on = subs.add_parser("on", help="Enable AFK (optionally with duration)")
     p_on.add_argument(
-        "duration", nargs="?", default=None,
+        "duration",
+        nargs="?",
+        default=None,
         help="Duration (e.g. 30s, 15m, 8h, 2d, 1w, 1h30m). Omit for indefinite.",
     )
     p_on.add_argument(
-        "--source", default="manual",
+        "--source",
+        default="manual",
         choices=list(VALID_SOURCES),
         help="Why AFK is being enabled (default: manual)",
     )
     p_on.add_argument(
-        "--as-user", default=None,
+        "--as-user",
+        default=None,
         help="Override enabled_by (defaults to $USER / $USERNAME)",
     )
     p_on.add_argument(
-        "--reason", default="",
+        "--reason",
+        default="",
         help="Free-text reason included in the Telegram notification",
     )
     p_on.set_defaults(func=cmd_on)
 
     p_off = subs.add_parser("off", help="Disable AFK")
     p_off.add_argument(
-        "--reason", default="",
+        "--reason",
+        default="",
         help="Free-text reason included in the Telegram notification",
     )
     p_off.set_defaults(func=cmd_off)
@@ -583,10 +609,10 @@ def main(argv: list[str] | None = None) -> int:
         help=argparse.SUPPRESS,
     )
     p_evt.add_argument("event", choices=("enabled", "cleared"))
-    p_evt.add_argument("--source", default="",
-                       help="Prior source (cleared events) for the message body")
-    p_evt.add_argument("--reason", default="",
-                       help="Free-text reason included in the notification")
+    p_evt.add_argument(
+        "--source", default="", help="Prior source (cleared events) for the message body"
+    )
+    p_evt.add_argument("--reason", default="", help="Free-text reason included in the notification")
     p_evt.set_defaults(func=cmd_send_event)
 
     p_status = subs.add_parser("status", help="Show current AFK state")

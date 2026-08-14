@@ -17,16 +17,17 @@ import pytest
 
 from otaman_bridge.mcp_server import CallContext
 from otaman_bridge.mcp_tools import IDENTITY_REQUIRED_TOOLS
-from otaman_bridge_ee.mcp_tools_admin import (
-    ADMIN_ROLE,
-    build_kill_session_for_user_tool_admin as build_kill_session_for_user_tool,
-)
 from otaman_bridge.runner_client import (
     RunnerAuthError,
     RunnerUnreachableError,
     SessionNotFoundError,
 )
-
+from otaman_bridge_ee.mcp_tools_admin import (
+    ADMIN_ROLE,
+)
+from otaman_bridge_ee.mcp_tools_admin import (
+    build_kill_session_for_user_tool_admin as build_kill_session_for_user_tool,
+)
 
 # ---- registration / identity gate --------------------------------------
 
@@ -62,7 +63,8 @@ def _admin_ctx(user_id="admin-user", roles=(ADMIN_ROLE,)):
 
 def _dev_ctx():
     return CallContext(
-        user_id="dev-user", user_email="dev@example",
+        user_id="dev-user",
+        user_email="dev@example",
         roles=("otaman:developer",),
     )
 
@@ -143,7 +145,8 @@ class TestValidation:
 
     def test_non_string_reason_rejected(self, tool):
         result = tool.handler(
-            {"session_id": "sess-1", "reason": 42}, _admin_ctx(),
+            {"session_id": "sess-1", "reason": 42},
+            _admin_ctx(),
         )
         assert result["isError"] is True
         assert "reason" in result["content"][0]["text"]

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import AsyncIterator
 
 from otaman_bridge.core import (
     ApprovalRequest,
@@ -48,9 +48,7 @@ class NullTransport:
     sent_approvals: list[ApprovalRequest] = field(default_factory=list)
     sent_infos: list[InfoMessage] = field(default_factory=list)
     updates: list[tuple[TransportHandle, str]] = field(default_factory=list)
-    inbound_queue: asyncio.Queue[InboundReply] = field(
-        default_factory=asyncio.Queue
-    )
+    inbound_queue: asyncio.Queue[InboundReply] = field(default_factory=asyncio.Queue)
     allowlist: set[str] = field(default_factory=set)
     # The asyncio loop that's currently iterating listen() — captured lazily
     # so ``push_reply`` from another thread can dispatch onto it via
@@ -61,7 +59,9 @@ class NullTransport:
         self.sent_approvals.append(req)
         _log.info(
             "null: send_approval request_id=%s tool=%s reason=%s",
-            req.request_id, req.tool_name, req.reason or "(none)",
+            req.request_id,
+            req.tool_name,
+            req.reason or "(none)",
         )
         return TransportHandle(
             transport=self.name,
@@ -71,7 +71,9 @@ class NullTransport:
     async def send_info(self, msg: InfoMessage) -> TransportHandle:
         self.sent_infos.append(msg)
         _log.info(
-            "null: send_info severity=%s title=%s", msg.severity, msg.title,
+            "null: send_info severity=%s title=%s",
+            msg.severity,
+            msg.title,
         )
         return TransportHandle(
             transport=self.name,
@@ -109,7 +111,8 @@ class NullTransport:
         """
         if self._loop is not None and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(
-                self.inbound_queue.put(reply), self._loop,
+                self.inbound_queue.put(reply),
+                self._loop,
             )
         else:
             self.inbound_queue.put_nowait(reply)

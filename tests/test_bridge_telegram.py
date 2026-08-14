@@ -7,12 +7,10 @@ smoke test run with `maestro bridge run --transport telegram` (T2c).
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 
 # Skip the whole module cleanly when python-telegram-bot isn't available
 # (CI matrix, users without the optional dep). Every test here depends on
@@ -20,14 +18,13 @@ import pytest
 pytest.importorskip("telegram")
 pytest.importorskip("telegram.ext")
 
-from otaman_bridge.core import ApprovalRequest, InboundReply, InfoMessage  # noqa: E402
+from otaman_bridge.core import ApprovalRequest, InfoMessage  # noqa: E402
 from otaman_bridge.transports import telegram as tg_module  # noqa: E402
 from otaman_bridge.transports.telegram import (  # noqa: E402
     TelegramTransport,
     decode_callback,
     encode_callback,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -63,7 +60,9 @@ def mock_bot(monkeypatch):
     return bot_instance
 
 
-def _make_request(project: str = "demo", request_id: str = "20260423T193000-abcd") -> ApprovalRequest:
+def _make_request(
+    project: str = "demo", request_id: str = "20260423T193000-abcd"
+) -> ApprovalRequest:
     return ApprovalRequest(
         account="personal",
         project=project,
@@ -173,6 +172,7 @@ class TestSendApproval:
 
     def test_uses_topic_from_topic_map(self, mock_bot, base_config):
         base_config["topic_map"] = {"demo": 7}
+
         async def run():
             transport = TelegramTransport(base_config)
             await transport.send_approval(_make_request(project="demo"))
@@ -183,6 +183,7 @@ class TestSendApproval:
 
     def test_falls_back_to_default_topic(self, mock_bot, base_config):
         base_config["default_topic_id"] = 99
+
         async def run():
             transport = TelegramTransport(base_config)
             await transport.send_approval(_make_request(project="unmapped"))
@@ -220,8 +221,10 @@ class TestSendInfo:
         async def run():
             transport = TelegramTransport(base_config)
             msg = InfoMessage(
-                account="personal", project="demo",
-                severity="info", title="task complete",
+                account="personal",
+                project="demo",
+                severity="info",
+                title="task complete",
                 body="auth finished task 3.1",
             )
             handle = await transport.send_info(msg)
@@ -241,9 +244,14 @@ class TestSendInfo:
                 ("blocking", "🔴"),
             ]:
                 mock_bot.send_message.reset_mock()
-                await transport.send_info(InfoMessage(
-                    account="p", project="x", severity=severity, title="t",
-                ))
+                await transport.send_info(
+                    InfoMessage(
+                        account="p",
+                        project="x",
+                        severity=severity,
+                        title="t",
+                    )
+                )
                 text = mock_bot.send_message.call_args.kwargs["text"]
                 assert expected_emoji in text
 
@@ -259,6 +267,7 @@ class TestUpdate:
         async def run():
             transport = TelegramTransport(base_config)
             from otaman_bridge.core import TransportHandle
+
             handle = TransportHandle(
                 transport="telegram",
                 data={"chat_id": -1001111, "message_id": 42},
@@ -281,6 +290,7 @@ class TestUpdate:
         async def run():
             transport = TelegramTransport(base_config)
             from otaman_bridge.core import TransportHandle
+
             bad = TransportHandle(transport="telegram", data={})
             # No exception
             await transport.update(bad, "status")
@@ -351,7 +361,8 @@ class TestCallbackHandler:
             query.answer.assert_awaited()  # silent ack
 
             reply = await asyncio.wait_for(
-                transport._inbound.get(), timeout=1.0,
+                transport._inbound.get(),
+                timeout=1.0,
             )
             assert reply.request_id == "req-abc"
             assert reply.action == "approve"
@@ -374,7 +385,8 @@ class TestCallbackHandler:
             # Nothing reaches inbound queue
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(
-                    transport._inbound.get(), timeout=0.1,
+                    transport._inbound.get(),
+                    timeout=0.1,
                 )
 
         asyncio.run(run())
@@ -407,9 +419,12 @@ class TestCallbackHandler:
             # Drain and verify
             replies = []
             for _ in range(4):
-                replies.append(await asyncio.wait_for(
-                    transport._inbound.get(), timeout=1.0,
-                ))
+                replies.append(
+                    await asyncio.wait_for(
+                        transport._inbound.get(),
+                        timeout=1.0,
+                    )
+                )
             actions = [r.action for r in replies]
             assert actions == ["approve", "reject", "details", "snooze"]
 
@@ -426,7 +441,11 @@ class TestReplyHandler:
     dropped."""
 
     def _make_reply_update(
-        self, *, user_id: int, text: str, reply_to_message_id: int,
+        self,
+        *,
+        user_id: int,
+        text: str,
+        reply_to_message_id: int,
     ):
         """Build a fake Update for a text message that replies to an
         earlier message_id."""
@@ -451,13 +470,15 @@ class TestReplyHandler:
             transport._reply_index[42] = "req-abc"
 
             update = self._make_reply_update(
-                user_id=12345, text="use cursor pagination",
+                user_id=12345,
+                text="use cursor pagination",
                 reply_to_message_id=42,
             )
             await transport._on_reply_message(update, None)
 
             reply = await asyncio.wait_for(
-                transport._inbound.get(), timeout=1.0,
+                transport._inbound.get(),
+                timeout=1.0,
             )
             assert reply.action == "comment"
             assert reply.request_id == "req-abc"
@@ -471,13 +492,16 @@ class TestReplyHandler:
             transport = TelegramTransport(base_config)
             # No entry for message_id=99 in _reply_index.
             update = self._make_reply_update(
-                user_id=12345, text="some reply", reply_to_message_id=99,
+                user_id=12345,
+                text="some reply",
+                reply_to_message_id=99,
             )
             await transport._on_reply_message(update, None)
 
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(
-                    transport._inbound.get(), timeout=0.1,
+                    transport._inbound.get(),
+                    timeout=0.1,
                 )
 
         asyncio.run(run())
@@ -489,19 +513,22 @@ class TestReplyHandler:
 
             update = self._make_reply_update(
                 user_id=99999,  # not in allowlist
-                text="try to sneak in", reply_to_message_id=42,
+                text="try to sneak in",
+                reply_to_message_id=42,
             )
             await transport._on_reply_message(update, None)
 
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(
-                    transport._inbound.get(), timeout=0.1,
+                    transport._inbound.get(),
+                    timeout=0.1,
                 )
 
         asyncio.run(run())
 
     def test_send_approval_registers_message_id(self, mock_bot, base_config):
         """send_approval populates _reply_index for future replies."""
+
         async def run():
             transport = TelegramTransport(base_config)
             # mock_bot fixture already sets message_id = 42 on send return.
@@ -512,6 +539,7 @@ class TestReplyHandler:
 
     def test_reply_index_is_trimmed_when_full(self, mock_bot, base_config):
         """The message_id → request_id map has an upper bound."""
+
         async def run():
             transport = TelegramTransport(base_config)
             transport._reply_index_max = 3
@@ -530,6 +558,7 @@ class TestReplyHandler:
         """Plain messages (not replies) are ignored — filters.REPLY in
         _ensure_running handles this at the dispatcher level, but the
         handler itself must still be defensive."""
+
         async def run():
             transport = TelegramTransport(base_config)
             msg = MagicMock()
@@ -540,7 +569,8 @@ class TestReplyHandler:
 
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(
-                    transport._inbound.get(), timeout=0.1,
+                    transport._inbound.get(),
+                    timeout=0.1,
                 )
 
         asyncio.run(run())
@@ -554,6 +584,7 @@ class TestRegistration:
     def test_telegram_is_registered(self):
         """Importing bridge.transports.telegram registers it by name."""
         from otaman_bridge.core import get_transport
+
         # register_transport runs at module import time
         cls = get_transport("telegram")
         assert cls is TelegramTransport
@@ -576,6 +607,7 @@ class TestForumTopicAutoCreate:
         mock_bot.create_forum_topic = AsyncMock(
             return_value=self._make_topic_result(77),
         )
+
         async def run():
             transport = TelegramTransport(base_config)
             await transport.send_approval(_make_request(project="newproj"))
@@ -594,6 +626,7 @@ class TestForumTopicAutoCreate:
         mock_bot.create_forum_topic = AsyncMock(
             return_value=self._make_topic_result(77),
         )
+
         async def run():
             transport = TelegramTransport(base_config)
             # First call creates
@@ -606,10 +639,12 @@ class TestForumTopicAutoCreate:
 
     def test_cache_persists_to_disk(self, mock_bot, base_config):
         import json
+
         base_config["auto_create_topics"] = True
         mock_bot.create_forum_topic = AsyncMock(
             return_value=self._make_topic_result(77),
         )
+
         async def run():
             transport = TelegramTransport(base_config)
             await transport.send_approval(_make_request(project="p1"))
@@ -623,14 +658,17 @@ class TestForumTopicAutoCreate:
 
     def test_cache_loaded_on_new_transport(self, mock_bot, base_config, tmp_path):
         import json
+
         base_config["auto_create_topics"] = True
         # Pre-populate the cache file
         Path(base_config["topic_cache_file"]).write_text(
-            json.dumps({"existing": 55}), encoding="utf-8",
+            json.dumps({"existing": 55}),
+            encoding="utf-8",
         )
         mock_bot.create_forum_topic = AsyncMock(
             return_value=self._make_topic_result(77),
         )
+
         async def run():
             transport = TelegramTransport(base_config)
             await transport.send_approval(_make_request(project="existing"))
@@ -644,10 +682,13 @@ class TestForumTopicAutoCreate:
     def test_topic_map_beats_cache(self, mock_bot, base_config):
         """Explicit topic_map in config wins over any cache entry."""
         import json
+
         Path(base_config["topic_cache_file"]).write_text(
-            json.dumps({"p1": 55}), encoding="utf-8",
+            json.dumps({"p1": 55}),
+            encoding="utf-8",
         )
         base_config["topic_map"] = {"p1": 99}
+
         async def run():
             transport = TelegramTransport(base_config)
             await transport.send_approval(_make_request(project="p1"))
@@ -664,10 +705,13 @@ class TestForumTopicAutoCreate:
         # the bot to admin with Manage topics between messages).
         topic_result = MagicMock()
         topic_result.message_thread_id = 123
-        mock_bot.create_forum_topic = AsyncMock(side_effect=[
-            RuntimeError("Not enough rights to create a topic"),
-            topic_result,
-        ])
+        mock_bot.create_forum_topic = AsyncMock(
+            side_effect=[
+                RuntimeError("Not enough rights to create a topic"),
+                topic_result,
+            ]
+        )
+
         async def run():
             transport = TelegramTransport(base_config)
             # First call — fails, falls back to None topic (no default set)
@@ -694,6 +738,7 @@ class TestForumTopicAutoCreate:
         base_config["auto_create_topics"] = True
         base_config["default_topic_id"] = 88
         mock_bot.create_forum_topic = AsyncMock(side_effect=RuntimeError("no rights"))
+
         async def run():
             transport = TelegramTransport(base_config)
             await transport.send_approval(_make_request(project="bad"))
@@ -707,6 +752,7 @@ class TestForumTopicAutoCreate:
         base_config["auto_create_topics"] = False
         base_config["default_topic_id"] = 33
         mock_bot.create_forum_topic = AsyncMock()
+
         async def run():
             transport = TelegramTransport(base_config)
             await transport.send_approval(_make_request(project="nope"))
@@ -720,11 +766,13 @@ class TestForumTopicAutoCreate:
         """Garbage cache file → fresh state, log warning, no crash."""
         base_config["auto_create_topics"] = True
         Path(base_config["topic_cache_file"]).write_text(
-            "not json", encoding="utf-8",
+            "not json",
+            encoding="utf-8",
         )
         mock_bot.create_forum_topic = AsyncMock(
             return_value=self._make_topic_result(77),
         )
+
         async def run():
             transport = TelegramTransport(base_config)
             await transport.send_approval(_make_request(project="p1"))

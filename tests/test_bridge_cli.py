@@ -52,8 +52,11 @@ class TestStatus:
         cwd.mkdir()
         result = subprocess.run(
             BRIDGE_CLI + ["status"],
-            capture_output=True, text=True, timeout=10,
-            env=_env_with_home(sandbox_home), cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_env_with_home(sandbox_home),
+            cwd=cwd,
         )
         assert result.returncode == 0
         assert "No accounts configured" in result.stdout
@@ -61,7 +64,9 @@ class TestStatus:
     def test_status_shows_stopped_for_unbound_account(self, sandbox_home):
         result = subprocess.run(
             BRIDGE_CLI + ["status", "--account", "ghost"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
             env=_env_with_home(sandbox_home),
         )
         assert result.returncode == 0
@@ -77,17 +82,17 @@ class TestRunStopLifecycle:
     @pytest.mark.skipif(
         sys.platform == "darwin",
         reason="macOS CI runners (GitHub Actions) have loopback-bind/daemon-startup "
-               "timing that exceeds reasonable subprocess timeouts; tests pass on "
-               "local macOS and on ubuntu/windows CI. Backlog: investigate exact "
-               "runner constraint and re-enable."
+        "timing that exceeds reasonable subprocess timeouts; tests pass on "
+        "local macOS and on ubuntu/windows CI. Backlog: investigate exact "
+        "runner constraint and re-enable.",
     )
     def test_run_then_stop_roundtrip(self, sandbox_home):
         endpoint_file = sandbox_home / ".maestro" / "bridge-test.endpoint"
         proc = subprocess.Popen(
-            BRIDGE_CLI + ["run",
-             "--account", "test",
-             "--transport", "null"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            BRIDGE_CLI + ["run", "--account", "test", "--transport", "null"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
             env=_env_with_home(sandbox_home),
         )
         try:
@@ -98,9 +103,7 @@ class TestRunStopLifecycle:
                 time.sleep(0.1)
             else:
                 out, err = proc.communicate(timeout=10)
-                pytest.fail(
-                    f"daemon failed to write endpoint file\nstdout={out}\nstderr={err}"
-                )
+                pytest.fail(f"daemon failed to write endpoint file\nstdout={out}\nstderr={err}")
 
             data = json.loads(endpoint_file.read_text(encoding="utf-8"))
             assert data["account"] == "test"
@@ -110,7 +113,9 @@ class TestRunStopLifecycle:
             # Call status to confirm running
             status = subprocess.run(
                 BRIDGE_CLI + ["status", "--account", "test"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
                 env=_env_with_home(sandbox_home),
             )
             assert status.returncode == 0
@@ -119,7 +124,9 @@ class TestRunStopLifecycle:
             # Stop it
             stop = subprocess.run(
                 BRIDGE_CLI + ["stop", "--account", "test"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
                 env=_env_with_home(sandbox_home),
             )
             assert stop.returncode == 0, stop.stderr
@@ -137,9 +144,10 @@ class TestRunStopLifecycle:
 
     def test_run_rejects_unknown_transport(self, sandbox_home):
         result = subprocess.run(
-            BRIDGE_CLI + ["run",
-             "--account", "test", "--transport", "nonexistent"],
-            capture_output=True, text=True, timeout=10,
+            BRIDGE_CLI + ["run", "--account", "test", "--transport", "nonexistent"],
+            capture_output=True,
+            text=True,
+            timeout=10,
             env=_env_with_home(sandbox_home),
         )
         assert result.returncode == 2
@@ -148,9 +156,9 @@ class TestRunStopLifecycle:
     @pytest.mark.skipif(
         sys.platform == "darwin",
         reason="macOS CI runners (GitHub Actions) have loopback-bind/daemon-startup "
-               "timing that exceeds reasonable subprocess timeouts; tests pass on "
-               "local macOS and on ubuntu/windows CI. Backlog: investigate exact "
-               "runner constraint and re-enable."
+        "timing that exceeds reasonable subprocess timeouts; tests pass on "
+        "local macOS and on ubuntu/windows CI. Backlog: investigate exact "
+        "runner constraint and re-enable.",
     )
     def test_run_exits_on_shutdown_request(self, sandbox_home):
         """POST /shutdown must terminate the `bridge run` process, not just
@@ -160,10 +168,10 @@ class TestRunStopLifecycle:
         and refused."""
         endpoint_file = sandbox_home / ".maestro" / "bridge-ex.endpoint"
         proc = subprocess.Popen(
-            BRIDGE_CLI + ["run",
-             "--account", "ex",
-             "--transport", "null"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            BRIDGE_CLI + ["run", "--account", "ex", "--transport", "null"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
             env=_env_with_home(sandbox_home),
         )
         try:
@@ -177,7 +185,9 @@ class TestRunStopLifecycle:
             # correctly, the daemon exits cleanly.
             stop = subprocess.run(
                 BRIDGE_CLI + ["stop", "--account", "ex"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
                 env=_env_with_home(sandbox_home),
             )
             assert stop.returncode == 0, stop.stderr
@@ -205,7 +215,9 @@ class TestRunStopLifecycle:
         """`stop` on an already-stopped account is a no-op success, not an error."""
         result = subprocess.run(
             BRIDGE_CLI + ["stop", "--account", "ghost"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
             env=_env_with_home(sandbox_home),
         )
         assert result.returncode == 0
@@ -215,15 +227,25 @@ class TestRunStopLifecycle:
         """Stale endpoint (daemon gone, file left) → `stop` cleans it up."""
         endpoint = sandbox_home / ".maestro" / "bridge-ghost.endpoint"
         # Port 1 is never listening locally — guaranteed connection refused.
-        endpoint.write_text(json.dumps({
-            "port": 1, "token": "stale", "pid": 99999,
-            "account": "ghost", "transport": "null",
-            "started_at": "2026-04-24T00:00:00+00:00",
-        }), encoding="utf-8")
+        endpoint.write_text(
+            json.dumps(
+                {
+                    "port": 1,
+                    "token": "stale",
+                    "pid": 99999,
+                    "account": "ghost",
+                    "transport": "null",
+                    "started_at": "2026-04-24T00:00:00+00:00",
+                }
+            ),
+            encoding="utf-8",
+        )
 
         result = subprocess.run(
             BRIDGE_CLI + ["stop", "--account", "ghost"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
             env=_env_with_home(sandbox_home),
         )
         assert result.returncode == 0
@@ -235,7 +257,9 @@ class TestInvalidArgs:
     def test_run_requires_account(self, sandbox_home):
         result = subprocess.run(
             BRIDGE_CLI + ["run"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
             env=_env_with_home(sandbox_home),
         )
         assert result.returncode != 0
@@ -244,14 +268,18 @@ class TestInvalidArgs:
     def test_no_subcommand_errors(self):
         result = subprocess.run(
             BRIDGE_CLI,
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode != 0
 
     def test_help_works(self, sandbox_home):
         result = subprocess.run(
             BRIDGE_CLI + ["--help"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
             env=_env_with_home(sandbox_home),
         )
         assert result.returncode == 0
@@ -266,9 +294,9 @@ class TestConfigDrivenRun:
     @pytest.mark.skipif(
         sys.platform == "darwin",
         reason="macOS CI runners (GitHub Actions) have loopback-bind/daemon-startup "
-               "timing that exceeds reasonable subprocess timeouts; tests pass on "
-               "local macOS and on ubuntu/windows CI. Backlog: investigate exact "
-               "runner constraint and re-enable."
+        "timing that exceeds reasonable subprocess timeouts; tests pass on "
+        "local macOS and on ubuntu/windows CI. Backlog: investigate exact "
+        "runner constraint and re-enable.",
     )
     def test_picks_transport_from_settings(self, sandbox_home, tmp_path):
         """No --transport flag → daemon loads transport from launch-settings.yaml."""
@@ -287,8 +315,11 @@ class TestConfigDrivenRun:
         endpoint_file = sandbox_home / ".maestro" / "bridge-demo.endpoint"
         proc = subprocess.Popen(
             BRIDGE_CLI + ["run", "--account", "demo"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            env=_env_with_home(sandbox_home), cwd=maestro,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_env_with_home(sandbox_home),
+            cwd=maestro,
         )
         try:
             for _ in range(60):
@@ -297,9 +328,7 @@ class TestConfigDrivenRun:
                 time.sleep(0.1)
             else:
                 out, err = proc.communicate(timeout=10)
-                pytest.fail(
-                    f"daemon failed to start\nstdout={out}\nstderr={err}"
-                )
+                pytest.fail(f"daemon failed to start\nstdout={out}\nstderr={err}")
             data = json.loads(endpoint_file.read_text(encoding="utf-8"))
             assert data["transport"] == "null"
         finally:
@@ -319,8 +348,11 @@ class TestConfigDrivenRun:
         )
         result = subprocess.run(
             BRIDGE_CLI + ["run", "--account", "missing"],
-            capture_output=True, text=True, timeout=10,
-            env=_env_with_home(sandbox_home), cwd=maestro,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_env_with_home(sandbox_home),
+            cwd=maestro,
         )
         assert result.returncode == 1
         assert "missing" in result.stderr

@@ -8,10 +8,8 @@ Three layers:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
@@ -23,7 +21,6 @@ from otaman_bridge.mcp_tools import (
     build_request_review_tool,
 )
 
-
 # ---- _compose_review_body -----------------------------------------------
 
 
@@ -31,14 +28,18 @@ class TestComposeReviewBody:
     def test_summary_only(self):
         body = _compose_review_body(
             summary="please review my auth refactor",
-            repo=None, branch=None, pr_url=None, checklist=None,
+            repo=None,
+            branch=None,
+            pr_url=None,
+            checklist=None,
         )
         assert body == "please review my auth refactor"
 
     def test_summary_plus_meta(self):
         body = _compose_review_body(
             summary="auth refactor",
-            repo="auth-service", branch="wip/jwt-rotation",
+            repo="auth-service",
+            branch="wip/jwt-rotation",
             pr_url="https://github.com/example/auth-service/pull/42",
             checklist=None,
         )
@@ -50,7 +51,10 @@ class TestComposeReviewBody:
 
     def test_checklist_rendered_as_bullets(self):
         body = _compose_review_body(
-            summary="x", repo=None, branch=None, pr_url=None,
+            summary="x",
+            repo=None,
+            branch=None,
+            pr_url=None,
             checklist=["confirm JWT roles", "verify clock skew"],
         )
         assert "**Please check:**" in body
@@ -59,7 +63,10 @@ class TestComposeReviewBody:
 
     def test_checklist_strips_blank_entries(self):
         body = _compose_review_body(
-            summary="x", repo=None, branch=None, pr_url=None,
+            summary="x",
+            repo=None,
+            branch=None,
+            pr_url=None,
             checklist=["a", "", "  ", "b"],
         )
         # Only non-blank items survive.
@@ -68,7 +75,10 @@ class TestComposeReviewBody:
 
     def test_checklist_all_blank_omits_section(self):
         body = _compose_review_body(
-            summary="x", repo=None, branch=None, pr_url=None,
+            summary="x",
+            repo=None,
+            branch=None,
+            pr_url=None,
             checklist=["", "  "],
         )
         assert "Please check" not in body
@@ -76,14 +86,19 @@ class TestComposeReviewBody:
     def test_summary_is_stripped(self):
         body = _compose_review_body(
             summary="  spaced out  \n\n",
-            repo=None, branch=None, pr_url=None, checklist=None,
+            repo=None,
+            branch=None,
+            pr_url=None,
+            checklist=None,
         )
         assert body == "spaced out"
 
     def test_omits_empty_meta_section(self):
         body = _compose_review_body(
             summary="x",
-            repo="", branch="", pr_url="",
+            repo="",
+            branch="",
+            pr_url="",
             checklist=None,
         )
         # Empty strings are falsy → no meta block, no checklist.
@@ -95,20 +110,34 @@ class TestComposeReviewBody:
 
 class TestComposeReviewSubject:
     def test_repo_and_branch(self):
-        assert _compose_review_subject(
-            summary="anything", repo="auth-service", branch="wip/jwt",
-        ) == "Review: auth-service / wip/jwt"
+        assert (
+            _compose_review_subject(
+                summary="anything",
+                repo="auth-service",
+                branch="wip/jwt",
+            )
+            == "Review: auth-service / wip/jwt"
+        )
 
     def test_repo_only(self):
-        assert _compose_review_subject(
-            summary="anything", repo="auth-service", branch=None,
-        ) == "Review: auth-service"
+        assert (
+            _compose_review_subject(
+                summary="anything",
+                repo="auth-service",
+                branch=None,
+            )
+            == "Review: auth-service"
+        )
 
     def test_summary_fallback(self):
-        assert _compose_review_subject(
-            summary="please review the JWT rotation flow",
-            repo=None, branch=None,
-        ) == "Review: please review the JWT rotation flow"
+        assert (
+            _compose_review_subject(
+                summary="please review the JWT rotation flow",
+                repo=None,
+                branch=None,
+            )
+            == "Review: please review the JWT rotation flow"
+        )
 
     def test_long_summary_truncated(self):
         long = "a" * 200
@@ -121,20 +150,31 @@ class TestComposeReviewSubject:
     def test_summary_first_line_only(self):
         subject = _compose_review_subject(
             summary="line one\nline two\nline three",
-            repo=None, branch=None,
+            repo=None,
+            branch=None,
         )
         assert subject == "Review: line one"
 
     def test_empty_summary_uses_placeholder(self):
-        assert _compose_review_subject(
-            summary="", repo=None, branch=None,
-        ) == "Review: request"
+        assert (
+            _compose_review_subject(
+                summary="",
+                repo=None,
+                branch=None,
+            )
+            == "Review: request"
+        )
 
     def test_subject_blank_branch_skips_slash(self):
         """Empty branch should not produce 'Review: repo / '"""
-        assert _compose_review_subject(
-            summary="x", repo="auth-service", branch="",
-        ) == "Review: auth-service"
+        assert (
+            _compose_review_subject(
+                summary="x",
+                repo="auth-service",
+                branch="",
+            )
+            == "Review: auth-service"
+        )
 
 
 # ---- identity-required registration -------------------------------------
@@ -158,6 +198,7 @@ class _FakeSent:
 
 class _FakeInbox:
     """Records calls to write_message + returns canned sends."""
+
     def __init__(self):
         self.writes: list[dict] = []
         self.raise_value_error = False
@@ -214,7 +255,8 @@ class TestRequestReviewHandlerValidation:
 
     def test_loopback_caller_rejected(self, tool, loopback_ctx):
         result = tool.handler(
-            {"target_user_id": "u", "summary": "x"}, loopback_ctx,
+            {"target_user_id": "u", "summary": "x"},
+            loopback_ctx,
         )
         assert result["isError"] is True
         assert "unauthenticated" in result["content"][0]["text"].lower()
@@ -222,7 +264,8 @@ class TestRequestReviewHandlerValidation:
     @pytest.mark.parametrize("bad", ["urgent", "critical", "", "HIGH"])
     def test_bad_urgency_rejected(self, tool, authd_ctx, bad):
         result = tool.handler(
-            {"target_user_id": "u", "summary": "x", "urgency": bad}, authd_ctx,
+            {"target_user_id": "u", "summary": "x", "urgency": bad},
+            authd_ctx,
         )
         assert result["isError"] is True
         assert "urgency" in result["content"][0]["text"]
@@ -245,7 +288,8 @@ class TestRequestReviewHandlerValidation:
     @pytest.mark.parametrize("field", ["repo", "branch", "pr_url"])
     def test_metadata_fields_must_be_strings(self, tool, authd_ctx, field):
         result = tool.handler(
-            {"target_user_id": "u", "summary": "x", field: 42}, authd_ctx,
+            {"target_user_id": "u", "summary": "x", field: 42},
+            authd_ctx,
         )
         assert result["isError"] is True
         assert field in result["content"][0]["text"]
@@ -269,15 +313,18 @@ class TestRequestReviewHandlerHappyPath:
         assert write["subject"] == "Review: please review my refactor"
 
     def test_full_call_with_all_fields(self, tool, authd_ctx):
-        result = tool.handler({
-            "target_user_id": "user-B",
-            "summary": "verify the new JWT-rotation flow",
-            "repo": "auth-service",
-            "branch": "wip/jwt-rotation",
-            "pr_url": "https://github.com/example/auth-service/pull/42",
-            "urgency": "high",
-            "checklist": ["confirm role claim shape", "verify clock skew"],
-        }, authd_ctx)
+        result = tool.handler(
+            {
+                "target_user_id": "user-B",
+                "summary": "verify the new JWT-rotation flow",
+                "repo": "auth-service",
+                "branch": "wip/jwt-rotation",
+                "pr_url": "https://github.com/example/auth-service/pull/42",
+                "urgency": "high",
+                "checklist": ["confirm role claim shape", "verify clock skew"],
+            },
+            authd_ctx,
+        )
         assert "isError" not in result or result.get("isError") is not True
         write = _inbox_of(tool).writes[0]
         assert write["msg_type"] == "review-request"
@@ -292,16 +339,25 @@ class TestRequestReviewHandlerHappyPath:
         assert "- verify clock skew" in body
 
     def test_explicit_subject_override(self, tool, authd_ctx):
-        tool.handler({
-            "target_user_id": "user-B", "summary": "x",
-            "subject": "Custom subject line",
-        }, authd_ctx)
+        tool.handler(
+            {
+                "target_user_id": "user-B",
+                "summary": "x",
+                "subject": "Custom subject line",
+            },
+            authd_ctx,
+        )
         assert _inbox_of(tool).writes[0]["subject"] == "Custom subject line"
 
     def test_structured_content_response_shape(self, tool, authd_ctx):
-        result = tool.handler({
-            "target_user_id": "user-B", "summary": "x", "urgency": "low",
-        }, authd_ctx)
+        result = tool.handler(
+            {
+                "target_user_id": "user-B",
+                "summary": "x",
+                "urgency": "low",
+            },
+            authd_ctx,
+        )
         sc = result["structuredContent"]
         assert sc["message_id"] == "id-1"
         assert sc["to_user"] == "user-B"
@@ -312,7 +368,8 @@ class TestRequestReviewHandlerHappyPath:
         inbox = _inbox_of(tool)
         inbox.raise_value_error = True
         result = tool.handler(
-            {"target_user_id": "../escape", "summary": "x"}, authd_ctx,
+            {"target_user_id": "../escape", "summary": "x"},
+            authd_ctx,
         )
         assert result["isError"] is True
         assert "invalid message" in result["content"][0]["text"]
@@ -324,8 +381,16 @@ class TestToolSchema:
         assert "review" in tool.description.lower()
         assert tool.input_schema["required"] == ["target_user_id", "summary"]
         props = tool.input_schema["properties"]
-        for field in ("target_user_id", "summary", "repo", "branch",
-                      "pr_url", "urgency", "checklist", "subject"):
+        for field in (
+            "target_user_id",
+            "summary",
+            "repo",
+            "branch",
+            "pr_url",
+            "urgency",
+            "checklist",
+            "subject",
+        ):
             assert field in props, f"missing field {field} in schema"
         assert props["urgency"]["enum"] == ["low", "normal", "high"]
         assert props["urgency"]["default"] == "normal"

@@ -17,7 +17,6 @@ from otaman_bridge_ee.web_auth import (
 )
 from otaman_bridge_ee.web_session import SessionStore
 
-
 # ---- Helpers -----------------------------------------------------------
 
 
@@ -63,24 +62,37 @@ def _make_completer(
     session_store=None,
 ):
     if exchanger is None:
-        exchanger = _StubExchanger(response=TokenResponse(
-            access_token="at-1", id_token="it-1", refresh_token=None,
-            expires_in=3600, token_type="Bearer",
-        ))
+        exchanger = _StubExchanger(
+            response=TokenResponse(
+                access_token="at-1",
+                id_token="it-1",
+                refresh_token=None,
+                expires_in=3600,
+                token_type="Bearer",
+            )
+        )
     if validator_result is None:
         validator_result = _StubValidatorResult(
-            ok=True, user_id="user-42", email="u@e", roles=("otaman:viewer",),
+            ok=True,
+            user_id="user-42",
+            email="u@e",
+            roles=("otaman:viewer",),
         )
     if pending_store is None:
         pending_store = PendingLoginStore()
     if session_store is None:
         session_store = SessionStore()
-    return LoginCompleter(
-        token_exchanger=exchanger,
-        validator=_StubValidator(validator_result),
-        session_store=session_store,
-        pending_store=pending_store,
-    ), exchanger, pending_store, session_store
+    return (
+        LoginCompleter(
+            token_exchanger=exchanger,
+            validator=_StubValidator(validator_result),
+            session_store=session_store,
+            pending_store=pending_store,
+        ),
+        exchanger,
+        pending_store,
+        session_store,
+    )
 
 
 # ---- Tests -------------------------------------------------------------
@@ -122,8 +134,11 @@ class TestLoginCompleter:
     def test_missing_id_token_raises(self):
         # TokenResponse with no id_token (Zitadel misconfig)
         bad_response = TokenResponse(
-            access_token="at", id_token=None, refresh_token=None,
-            expires_in=3600, token_type="Bearer",
+            access_token="at",
+            id_token=None,
+            refresh_token=None,
+            expires_in=3600,
+            token_type="Bearer",
         )
         completer, _, pending, _ = _make_completer(
             exchanger=_StubExchanger(response=bad_response),

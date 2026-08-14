@@ -21,14 +21,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 import time
 from pathlib import Path
-from typing import Any
 
 from otaman_bridge.bus_surface import (
     BusMessage,
-    SurfaceDecision,
     decide,
     iter_bus_messages,
     load_surface_overrides,
@@ -38,8 +35,8 @@ from otaman_bridge.core import ApprovalRequest, InfoMessage
 _log = logging.getLogger("maestro.bridge.bus_watcher")  # legacy: logger renamed at otaman-core 1.0
 
 
-POLL_INTERVAL_SECONDS = 2.0      # how often we re-scan the bus
-PRUNE_OLDER_THAN_SECONDS = 7 * 24 * 60 * 60   # drop state entries older than this
+POLL_INTERVAL_SECONDS = 2.0  # how often we re-scan the bus
+PRUNE_OLDER_THAN_SECONDS = 7 * 24 * 60 * 60  # drop state entries older than this
 STATE_FILENAME = "bus-surfaced.state"
 
 _warned_legacy_state: bool = False
@@ -190,7 +187,7 @@ def build_approval_request(
         reason=msg.subject or f"{msg.type} from {msg.from_}",
         priority=priority,  # type: ignore[arg-type]
         timeout_seconds=timeout_seconds,
-        request_id=msg.stem,   # msg filename stem = unique, lookup key
+        request_id=msg.stem,  # msg filename stem = unique, lookup key
     )
 
 
@@ -218,8 +215,8 @@ class BusWatcher:
         *,
         account: str,
         project: str,
-        on_info,     # async callable: (InfoMessage) -> ...
-        on_approval, # async callable: (ApprovalRequest, BusMessage) -> ...
+        on_info,  # async callable: (InfoMessage) -> ...
+        on_approval,  # async callable: (ApprovalRequest, BusMessage) -> ...
         on_event=None,  # sync callable: (BusMessage) -> None; called for every surfaced msg
         poll_interval: float = POLL_INTERVAL_SECONDS,
     ) -> None:
@@ -236,7 +233,9 @@ class BusWatcher:
         """Run the poll loop until cancelled / stop() called."""
         _log.info(
             "bus watcher started for %s (project=%s, poll=%.1fs)",
-            self.project_root, self.project, self.poll_interval,
+            self.project_root,
+            self.project,
+            self.poll_interval,
         )
         try:
             while not self._stopping.is_set():
@@ -246,7 +245,8 @@ class BusWatcher:
                     _log.exception("bus watcher: scan failed")
                 try:
                     await asyncio.wait_for(
-                        self._stopping.wait(), timeout=self.poll_interval,
+                        self._stopping.wait(),
+                        timeout=self.poll_interval,
                     )
                 except asyncio.TimeoutError:
                     continue
@@ -281,7 +281,8 @@ class BusWatcher:
                         self._on_event(msg)
                     except Exception:  # noqa: BLE001
                         _log.exception(
-                            "pm sync: handle_event failed for %s; continuing", msg.stem,
+                            "pm sync: handle_event failed for %s; continuing",
+                            msg.stem,
                         )
                 state[msg.stem] = now
                 state_changed = True
@@ -290,20 +291,24 @@ class BusWatcher:
             try:
                 if decision.interactive:
                     req = build_approval_request(
-                        msg, account=self.account, project=self.project,
+                        msg,
+                        account=self.account,
+                        project=self.project,
                     )
                     await self._on_approval(req, msg)
                 else:
                     info = build_info_message(
-                        msg, account=self.account, project=self.project,
+                        msg,
+                        account=self.account,
+                        project=self.project,
                         severity=decision.severity,
                     )
                     await self._on_info(info)
             except Exception:  # noqa: BLE001
                 _log.exception(
-                    "bus watcher: dispatch failed for %s (%s); "
-                    "will retry on next scan",
-                    msg.stem, msg.type,
+                    "bus watcher: dispatch failed for %s (%s); will retry on next scan",
+                    msg.stem,
+                    msg.type,
                 )
                 continue
 
@@ -312,7 +317,8 @@ class BusWatcher:
                     self._on_event(msg)
                 except Exception:  # noqa: BLE001
                     _log.exception(
-                        "pm sync: handle_event failed for %s; continuing", msg.stem,
+                        "pm sync: handle_event failed for %s; continuing",
+                        msg.stem,
                     )
 
             state[msg.stem] = now

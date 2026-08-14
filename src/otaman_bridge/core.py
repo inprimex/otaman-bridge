@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import datetime as _dt
 import secrets as _secrets
+from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field
-from typing import Any, AsyncIterator, Literal, Protocol, runtime_checkable
-
+from typing import Any, Literal, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Enums (as Literal types for cheap, stdlib-only validation)
@@ -63,7 +63,7 @@ class ApprovalRequest:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ApprovalRequest":
+    def from_dict(cls, data: dict[str, Any]) -> ApprovalRequest:
         return cls(**data)
 
 
@@ -74,7 +74,7 @@ class ApprovalResponse:
     decision: Decision
     request_id: str
     responder: str = ""  # e.g. "telegram:@roman", "cli:local"
-    message: str = ""    # optional note (e.g. rejection reason)
+    message: str = ""  # optional note (e.g. rejection reason)
     updated_input: dict[str, Any] | None = None  # for edit-before-allow
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,7 +84,7 @@ class ApprovalResponse:
         return out
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ApprovalResponse":
+    def from_dict(cls, data: dict[str, Any]) -> ApprovalResponse:
         return cls(**data)
 
 
@@ -104,7 +104,7 @@ class InfoMessage:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "InfoMessage":
+    def from_dict(cls, data: dict[str, Any]) -> InfoMessage:
         return cls(**data)
 
 
@@ -121,7 +121,7 @@ class InboundReply:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "InboundReply":
+    def from_dict(cls, data: dict[str, Any]) -> InboundReply:
         return cls(**data)
 
 
@@ -141,7 +141,7 @@ class TransportHandle:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TransportHandle":
+    def from_dict(cls, data: dict[str, Any]) -> TransportHandle:
         return cls(**data)
 
 
@@ -212,8 +212,7 @@ def get_transport(name: str) -> type[Transport]:
     """Look up a registered transport class. Raises KeyError if unknown."""
     if name not in _TRANSPORTS:
         raise KeyError(
-            f"Unknown transport: {name!r}. Registered: "
-            f"{sorted(_TRANSPORTS) or '(none)'}"
+            f"Unknown transport: {name!r}. Registered: {sorted(_TRANSPORTS) or '(none)'}"
         )
     return _TRANSPORTS[name]
 

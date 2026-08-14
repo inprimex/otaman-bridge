@@ -17,7 +17,8 @@ import asyncio
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from otaman_bridge.core import ApprovalRequest, ApprovalResponse, TransportHandle
 

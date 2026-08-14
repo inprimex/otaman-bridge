@@ -72,12 +72,13 @@ The `max()` function resolves as follows:
 
 ```python
 _ESCALATION_ORDER = {
-    DataClassification.INTERNAL:   0,
-    DataClassification.SENSITIVE:  1,
-    DataClassification.PII:        2,
-    DataClassification.PHI:        2,   # same tier as PII
-    DataClassification.REGULATED:  3,
+    DataClassification.INTERNAL: 0,
+    DataClassification.SENSITIVE: 1,
+    DataClassification.PII: 2,
+    DataClassification.PHI: 2,  # same tier as PII
+    DataClassification.REGULATED: 3,
 }
+
 
 def classification_max(a, b):
     if _ESCALATION_ORDER[a] >= _ESCALATION_ORDER[b]:
@@ -187,8 +188,7 @@ def classify_task(
     user_roles: tuple[str, ...],
     task_type: str,
     task_type_escalation_table: list[dict] | None = None,
-) -> DataClassification:
-    ...
+) -> DataClassification: ...
 ```
 
 This is a pure function — easily unit-tested without any network or file I/O. The routing

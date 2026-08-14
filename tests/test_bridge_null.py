@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 
 import pytest
-
 
 from otaman_bridge.core import (
     ApprovalRequest,
     InboundReply,
     InfoMessage,
-    TransportHandle,
     get_transport,
 )
 from otaman_bridge.transports.null import NullTransport
@@ -48,7 +44,10 @@ class TestSendRecording:
         async def run():
             t = NullTransport()
             msg = InfoMessage(
-                account="p", project="x", severity="info", title="hi",
+                account="p",
+                project="x",
+                severity="info",
+                title="hi",
             )
             await t.send_info(msg)
             assert t.sent_infos == [msg]
@@ -73,7 +72,8 @@ class TestInboundQueue:
             t = NullTransport()
             req = _make_request()
             reply = InboundReply(
-                request_id=req.request_id, action="approve",
+                request_id=req.request_id,
+                action="approve",
                 responder="test:user",
             )
             t.push_reply(reply)
@@ -122,7 +122,9 @@ class TestRegistration:
         """Importing bridge.transports.null registers the transport."""
         # Force a re-import by accessing the module
         import importlib
+
         import otaman_bridge.transports.null as null_mod
+
         importlib.reload(null_mod)
         assert get_transport("null") is null_mod.NullTransport
 
@@ -132,12 +134,21 @@ class TestReset:
         async def run():
             t = NullTransport()
             await t.send_approval(_make_request())
-            await t.send_info(InfoMessage(
-                account="p", project="x", severity="info", title="h",
-            ))
-            t.push_reply(InboundReply(
-                request_id="x", action="approve", responder="u",
-            ))
+            await t.send_info(
+                InfoMessage(
+                    account="p",
+                    project="x",
+                    severity="info",
+                    title="h",
+                )
+            )
+            t.push_reply(
+                InboundReply(
+                    request_id="x",
+                    action="approve",
+                    responder="u",
+                )
+            )
             assert t.sent_approvals and t.sent_infos
             assert not t.inbound_queue.empty()
 

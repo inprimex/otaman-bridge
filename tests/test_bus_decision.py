@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
-
 
 from otaman_bridge.bus_decision import (
     broadcast_decision,
@@ -27,11 +25,16 @@ def _make_msg(
     subject: str = "Add pagination to GET /users",
 ) -> BusMessage:
     fm = {
-        "id": stem, "from": from_, "to": to, "type": type,
-        "priority": "normal", "timestamp": "2026-04-24T10:00:00Z",
+        "id": stem,
+        "from": from_,
+        "to": to,
+        "type": type,
+        "priority": "normal",
+        "timestamp": "2026-04-24T10:00:00Z",
     }
     return BusMessage(
-        path=Path(f"{stem}.md"), stem=stem,
+        path=Path(f"{stem}.md"),
+        stem=stem,
         frontmatter=fm,
         body=f"## Subject: {subject}\n\nWe need pagination.\n",
     )
@@ -51,7 +54,8 @@ def project_root(tmp_path):
 class TestWriteApprovalAck:
     def test_approved_writes_ack_file(self, project_root):
         path = write_approval_ack(
-            project_root, "20260424T100000-backend-to-human-scr",
+            project_root,
+            "20260424T100000-backend-to-human-scr",
             decision="approved",
         )
         assert path.is_file()
@@ -61,7 +65,9 @@ class TestWriteApprovalAck:
 
     def test_rejected_writes_ack_file(self, project_root):
         path = write_approval_ack(
-            project_root, "some-stem", decision="rejected",
+            project_root,
+            "some-stem",
+            decision="rejected",
         )
         assert path.read_text(encoding="utf-8") == "rejected\n"
 
@@ -85,8 +91,11 @@ class TestBroadcastApproved:
     def test_broadcast_has_correct_frontmatter(self, project_root):
         msg = _make_msg()
         path = broadcast_decision(
-            project_root, msg, decision="approved",
-            responder="telegram:12345", comment="Looks good",
+            project_root,
+            msg,
+            decision="approved",
+            responder="telegram:12345",
+            comment="Looks good",
         )
         assert path.is_file()
         content = path.read_text(encoding="utf-8")
@@ -94,7 +103,7 @@ class TestBroadcastApproved:
         assert "from: human" in content
         assert "to: all" in content
         assert msg.stem in content  # reference to original proposal
-        assert "Looks good" in content   # comment surfaced
+        assert "Looks good" in content  # comment surfaced
         assert "telegram:12345" in content  # responder noted
         # Filename slug should include the msg type
         assert path.name.endswith("-human-to-all-spec-change-approved.md")
@@ -104,8 +113,11 @@ class TestBroadcastRejected:
     def test_rejected_goes_to_proposer_not_all(self, project_root):
         msg = _make_msg(from_="frontend-agent")
         path = broadcast_decision(
-            project_root, msg, decision="rejected",
-            responder="telegram:12345", comment="Not now, focus on MVP",
+            project_root,
+            msg,
+            decision="rejected",
+            responder="telegram:12345",
+            comment="Not now, focus on MVP",
         )
         content = path.read_text(encoding="utf-8")
         assert "type: spec-change-rejected" in content
@@ -115,7 +127,8 @@ class TestBroadcastRejected:
 
     def test_rejected_without_comment_has_default_reason(self, project_root):
         path = broadcast_decision(
-            project_root, _make_msg(),
+            project_root,
+            _make_msg(),
             decision="rejected",
         )
         content = path.read_text(encoding="utf-8")
@@ -136,8 +149,11 @@ class TestRecordDecision:
     def test_writes_both_ack_and_broadcast(self, project_root):
         msg = _make_msg()
         ack, broadcast = record_decision(
-            project_root, msg, decision="approved",
-            responder="telegram:roman", comment="ship it",
+            project_root,
+            msg,
+            decision="approved",
+            responder="telegram:roman",
+            comment="ship it",
         )
         assert ack.is_file()
         assert broadcast.is_file()
@@ -149,7 +165,9 @@ class TestRecordDecision:
     def test_reject_record(self, project_root):
         msg = _make_msg(from_="observer-agent")
         ack, broadcast = record_decision(
-            project_root, msg, decision="rejected",
+            project_root,
+            msg,
+            decision="rejected",
             comment="scope creep",
         )
         assert ack.read_text(encoding="utf-8").strip() == "rejected"
@@ -166,7 +184,8 @@ class TestWriteReplyMessage:
     def test_reply_goes_to_original_proposer(self, project_root):
         msg = _make_msg(from_="backend-agent")
         path = write_reply_message(
-            project_root, msg,
+            project_root,
+            msg,
             text="Use cursor pagination, not offset.",
             responder="telegram:roman",
         )
@@ -183,7 +202,9 @@ class TestWriteReplyMessage:
     def test_reply_without_responder_still_works(self, project_root):
         msg = _make_msg()
         path = write_reply_message(
-            project_root, msg, text="sounds good",
+            project_root,
+            msg,
+            text="sounds good",
         )
         assert path.is_file()
         # Responder line is optional — absent when empty.
@@ -199,7 +220,9 @@ class TestWriteAcknowledge:
     def test_ack_only_no_comment(self, project_root):
         msg = _make_msg(to="human")
         ack_path, reply_path = write_acknowledge(
-            project_root, msg, responder="telegram:roman",
+            project_root,
+            msg,
+            responder="telegram:roman",
         )
         assert ack_path.is_file()
         assert ack_path.read_text(encoding="utf-8").strip() == "acknowledged"
@@ -208,7 +231,8 @@ class TestWriteAcknowledge:
     def test_ack_with_comment_writes_both(self, project_root):
         msg = _make_msg(to="human", from_="ops-agent")
         ack_path, reply_path = write_acknowledge(
-            project_root, msg,
+            project_root,
+            msg,
             responder="telegram:roman",
             comment="on it — ETA 30 min",
         )

@@ -10,11 +10,8 @@ when on) lives in test_dcr_shim_overlay_route.py.
 from __future__ import annotations
 
 import json
-import time
 import urllib.error
 import urllib.request
-from io import BytesIO
-from unittest.mock import patch
 
 import pytest
 
@@ -26,7 +23,6 @@ from otaman_bridge_ee.dcr_shim import (
     fetch_upstream_metadata,
     overlay_metadata,
 )
-
 
 # ---- IdpConfig.from_env --------------------------------------------------
 
@@ -42,10 +38,12 @@ class TestIdpConfigFromEnv:
 
     def test_enabled_with_truthy_values(self):
         for val in ("1", "true", "TRUE", "yes"):
-            cfg = IdpConfig.from_env(env={
-                "OTAMAN_DCR_SHIM": val,
-                "OIDC_ISSUER": "http://idp.example",
-            })
+            cfg = IdpConfig.from_env(
+                env={
+                    "OTAMAN_DCR_SHIM": val,
+                    "OIDC_ISSUER": "http://idp.example",
+                }
+            )
             assert cfg is not None, f"truthy={val} should enable"
             assert cfg.dcr_shim is True
 
@@ -54,114 +52,142 @@ class TestIdpConfigFromEnv:
         assert IdpConfig.from_env(env={"OTAMAN_DCR_SHIM": "1"}) is None
 
     def test_management_base_url_falls_back_to_issuer(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://idp.example:8080",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://idp.example:8080",
+            }
+        )
         assert cfg is not None
         assert cfg.management_base_url == "http://idp.example:8080"
 
     def test_management_base_url_explicit_wins(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://idp.example",
-            "OTAMAN_DCR_SHIM_MGMT_BASE": "http://mgmt.example",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://idp.example",
+                "OTAMAN_DCR_SHIM_MGMT_BASE": "http://mgmt.example",
+            }
+        )
         assert cfg.management_base_url == "http://mgmt.example"
 
     def test_management_base_url_strips_trailing_slash(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OTAMAN_DCR_SHIM_MGMT_BASE": "http://mgmt.example/",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OTAMAN_DCR_SHIM_MGMT_BASE": "http://mgmt.example/",
+            }
+        )
         assert cfg.management_base_url == "http://mgmt.example"
 
     def test_default_trust_is_protected(self):
         """F185: safe-by-default when nothing configures trust anywhere."""
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+            }
+        )
         assert cfg.registration_trust == "protected"
 
     def test_trust_open_via_env_backcompat(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-            "OTAMAN_DCR_SHIM_TRUST": "open",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_TRUST": "open",
+            }
+        )
         assert cfg.registration_trust == "open"
 
     def test_trust_protected_via_env(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-            "OTAMAN_DCR_SHIM_TRUST": "protected",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_TRUST": "protected",
+            }
+        )
         assert cfg.registration_trust == "protected"
 
     def test_invalid_trust_falls_back_to_protected(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-            "OTAMAN_DCR_SHIM_TRUST": "weird-value",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_TRUST": "weird-value",
+            }
+        )
         assert cfg.registration_trust == "protected"
 
     def test_default_type_is_zitadel(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+            }
+        )
         assert cfg.type == "zitadel"
 
     def test_cache_seconds_default_and_override(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+            }
+        )
         assert cfg.metadata_cache_seconds == 300
 
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-            "OTAMAN_DCR_SHIM_CACHE_SECS": "30",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_CACHE_SECS": "30",
+            }
+        )
         assert cfg.metadata_cache_seconds == 30
 
     def test_cache_seconds_invalid_falls_back_to_default(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-            "OTAMAN_DCR_SHIM_CACHE_SECS": "not-a-number",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_CACHE_SECS": "not-a-number",
+            }
+        )
         assert cfg.metadata_cache_seconds == 300
 
     def test_pat_loaded_from_env(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-            "OTAMAN_DCR_SHIM_PAT": "MY-PAT-TOKEN",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_PAT": "MY-PAT-TOKEN",
+            }
+        )
         assert cfg.mgmt_pat == "MY-PAT-TOKEN"
 
     def test_pat_defaults_to_empty(self):
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+            }
+        )
         assert cfg.mgmt_pat == ""
 
     def test_pat_and_client_credentials_both_loaded(self):
         """Both auth modes can be set in env simultaneously; the runtime
         chooses (PAT wins). This is what bootstrap emits today."""
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-            "OTAMAN_DCR_SHIM_PAT": "P",
-            "OTAMAN_DCR_SHIM_CLIENT_ID": "C",
-            "OTAMAN_DCR_SHIM_SECRET": "S",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_PAT": "P",
+                "OTAMAN_DCR_SHIM_CLIENT_ID": "C",
+                "OTAMAN_DCR_SHIM_SECRET": "S",
+            }
+        )
         assert cfg.mgmt_pat == "P"
         assert cfg.machine_user_client_id == "C"
         assert cfg.machine_user_client_secret == "S"
@@ -169,11 +195,13 @@ class TestIdpConfigFromEnv:
     def test_cache_seconds_minimum_is_1(self):
         """Zero or negative would mean 'never cache'; clamp to 1 so the
         cache always returns something coherent."""
-        cfg = IdpConfig.from_env(env={
-            "OTAMAN_DCR_SHIM": "1",
-            "OIDC_ISSUER": "http://i",
-            "OTAMAN_DCR_SHIM_CACHE_SECS": "0",
-        })
+        cfg = IdpConfig.from_env(
+            env={
+                "OTAMAN_DCR_SHIM": "1",
+                "OIDC_ISSUER": "http://i",
+                "OTAMAN_DCR_SHIM_CACHE_SECS": "0",
+            }
+        )
         assert cfg.metadata_cache_seconds == 1
 
 
@@ -190,7 +218,8 @@ class TestTrustPrecedence:
 
     def test_platform_yaml_wins_over_env(self, tmp_path):
         self._write_platform_yaml(
-            tmp_path, "terminal:\n  dcr_shim_trust: open\n",
+            tmp_path,
+            "terminal:\n  dcr_shim_trust: open\n",
         )
         cfg = IdpConfig.from_env(
             env={
@@ -215,7 +244,8 @@ class TestTrustPrecedence:
         assert cfg.registration_trust == "open"
 
     def test_platform_yaml_present_but_no_dcr_shim_trust_key_falls_to_env(
-        self, tmp_path,
+        self,
+        tmp_path,
     ):
         self._write_platform_yaml(tmp_path, "terminal:\n  other_key: 1\n")
         cfg = IdpConfig.from_env(
@@ -237,7 +267,8 @@ class TestTrustPrecedence:
 
     def test_invalid_platform_yaml_value_falls_back_to_protected(self, tmp_path):
         self._write_platform_yaml(
-            tmp_path, "terminal:\n  dcr_shim_trust: nonsense\n",
+            tmp_path,
+            "terminal:\n  dcr_shim_trust: nonsense\n",
         )
         cfg = IdpConfig.from_env(
             env={"OTAMAN_DCR_SHIM": "1", "OIDC_ISSUER": "http://i"},
@@ -307,22 +338,28 @@ class TestMetadataCache:
 
 def _fake_response(*, status: int = 200, body: bytes = b"{}"):
     """Build a fake urlopen result with the minimal duck type."""
+
     class _Resp:
         def __init__(self):
             self.status = status
             self._body = body
+
         def read(self):
             return self._body
+
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             return False
+
     return _Resp()
 
 
 class _FakeOpener:
     def __init__(self, response_fn):
         self._response_fn = response_fn
+
     def open(self, req, timeout=None):
         return self._response_fn(req)
 
@@ -336,18 +373,22 @@ class TestFetchUpstreamMetadata:
 
     def test_fetches_from_openid_configuration_path(self):
         seen_urls = []
+
         def _resp(req):
             seen_urls.append(req.full_url)
             return _fake_response(body=b'{"k":"v"}')
+
         opener = _FakeOpener(_resp)
         fetch_upstream_metadata("http://idp", opener=opener)
         assert seen_urls == ["http://idp/.well-known/openid-configuration"]
 
     def test_strips_trailing_slash_on_base_url(self):
         seen_urls = []
+
         def _resp(req):
             seen_urls.append(req.full_url)
-            return _fake_response(body=b'{}')
+            return _fake_response(body=b"{}")
+
         opener = _FakeOpener(_resp)
         fetch_upstream_metadata("http://idp/", opener=opener)
         assert seen_urls == ["http://idp/.well-known/openid-configuration"]
@@ -371,6 +412,7 @@ class TestFetchUpstreamMetadata:
     def test_url_error_raises(self):
         def _raise(req):
             raise urllib.error.URLError("connection refused")
+
         opener = _FakeOpener(_raise)
         with pytest.raises(MetadataFetchError, match="unreachable"):
             fetch_upstream_metadata("http://idp", opener=opener)
@@ -396,7 +438,10 @@ class TestOverlayMetadata:
         and get rejected at token exchange (regression from D7 probe)."""
         doc = {
             "token_endpoint_auth_methods_supported": [
-                "none", "client_secret_basic", "client_secret_post", "private_key_jwt",
+                "none",
+                "client_secret_basic",
+                "client_secret_post",
+                "private_key_jwt",
             ],
         }
         out = overlay_metadata(doc, registration_endpoint="http://x")
@@ -436,9 +481,13 @@ class TestOverlayMetadata:
 
 class TestDeriveRegistrationEndpoint:
     def test_appends_path(self):
-        assert derive_registration_endpoint(bridge_public_url="http://b:8090") \
+        assert (
+            derive_registration_endpoint(bridge_public_url="http://b:8090")
             == "http://b:8090/oauth/register"
+        )
 
     def test_strips_trailing_slash(self):
-        assert derive_registration_endpoint(bridge_public_url="http://b:8090/") \
+        assert (
+            derive_registration_endpoint(bridge_public_url="http://b:8090/")
             == "http://b:8090/oauth/register"
+        )

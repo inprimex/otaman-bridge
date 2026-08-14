@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 
@@ -27,7 +26,6 @@ from otaman_bridge.daemon import (
     _build_oidc_validator_from_env,
 )
 from otaman_bridge.transports.null import NullTransport
-
 
 # ---------------------------------------------------------------------------
 # Fixtures shared with the rest of the daemon tests
@@ -51,13 +49,15 @@ def running_daemon(tmp_path):
 
 def _notify(url: str, token: str | None) -> int:
     """POST /notify with a minimal info-message body; returns HTTP status."""
-    payload = json.dumps({
-        "account": "test",
-        "project": "test-proj",
-        "severity": "info",
-        "title": "test",
-        "body": "test",
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "account": "test",
+            "project": "test-proj",
+            "severity": "info",
+            "title": "test",
+            "body": "test",
+        }
+    ).encode("utf-8")
     req = urllib.request.Request(url, data=payload, method="POST")
     req.add_header("Content-Type", "application/json")
     if token:
@@ -197,13 +197,15 @@ class TestAuthOkWithOIDC:
         daemon, _ = running_daemon
         daemon.oidc_validator = _StubValidator(accept=True)  # would accept any header
         url = self._url(daemon, "/notify")
-        payload = json.dumps({
-            "account": "test",
-            "project": "test-proj",
-            "severity": "info",
-            "title": "x",
-            "body": "x",
-        }).encode()
+        payload = json.dumps(
+            {
+                "account": "test",
+                "project": "test-proj",
+                "severity": "info",
+                "title": "x",
+                "body": "x",
+            }
+        ).encode()
         req = urllib.request.Request(url, data=payload, method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Basic abcdef")

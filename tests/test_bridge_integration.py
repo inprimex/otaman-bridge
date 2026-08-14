@@ -9,14 +9,12 @@ daemon's listener loop drains).
 from __future__ import annotations
 
 import json
-import sys
 import threading
 import time
 import urllib.request
 from pathlib import Path
 
 import pytest
-
 
 from otaman_bridge.core import InboundReply
 from otaman_bridge.daemon import BridgeDaemon
@@ -90,12 +88,14 @@ class TestListenerLoop:
         assert transport.sent_approvals
 
         # Simulate a button tap by pushing an InboundReply
-        transport.push_reply(InboundReply(
-            request_id=rid,
-            action="approve",
-            responder="telegram:12345",
-            comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="approve",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
 
         t.join(timeout=5.0)
         assert "error" not in result, result.get("error")
@@ -124,12 +124,14 @@ class TestListenerLoop:
                 break
             time.sleep(0.05)
 
-        transport.push_reply(InboundReply(
-            request_id=rid,
-            action="reject",
-            responder="telegram:12345",
-            comment="too risky",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="reject",
+                responder="telegram:12345",
+                comment="too risky",
+            )
+        )
 
         t.join(timeout=5.0)
         assert result["body"]["decision"] == "deny"
@@ -159,10 +161,14 @@ class TestListenerLoop:
             time.sleep(0.05)
 
         # Simulate a "Details" tap — should NOT resolve the approval.
-        transport.push_reply(InboundReply(
-            request_id=rid, action="details",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="details",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
 
         t.join(timeout=5.0)
         # Approval should have timed out because details didn't resolve it
@@ -198,10 +204,14 @@ class TestListenerLoop:
         assert transport.sent_approvals
 
         # Tap Details.
-        transport.push_reply(InboundReply(
-            request_id=rid, action="details",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="details",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
 
         # Give the async dispatch a beat to call send_info.
         for _ in range(40):
@@ -218,10 +228,14 @@ class TestListenerLoop:
         assert "nested" in info.body
 
         # Now approve it so the request returns and the test cleans up.
-        transport.push_reply(InboundReply(
-            request_id=rid, action="approve",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="approve",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
         t.join(timeout=5.0)
         assert result["body"]["decision"] == "allow"
 
@@ -229,12 +243,14 @@ class TestListenerLoop:
         """Details on an already-resolved / nonexistent approval is
         logged + skipped, not a crash or false send."""
         _, transport = running_daemon
-        transport.push_reply(InboundReply(
-            request_id="no-such-approval",
-            action="details",
-            responder="telegram:12345",
-            comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id="no-such-approval",
+                action="details",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
         # Give the listener a beat — nothing should reach sent_infos.
         time.sleep(0.3)
         assert not transport.sent_infos
@@ -243,12 +259,14 @@ class TestListenerLoop:
         """Stray reply (typo'd request_id) doesn't break the listener loop."""
         daemon, transport = running_daemon
         # Push a reply with no matching pending approval
-        transport.push_reply(InboundReply(
-            request_id="nonexistent-123",
-            action="approve",
-            responder="test",
-            comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id="nonexistent-123",
+                action="approve",
+                responder="test",
+                comment="",
+            )
+        )
         # Give the listener a beat to process
         time.sleep(0.3)
 
@@ -271,9 +289,14 @@ class TestListenerLoop:
             if transport.sent_approvals:
                 break
             time.sleep(0.05)
-        transport.push_reply(InboundReply(
-            request_id=rid, action="approve", responder="t", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="approve",
+                responder="t",
+                comment="",
+            )
+        )
         t.join(timeout=5.0)
         assert result["body"]["decision"] == "allow"
 
@@ -285,6 +308,7 @@ class TestSnooze:
     def _short_snooze(self, monkeypatch, seconds: float = 0.8):
         """Shrink SNOOZE_SECONDS so tests run in <5s instead of 15min."""
         import otaman_bridge.daemon as daemon_mod
+
         monkeypatch.setattr(daemon_mod, "SNOOZE_SECONDS", seconds)
 
     def test_snooze_edits_original_card(self, running_daemon, monkeypatch):
@@ -314,10 +338,14 @@ class TestSnooze:
         assert transport.sent_approvals
 
         # Tap snooze.
-        transport.push_reply(InboundReply(
-            request_id=rid, action="snooze",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="snooze",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
 
         # Wait for the re-post + approve it to unblock the test.
         for _ in range(80):
@@ -331,15 +359,21 @@ class TestSnooze:
         _, status = transport.updates[0]
         assert "snooze" in status.lower() or "re-post" in status.lower()
 
-        transport.push_reply(InboundReply(
-            request_id=rid, action="approve",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="approve",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
         t.join(timeout=5.0)
         assert result["body"]["decision"] == "allow"
 
     def test_snooze_extends_deadline_beyond_original_timeout(
-        self, running_daemon, monkeypatch,
+        self,
+        running_daemon,
+        monkeypatch,
     ):
         """Without the deadline extension, the hook would time out
         during the snooze window and the re-post would be orphaned.
@@ -368,10 +402,14 @@ class TestSnooze:
                 break
             time.sleep(0.05)
 
-        transport.push_reply(InboundReply(
-            request_id=rid, action="snooze",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="snooze",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
 
         # Wait for re-post (> original 1s timeout) then approve.
         for _ in range(60):
@@ -380,17 +418,23 @@ class TestSnooze:
             time.sleep(0.05)
         assert len(transport.sent_approvals) >= 2
 
-        transport.push_reply(InboundReply(
-            request_id=rid, action="approve",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="approve",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
         t.join(timeout=5.0)
         assert result["body"]["decision"] == "allow", (
             f"expected approval to survive snooze, got {result['body']}"
         )
 
     def test_snooze_repost_skipped_if_resolved(
-        self, running_daemon, monkeypatch,
+        self,
+        running_daemon,
+        monkeypatch,
     ):
         """If the user Approves before the snooze fires, the re-post
         must NOT happen (no second notification for a decided approval)."""
@@ -413,15 +457,23 @@ class TestSnooze:
                 break
             time.sleep(0.05)
 
-        transport.push_reply(InboundReply(
-            request_id=rid, action="snooze",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="snooze",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
         # Approve quickly — before snooze fires at t=0.8s.
-        transport.push_reply(InboundReply(
-            request_id=rid, action="approve",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="approve",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
         t.join(timeout=5.0)
         assert result["body"]["decision"] == "allow"
 
@@ -436,14 +488,17 @@ class TestSnooze:
         """Snooze for a nonexistent / resolved request_id is a no-op."""
         _, transport = running_daemon
         original_approvals = len(transport.sent_approvals)
-        transport.push_reply(InboundReply(
-            request_id="no-such-snooze",
-            action="snooze",
-            responder="telegram:12345",
-            comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id="no-such-snooze",
+                action="snooze",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
         time.sleep(0.3)
         assert len(transport.sent_approvals) == original_approvals
+
 
 class TestUpdateOnDecision:
     """After a decision, the daemon should schedule a transport.update()."""
@@ -466,10 +521,14 @@ class TestUpdateOnDecision:
                 break
             time.sleep(0.05)
 
-        transport.push_reply(InboundReply(
-            request_id=rid, action="approve",
-            responder="telegram:12345", comment="",
-        ))
+        transport.push_reply(
+            InboundReply(
+                request_id=rid,
+                action="approve",
+                responder="telegram:12345",
+                comment="",
+            )
+        )
         t.join(timeout=5.0)
 
         # Give update() a beat to fire
@@ -485,7 +544,8 @@ class TestUpdateOnDecision:
         """Timeout should also trigger an update (⏱️ expired)."""
         transport = NullTransport(allowlist={"*"})
         daemon = BridgeDaemon(
-            account="to", transport=transport,
+            account="to",
+            transport=transport,
             endpoint_file=tmp_path / ".maestro" / "bridge-to.endpoint",
         )
         daemon.start()
@@ -551,7 +611,8 @@ class TestDaemonBusWatcher:
         project_root.mkdir()
         (project_root / ".agents" / "bus" / "active").mkdir(parents=True)
         (project_root / "platform.yaml").write_text(
-            "project: t2d\nversion: '1.0'\nrepos: []\n", encoding="utf-8",
+            "project: t2d\nversion: '1.0'\nrepos: []\n",
+            encoding="utf-8",
         )
 
         transport = NullTransport(allowlist={"*"})
@@ -564,40 +625,43 @@ class TestDaemonBusWatcher:
         )
         # Speed up the poll so we don't wait 2s for the first scan.
         import otaman_bridge.bus_watcher as bw_mod
+
         original_poll = bw_mod.POLL_INTERVAL_SECONDS
         bw_mod.POLL_INTERVAL_SECONDS = 0.1
         try:
             daemon.start()
             try:
                 scr_stem = "20260424T100000-scr-1"
-                _write_bus_msg(project_root, scr_stem,
-                               type="spec-change-request", to="human",
-                               subject="approve endpoint v2")
+                _write_bus_msg(
+                    project_root,
+                    scr_stem,
+                    type="spec-change-request",
+                    to="human",
+                    subject="approve endpoint v2",
+                )
                 # Info broadcast should NOT surface (never rule).
-                _write_bus_msg(project_root, "20260424T100000-broadcast",
-                               type="info", to="all")
+                _write_bus_msg(project_root, "20260424T100000-broadcast", type="info", to="all")
 
                 # Interactive messages flow via send_approval.
                 for _ in range(80):
                     if transport.sent_approvals:
                         break
                     time.sleep(0.05)
-                assert transport.sent_approvals, \
+                assert transport.sent_approvals, (
                     "watcher should have surfaced the spec-change-request"
+                )
                 req = transport.sent_approvals[0]
                 assert req.request_id == scr_stem
                 assert req.tool_name == "bus:spec-change-request"
                 # Info broadcast must not have appeared.
-                assert not any(
-                    r.request_id.endswith("broadcast")
-                    for r in transport.sent_approvals
-                )
+                assert not any(r.request_id.endswith("broadcast") for r in transport.sent_approvals)
 
                 # Pending registry should hold the bus decision context.
                 assert scr_stem in daemon._pending_bus
 
                 # Dedup state should now list the SCR.
                 import json as _json
+
                 state_file = project_root / ".otaman" / "bus-surfaced.state"
                 assert state_file.is_file()
                 state = _json.loads(state_file.read_text(encoding="utf-8"))
@@ -634,10 +698,13 @@ class TestBusPendingRestartRecovery:
 
     def _fast_poll(self, monkeypatch):
         import otaman_bridge.bus_watcher as bw_mod
+
         monkeypatch.setattr(bw_mod, "POLL_INTERVAL_SECONDS", 0.1)
 
     def test_undecided_scr_recovered_and_resolvable_after_restart(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         self._fast_poll(monkeypatch)
         daemon_a, transport_a, project_root = _run_daemon_with_bus(tmp_path, "restartA")
@@ -672,16 +739,18 @@ class TestBusPendingRestartRecovery:
             # Recovered synchronously in start(), before any fresh poll —
             # without this, the watcher's own dedup would never
             # re-surface it (state already says "surfaced").
-            assert stem in daemon_b._pending_bus, (
-                "undecided pending should be recovered on restart"
-            )
+            assert stem in daemon_b._pending_bus, "undecided pending should be recovered on restart"
 
             # A tap on the old (still-visible-on-phone) card must resolve
             # correctly even though daemon_b never sent that card itself.
-            transport_b.push_reply(InboundReply(
-                request_id=stem, action="approve",
-                responder="telegram:roman", comment="",
-            ))
+            transport_b.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="approve",
+                    responder="telegram:roman",
+                    comment="",
+                )
+            )
             for _ in range(40):
                 if ack.is_file():
                     break
@@ -704,10 +773,14 @@ class TestBusPendingRestartRecovery:
                 time.sleep(0.05)
             assert transport_a.sent_approvals
 
-            transport_a.push_reply(InboundReply(
-                request_id=stem, action="approve",
-                responder="telegram:roman", comment="",
-            ))
+            transport_a.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="approve",
+                    responder="telegram:roman",
+                    comment="",
+                )
+            )
             ack = project_root / ".agents" / "bus" / "active" / "acks" / f"{stem}.human.ack"
             for _ in range(40):
                 if ack.is_file():
@@ -739,12 +812,12 @@ class TestBusPendingRestartRecovery:
         daemon_a.start()
         stem = "20260703T100000-broadcast-info-only"
         try:
-            _write_bus_msg(project_root, stem, type="info", to="all",
-                           subject="fyi, no action needed")
+            _write_bus_msg(
+                project_root, stem, type="info", to="all", subject="fyi, no action needed"
+            )
             # Info messages surface via send_info, not send_approval.
             for _ in range(40):
                 time.sleep(0.05)
-            import json as _json
             state_file = project_root / ".otaman" / "bus-surfaced.state"
             for _ in range(40):
                 if state_file.is_file():
@@ -779,7 +852,8 @@ def _run_daemon_with_bus(tmp_path, account: str = "busdec"):
     project_root = tmp_path / "maestro"
     (project_root / ".agents" / "bus" / "active").mkdir(parents=True)
     (project_root / "platform.yaml").write_text(
-        "project: t2d3\nversion: '1.0'\nrepos: []\n", encoding="utf-8",
+        "project: t2d3\nversion: '1.0'\nrepos: []\n",
+        encoding="utf-8",
     )
     transport = NullTransport(allowlist={"*"})
     daemon = BridgeDaemon(
@@ -797,6 +871,7 @@ class TestBusDecisionButtons:
 
     def _fast_poll(self, monkeypatch):
         import otaman_bridge.bus_watcher as bw_mod
+
         monkeypatch.setattr(bw_mod, "POLL_INTERVAL_SECONDS", 0.1)
 
     def test_approve_writes_ack_and_broadcast(self, tmp_path, monkeypatch):
@@ -818,12 +893,14 @@ class TestBusDecisionButtons:
             assert req.tool_name == "bus:spec-change-request"
 
             # Tap Approve.
-            transport.push_reply(InboundReply(
-                request_id=stem,
-                action="approve",
-                responder="telegram:roman",
-                comment="",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="approve",
+                    responder="telegram:roman",
+                    comment="",
+                )
+            )
 
             # Ack file appears.
             ack = project_root / ".agents" / "bus" / "active" / "acks" / f"{stem}.human.ack"
@@ -850,9 +927,7 @@ class TestBusDecisionButtons:
         daemon.start()
         try:
             stem = "20260424T100000-frontend-to-human-reject"
-            _write_bus_msg(project_root, stem,
-                           from_="frontend-agent",
-                           subject="react 19 upgrade")
+            _write_bus_msg(project_root, stem, from_="frontend-agent", subject="react 19 upgrade")
 
             for _ in range(80):
                 if transport.sent_approvals:
@@ -860,12 +935,14 @@ class TestBusDecisionButtons:
                 time.sleep(0.05)
             assert transport.sent_approvals
 
-            transport.push_reply(InboundReply(
-                request_id=stem,
-                action="reject",
-                responder="telegram:roman",
-                comment="not now, focus on MVP",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="reject",
+                    responder="telegram:roman",
+                    comment="not now, focus on MVP",
+                )
+            )
 
             ack = project_root / ".agents" / "bus" / "active" / "acks" / f"{stem}.human.ack"
             for _ in range(40):
@@ -875,9 +952,7 @@ class TestBusDecisionButtons:
             assert ack.read_text(encoding="utf-8").strip() == "rejected"
 
             active = project_root / ".agents" / "bus" / "active"
-            rejected = list(active.glob(
-                "*-human-to-frontend-agent-spec-change-rejected.md"
-            ))
+            rejected = list(active.glob("*-human-to-frontend-agent-spec-change-rejected.md"))
             assert rejected, "reject tap should broadcast to the original proposer"
             content = rejected[0].read_text(encoding="utf-8")
             assert "not now, focus on MVP" in content
@@ -898,35 +973,39 @@ class TestBusDecisionButtons:
                     break
                 time.sleep(0.05)
 
-            transport.push_reply(InboundReply(
-                request_id=stem, action="approve",
-                responder="tg:one", comment="",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="approve",
+                    responder="tg:one",
+                    comment="",
+                )
+            )
             time.sleep(0.3)
             approved_files_first = list(
-                (project_root / ".agents" / "bus" / "active")
-                .glob("*-spec-change-approved.md")
+                (project_root / ".agents" / "bus" / "active").glob("*-spec-change-approved.md")
             )
             assert len(approved_files_first) == 1
 
             # Second tap — should be ignored (registry entry cleared).
-            transport.push_reply(InboundReply(
-                request_id=stem, action="reject",
-                responder="tg:two", comment="",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="reject",
+                    responder="tg:two",
+                    comment="",
+                )
+            )
             time.sleep(0.3)
 
             approved_files_second = list(
-                (project_root / ".agents" / "bus" / "active")
-                .glob("*-spec-change-approved.md")
+                (project_root / ".agents" / "bus" / "active").glob("*-spec-change-approved.md")
             )
             rejected_files = list(
-                (project_root / ".agents" / "bus" / "active")
-                .glob("*-spec-change-rejected.md")
+                (project_root / ".agents" / "bus" / "active").glob("*-spec-change-rejected.md")
             )
             assert len(approved_files_second) == 1
-            assert not rejected_files, \
-                "second tap must not create a conflicting decision"
+            assert not rejected_files, "second tap must not create a conflicting decision"
         finally:
             daemon.stop()
 
@@ -944,10 +1023,14 @@ class TestBusDecisionButtons:
                     break
                 time.sleep(0.05)
 
-            transport.push_reply(InboundReply(
-                request_id=stem, action="details",
-                responder="tg:roman", comment="",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="details",
+                    responder="tg:roman",
+                    comment="",
+                )
+            )
             # Wait for send_info follow-up
             for _ in range(40):
                 if transport.sent_infos:
@@ -956,19 +1039,21 @@ class TestBusDecisionButtons:
             assert transport.sent_infos, "details should send a follow-up info"
 
             # No ack should exist yet.
-            ack = (project_root / ".agents" / "bus" / "active" / "acks"
-                   / f"{stem}.human.ack")
-            assert not ack.exists(), \
-                "details tap must not resolve the decision"
+            ack = project_root / ".agents" / "bus" / "active" / "acks" / f"{stem}.human.ack"
+            assert not ack.exists(), "details tap must not resolve the decision"
 
             # Pending entry should still be registered.
             assert stem in daemon._pending_bus
 
             # Clean up: approve so the test exits with a clean state.
-            transport.push_reply(InboundReply(
-                request_id=stem, action="approve",
-                responder="tg:roman", comment="",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="approve",
+                    responder="tg:roman",
+                    comment="",
+                )
+            )
             for _ in range(40):
                 if ack.is_file():
                     break
@@ -984,6 +1069,7 @@ class TestBusCommentAndAcknowledge:
 
     def _fast_poll(self, monkeypatch):
         import otaman_bridge.bus_watcher as bw_mod
+
         monkeypatch.setattr(bw_mod, "POLL_INTERVAL_SECONDS", 0.1)
 
     def test_comment_on_scr_writes_reply_and_keeps_pending(self, tmp_path, monkeypatch):
@@ -993,11 +1079,14 @@ class TestBusCommentAndAcknowledge:
         daemon.start()
         try:
             stem = "20260424T100000-backend-to-human-comment"
-            _write_bus_msg(project_root, stem,
-                           type="spec-change-request",
-                           from_="backend-agent",
-                           to="human",
-                           subject="pagination v1")
+            _write_bus_msg(
+                project_root,
+                stem,
+                type="spec-change-request",
+                from_="backend-agent",
+                to="human",
+                subject="pagination v1",
+            )
 
             for _ in range(80):
                 if transport.sent_approvals:
@@ -1007,12 +1096,14 @@ class TestBusCommentAndAcknowledge:
             assert stem in daemon._pending_bus
 
             # Send a comment (reply text).
-            transport.push_reply(InboundReply(
-                request_id=stem,
-                action="comment",
-                responder="telegram:roman",
-                comment="Use cursor-based pagination, not offset.",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="comment",
+                    responder="telegram:roman",
+                    comment="Use cursor-based pagination, not offset.",
+                )
+            )
 
             active = project_root / ".agents" / "bus" / "active"
             for _ in range(40):
@@ -1028,17 +1119,19 @@ class TestBusCommentAndAcknowledge:
             assert f"in_reply_to: {stem}" in reply_content
 
             # Decision must still be pending — no ack yet.
-            ack = (project_root / ".agents" / "bus" / "active" / "acks"
-                   / f"{stem}.human.ack")
-            assert not ack.exists(), \
-                "comment must not resolve the decision"
+            ack = project_root / ".agents" / "bus" / "active" / "acks" / f"{stem}.human.ack"
+            assert not ack.exists(), "comment must not resolve the decision"
             assert stem in daemon._pending_bus
 
             # Now follow-up with an approve so the test state is clean.
-            transport.push_reply(InboundReply(
-                request_id=stem, action="approve",
-                responder="telegram:roman", comment="",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="approve",
+                    responder="telegram:roman",
+                    comment="",
+                )
+            )
             for _ in range(40):
                 if ack.is_file():
                     break
@@ -1061,10 +1154,14 @@ class TestBusCommentAndAcknowledge:
                     break
                 time.sleep(0.05)
 
-            transport.push_reply(InboundReply(
-                request_id=stem, action="comment",
-                responder="tg:roman", comment="   ",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="comment",
+                    responder="tg:roman",
+                    comment="   ",
+                )
+            )
             time.sleep(0.3)
 
             active = project_root / ".agents" / "bus" / "active"
@@ -1083,12 +1180,15 @@ class TestBusCommentAndAcknowledge:
             # Urgent to-human message: always surfaces interactive, but
             # type != spec-change-request so approve should be acknowledge.
             stem = "20260424T100000-ops-to-human-urgent"
-            _write_bus_msg(project_root, stem,
-                           type="info",
-                           from_="ops-agent",
-                           to="human",
-                           priority="urgent",
-                           subject="prod pager fired")
+            _write_bus_msg(
+                project_root,
+                stem,
+                type="info",
+                from_="ops-agent",
+                to="human",
+                priority="urgent",
+                subject="prod pager fired",
+            )
 
             for _ in range(80):
                 if transport.sent_approvals:
@@ -1096,13 +1196,16 @@ class TestBusCommentAndAcknowledge:
                 time.sleep(0.05)
             assert transport.sent_approvals
 
-            transport.push_reply(InboundReply(
-                request_id=stem, action="approve",
-                responder="telegram:roman", comment="",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="approve",
+                    responder="telegram:roman",
+                    comment="",
+                )
+            )
 
-            ack = (project_root / ".agents" / "bus" / "active" / "acks"
-                   / f"{stem}.human.ack")
+            ack = project_root / ".agents" / "bus" / "active" / "acks" / f"{stem}.human.ack"
             for _ in range(40):
                 if ack.is_file():
                     break
@@ -1113,13 +1216,14 @@ class TestBusCommentAndAcknowledge:
             # No spec-change-approved broadcast should exist.
             active = project_root / ".agents" / "bus" / "active"
             scr_approvals = list(active.glob("*-spec-change-approved.md"))
-            assert not scr_approvals, \
-                "non-SCR card must not create spec-change-approved"
+            assert not scr_approvals, "non-SCR card must not create spec-change-approved"
         finally:
             daemon.stop()
 
     def test_acknowledge_action_with_comment_writes_ack_and_reply(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         """Acknowledge + comment: ack file + reply message."""
         self._fast_poll(monkeypatch)
@@ -1127,25 +1231,25 @@ class TestBusCommentAndAcknowledge:
         daemon.start()
         try:
             stem = "20260424T100000-ops-to-human-ack"
-            _write_bus_msg(project_root, stem,
-                           type="info",
-                           from_="ops-agent",
-                           to="human",
-                           priority="urgent")
+            _write_bus_msg(
+                project_root, stem, type="info", from_="ops-agent", to="human", priority="urgent"
+            )
 
             for _ in range(80):
                 if transport.sent_approvals:
                     break
                 time.sleep(0.05)
 
-            transport.push_reply(InboundReply(
-                request_id=stem, action="acknowledge",
-                responder="telegram:roman",
-                comment="rolling back now",
-            ))
+            transport.push_reply(
+                InboundReply(
+                    request_id=stem,
+                    action="acknowledge",
+                    responder="telegram:roman",
+                    comment="rolling back now",
+                )
+            )
 
-            ack = (project_root / ".agents" / "bus" / "active" / "acks"
-                   / f"{stem}.human.ack")
+            ack = project_root / ".agents" / "bus" / "active" / "acks" / f"{stem}.human.ack"
             for _ in range(40):
                 if ack.is_file():
                     break
