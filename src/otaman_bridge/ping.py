@@ -23,7 +23,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0  # noqa: E402
+# legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0
+from otaman_core._resolve import (  # noqa: E402
+    active_routing_env,
+    find_maestro_root,
+    read_expected_account,
+)
 
 
 def _derive_account(project_root: Path) -> str | None:
@@ -34,7 +39,7 @@ def _derive_account(project_root: Path) -> str | None:
     if config_dir:
         base = os.path.basename(config_dir.rstrip("/\\"))
         if base.startswith(".claude-"):
-            return base[len(".claude-"):]
+            return base[len(".claude-") :]
         if base in ("", ".claude"):
             return "default"
     marker_account = read_expected_account(project_root)
@@ -45,6 +50,7 @@ def _derive_account(project_root: Path) -> str | None:
 
 def _read_endpoint(account: str) -> tuple[int, str] | None:
     from otaman_bridge.daemon import endpoint_path  # noqa: PLC0415
+
     path = endpoint_path(account)  # respects OTAMAN_BRIDGE_DIR / MAESTRO_BRIDGE_DIR
     if not path.is_file():
         return None
@@ -112,7 +118,9 @@ def ping(
         print("ERROR: message is required", file=sys.stderr)
         return 2
 
-    root = project_root or find_maestro_root()  # legacy: renamed find_otaman_root at otaman-core 1.0
+    root = (
+        project_root or find_maestro_root()
+    )  # legacy: renamed find_otaman_root at otaman-core 1.0
     resolved_account = account or _derive_account(root or Path.cwd())
     if not resolved_account:
         print(
@@ -134,9 +142,7 @@ def ping(
 
     agent = _current_agent(root)
     project = _session_project(root)
-    effective_title = title or (
-        f"Ping from {agent}" if agent else "Ping from Claude"
-    )
+    effective_title = title or (f"Ping from {agent}" if agent else "Ping from Claude")
 
     payload = {
         "account": resolved_account,
@@ -157,10 +163,7 @@ def ping(
         print(f"ERROR: POST /notify failed: {e}", file=sys.stderr)
         return 1
 
-    print(
-        f"Sent ping to {resolved_account} "
-        f"({severity}, {len(message)} char body)."
-    )
+    print(f"Sent ping to {resolved_account} ({severity}, {len(message)} char body).")
     return 0
 
 
@@ -173,7 +176,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--account", help="Account name (default: auto-detected)")
     parser.add_argument("--title", help="Custom title (default: 'Ping from <agent>')")
     parser.add_argument(
-        "--severity", default="approval", choices=_SEVERITIES,
+        "--severity",
+        default="approval",
+        choices=_SEVERITIES,
         help="Severity level (default: approval = yellow, grabs attention)",
     )
     args = parser.parse_args(argv)

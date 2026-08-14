@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import time
-from pathlib import Path
 
 import pytest
 
@@ -166,7 +165,14 @@ class TestListActive:
     def test_has_expected_fields(self, registry):
         registry.claim_session("cli-agent", "roman", "sess-001")
         row = registry.list_active()[0]
-        assert set(row.keys()) == {"agent_id", "human_id", "session_id", "mode", "claimed_at", "heartbeat_at"}
+        assert set(row.keys()) == {
+            "agent_id",
+            "human_id",
+            "session_id",
+            "mode",
+            "claimed_at",
+            "heartbeat_at",
+        }
 
 
 class TestRaceConditions:
@@ -212,5 +218,8 @@ class TestRaceConditions:
             concurrent.futures.wait(futs)
 
         r.close()
-        print(f"\nRelease+reclaim: release={release_wins}, claim_wins={sum(1 for x in claim_wins if x)}")
+        print(
+            f"\nRelease+reclaim: release={release_wins}, "
+            f"claim_wins={sum(1 for x in claim_wins if x)}"
+        )
         assert sum(1 for x in claim_wins if x) <= 1

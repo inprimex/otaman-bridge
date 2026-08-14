@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from otaman_bridge.core import Transport
     from otaman_bridge.daemon import _AsyncLoopThread
 
-_log = logging.getLogger("maestro.bridge.afk_service")
+_log = logging.getLogger("maestro.bridge.afk_service")  # legacy: logger renamed at otaman-core 1.0
 
 
 class AfkService:
@@ -43,7 +43,11 @@ class AfkService:
         self._future = None  # concurrent.futures.Future
 
     def start(
-        self, *, project_root: Path | None, idle_minutes: int, project: str,
+        self,
+        *,
+        project_root: Path | None,
+        idle_minutes: int,
+        project: str,
     ) -> None:
         if idle_minutes <= 0 or project_root is None:
             return
@@ -86,7 +90,12 @@ class AfkService:
             self.monitor = None
 
     def _make_notifier(
-        self, *, project: str, title: str, body_template: str, include_reason: bool = True,
+        self,
+        *,
+        project: str,
+        title: str,
+        body_template: str,
+        include_reason: bool = True,
     ):
         """Build an async callback that sends a Telegram InfoMessage when
         the IdleAFKMonitor flips AFK on or clears it.
@@ -99,8 +108,7 @@ class AfkService:
         account = self.account
 
         async def notify(reason: str = "") -> None:
-            body = body_template.format(reason=reason) if include_reason \
-                else body_template
+            body = body_template.format(reason=reason) if include_reason else body_template
             info = InfoMessage(
                 account=account,
                 project=project,

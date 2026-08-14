@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 # alternative/upgrade; this env var is the CE baseline.
 _PM_SYNC_WEBHOOK_SECRET_ENV = "OTAMAN_BRIDGE_PM_SYNC_WEBHOOK_SECRET"
 
-_log = logging.getLogger("maestro.bridge.http_handler")
+_log = logging.getLogger("maestro.bridge.http_handler")  # legacy: logger renamed at otaman-core 1.0
 
 
 def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
@@ -43,10 +43,9 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         # Silence default stderr logging; route through module logger instead.
         def log_message(self, fmt: str, *args: Any) -> None:
-            _log.debug("%s - - [%s] %s",
-                       self.client_address[0],
-                       self.log_date_time_string(),
-                       fmt % args)
+            _log.debug(
+                "%s - - [%s] %s", self.client_address[0], self.log_date_time_string(), fmt % args
+            )
 
         def _auth_identify(self):
             """Identify the caller via the daemon's configured AuthProvider.
@@ -84,9 +83,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 return False, 503, "pm-sync webhook auth not configured"
             auth_header = self.headers.get("Authorization", "")
             provided = (
-                auth_header[len("Bearer "):].strip()
-                if auth_header.startswith("Bearer ")
-                else ""
+                auth_header[len("Bearer ") :].strip() if auth_header.startswith("Bearer ") else ""
             )
             if not provided or not hmac.compare_digest(provided, secret):
                 return False, 401, "invalid or missing pm-sync webhook secret"
@@ -178,6 +175,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             # EE package (Phase 2a); CE-only builds skip this path.
             try:
                 from otaman_bridge_ee.auth_oidc import OIDCAuthProvider
+
                 oidc = daemon.auth_provider.first_of_type(OIDCAuthProvider)
             except ImportError:
                 oidc = None
@@ -194,6 +192,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:  # noqa: N802 — stdlib name
             import urllib.parse as _u_parse_post
+
             route = _u_parse_post.urlparse(self.path).path.rstrip("/")
             # EE-DCR routes first (Phase 2c). When EE is absent, handler
             # is None — falls through to CE's own route table.
@@ -216,10 +215,15 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 body = self._read_body()
                 if body is None:
                     from otaman_bridge.mcp_server import PARSE_ERROR
-                    self._reply_json(200, {
-                        "jsonrpc": "2.0", "id": None,
-                        "error": {"code": PARSE_ERROR, "message": "invalid JSON"},
-                    })
+
+                    self._reply_json(
+                        200,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": None,
+                            "error": {"code": PARSE_ERROR, "message": "invalid JSON"},
+                        },
+                    )
                     return
                 # Identity-requiring tools (send_message_to_user etc.)
                 # called by an identity-less caller (loopback bearer = no
@@ -232,13 +236,12 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     and not ctx.user_id
                 ):
                     from otaman_bridge.mcp_tools import IDENTITY_REQUIRED_TOOLS
+
                     tool_name = (body.get("params") or {}).get("name", "")
                     if tool_name in IDENTITY_REQUIRED_TOOLS:
                         self._reply_unauthenticated(
                             error="insufficient_scope",
-                            description=(
-                                f"tool {tool_name!r} requires authenticated user"
-                            ),
+                            description=(f"tool {tool_name!r} requires authenticated user"),
                         )
                         return
                 response = daemon.mcp_server.handle_request(body, context=ctx)
@@ -284,8 +287,12 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 # Lazy-load pm_sync_handler
                 if not hasattr(daemon, "_pm_sync_handler"):
                     from pathlib import Path as _Path
+
                     from otaman_bridge.pm_sync_handler import PmSyncHandler
-                    _root = _Path(daemon.bus_watcher_root) if daemon.bus_watcher_root else _Path.cwd()
+
+                    _root = (
+                        _Path(daemon.bus_watcher_root) if daemon.bus_watcher_root else _Path.cwd()
+                    )
                     daemon._pm_sync_handler = PmSyncHandler(_root)
                 result = daemon._pm_sync_handler.handle_inbound_webhook(body)
                 self._reply_json(200, result)
@@ -320,6 +327,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             (show user identity + logout button).
             """
             import html as _h
+
             if daemon.session_store is None or daemon.session_cookie is None:
                 body_inner = (
                     "<p>Web login flow is not configured (loopback bearer only).</p>"
@@ -332,8 +340,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 sess = daemon.session_store.get(sid) if sid else None
                 if sess is None:
                     body_inner = (
-                        "<p>Not logged in.</p>"
-                        "<p><a href=\"/auth/login\">Log in with Zitadel</a></p>"
+                        '<p>Not logged in.</p><p><a href="/auth/login">Log in with Zitadel</a></p>'
                     )
                 else:
                     user = _h.escape(sess.user_id)
@@ -343,16 +350,14 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                         f"<p>Logged in as <strong>{email}</strong></p>"
                         f"<dl><dt>user_id</dt><dd>{user}</dd>"
                         f"<dt>roles</dt><dd>{roles}</dd></dl>"
-                        "<form method=\"post\" action=\"/auth/logout\">"
-                        "<button type=\"submit\">Log out</button></form>"
+                        '<form method="post" action="/auth/logout">'
+                        '<button type="submit">Log out</button></form>'
                     )
             return (
                 "<!DOCTYPE html><html><head>"
-                "<meta charset=\"utf-8\"><title>otaman bridge</title>"
+                '<meta charset="utf-8"><title>otaman bridge</title>'
                 "</head><body>"
-                "<h1>otaman bridge</h1>"
-                + body_inner +
-                "</body></html>"
+                "<h1>otaman bridge</h1>" + body_inner + "</body></html>"
             )
 
         def do_GET(self) -> None:  # noqa: N802
@@ -360,6 +365,7 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
             # are stripped before route matching. Without this, dispatch
             # falls through to the 404 handler for any URL with a query.
             import urllib.parse as _u_parse
+
             route = _u_parse.urlparse(self.path).path.rstrip("/")
             # EE-DCR routes (/.well-known/* metadata overlays). When EE
             # is absent, handler is None and we fall through to CE's
@@ -413,7 +419,9 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                     self._reply_error(503, "web login flow not configured")
                     return
                 import urllib.parse as _u
+
                 from otaman_bridge_ee.web_auth import LoginCompleteError, TokenExchangeError
+
                 qs = _u.urlparse(self.path).query
                 params = dict(_u.parse_qsl(qs))
                 if "error" in params:

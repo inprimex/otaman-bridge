@@ -7,8 +7,6 @@ no HTTP, no Zitadel.
 
 from __future__ import annotations
 
-import pytest
-
 from otaman_bridge.daemon import _build_web_login_flow_from_env
 
 
@@ -50,6 +48,7 @@ class TestBuildWebLoginFlowFromEnv:
 
     def test_returns_pair_when_fully_configured(self, monkeypatch):
         from otaman_bridge_ee.web_auth import LoginFlow, PendingLoginStore
+
         monkeypatch.setenv("OTAMAN_AUTH_MODE", "oidc")
         monkeypatch.setenv("OIDC_ISSUER", "https://otaman.example/auth")
         monkeypatch.setenv("OIDC_AUDIENCE_BRIDGE", "bridge-client-id")

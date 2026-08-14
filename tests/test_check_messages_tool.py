@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+
 import pytest
 
 from otaman_bridge.inbox import Inbox
@@ -25,12 +26,24 @@ def tool(inbox):
     return build_check_messages_tool(inbox=inbox)
 
 
-def _put(inbox, *, to_user, from_user="user-A", body="hi", subject=None,
-         priority="normal", msg_type="chat"):
+def _put(
+    inbox,
+    *,
+    to_user,
+    from_user="user-A",
+    body="hi",
+    subject=None,
+    priority="normal",
+    msg_type="chat",
+):
     return inbox.write_message(
-        from_user=from_user, from_email=f"{from_user}@x",
-        to_user=to_user, body=body, subject=subject,
-        priority=priority, msg_type=msg_type,
+        from_user=from_user,
+        from_email=f"{from_user}@x",
+        to_user=to_user,
+        body=body,
+        subject=subject,
+        priority=priority,
+        msg_type=msg_type,
     )
 
 
@@ -53,7 +66,7 @@ class TestCheckHappyPath:
 
     def test_unread_only_false_returns_all(self, tool, inbox, reader_ctx):
         m1 = _put(inbox, to_user="user-B", body="first")
-        m2 = _put(inbox, to_user="user-B", body="second")
+        _put(inbox, to_user="user-B", body="second")
         inbox.mark_read("user-B", m1.id)
         result = tool.handler({"unread_only": False}, reader_ctx)
         assert result["structuredContent"]["total"] == 2
@@ -80,8 +93,7 @@ class TestCheckHappyPath:
         assert result["structuredContent"]["total"] == 2
 
     def test_text_renders_email_and_subject(self, tool, inbox, reader_ctx):
-        _put(inbox, to_user="user-B", from_user="user-A",
-             subject="Important question", body="x")
+        _put(inbox, to_user="user-B", from_user="user-A", subject="Important question", body="x")
         result = tool.handler({}, reader_ctx)
         text = result["content"][0]["text"]
         assert "user-A@x" in text
@@ -93,8 +105,14 @@ class TestCheckHappyPath:
         assert "[high]" in text
 
     def test_structured_includes_all_fields(self, tool, inbox, reader_ctx):
-        msg = _put(inbox, to_user="user-B", body="hi", subject="S",
-                   priority="high", msg_type="review-request")
+        msg = _put(
+            inbox,
+            to_user="user-B",
+            body="hi",
+            subject="S",
+            priority="high",
+            msg_type="review-request",
+        )
         result = tool.handler({"unread_only": False}, reader_ctx)
         m = result["structuredContent"]["messages"][0]
         assert m["message_id"] == msg.id

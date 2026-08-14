@@ -8,7 +8,6 @@ JSON-RPC dispatcher, end to end.
 from __future__ import annotations
 
 import json
-import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -26,7 +25,9 @@ def running_daemon(tmp_path, monkeypatch):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.start()
     try:
@@ -61,9 +62,15 @@ class TestRegistration:
     def test_all_three_tools_in_tools_list(self, running_daemon):
         daemon, endpoint = running_daemon
         base = _daemon_url(endpoint)
-        _, resp = _post(f"{base}/mcp", token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
-        })
+        _, resp = _post(
+            f"{base}/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+            },
+        )
         names = {t["name"] for t in resp["result"]["tools"]}
         assert "send_message_to_user" in names
         assert "check_messages" in names
@@ -91,32 +98,50 @@ class TestEndToEnd:
         base = _daemon_url(endpoint)
 
         # 1. send -- rejected at HTTP layer because loopback bearer has no user_id
-        send_code, send_resp = _post(f"{base}/mcp", token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {
-                "name": "send_message_to_user",
-                "arguments": {"target_user_id": "user-B", "body": "hi"},
+        send_code, send_resp = _post(
+            f"{base}/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "send_message_to_user",
+                    "arguments": {"target_user_id": "user-B", "body": "hi"},
+                },
             },
-        })
+        )
         assert send_code == 401
         assert "send_message_to_user" in send_resp["error"]
 
         # 2. check -- same loopback rejection path
-        check_code, check_resp = _post(f"{base}/mcp", token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "check_messages", "arguments": {}},
-        })
+        check_code, check_resp = _post(
+            f"{base}/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "check_messages", "arguments": {}},
+            },
+        )
         assert check_code == 401
         assert "check_messages" in check_resp["error"]
 
         # 3. mark -- same
-        mark_code, mark_resp = _post(f"{base}/mcp", token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-            "params": {
-                "name": "mark_message_read",
-                "arguments": {"message_id": "x"},
+        mark_code, mark_resp = _post(
+            f"{base}/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "mark_message_read",
+                    "arguments": {"message_id": "x"},
+                },
             },
-        })
+        )
         assert mark_code == 401
         assert "mark_message_read" in mark_resp["error"]
 
@@ -128,25 +153,34 @@ class TestEndToEnd:
         """
         daemon, endpoint = running_daemon
         # Inject a session for user-B so cookie auth works for check
-        from otaman_bridge_ee.web_session import SessionStore, SessionCookie
+        from otaman_bridge_ee.web_session import SessionCookie, SessionStore
+
         daemon.session_store = SessionStore()
         daemon.session_cookie = SessionCookie(secure=False)
         sess = daemon.session_store.create(
-            user_id="user-B", email="b@x", roles=("otaman:developer",),
+            user_id="user-B",
+            email="b@x",
+            roles=("otaman:developer",),
         )
         # Write a message to user-B's inbox directly
         daemon.inbox.write_message(
-            from_user="user-A", from_email="a@x",
-            to_user="user-B", body="Hello B from test",
+            from_user="user-A",
+            from_email="a@x",
+            to_user="user-B",
+            body="Hello B from test",
         )
         # Call check_messages as user-B
         base = _daemon_url(endpoint)
         req = urllib.request.Request(
             f"{base}/mcp",
-            data=json.dumps({
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": "check_messages", "arguments": {}},
-            }).encode("utf-8"),
+            data=json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "check_messages", "arguments": {}},
+                }
+            ).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
                 "Cookie": f"otaman_bridge_sid={sess.id}",

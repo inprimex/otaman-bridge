@@ -23,8 +23,8 @@ serializes the result back to JSON. No HTTP-level details leak in here.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
 
 _log = logging.getLogger("otaman.bridge.mcp")
 
@@ -102,7 +102,8 @@ class MCPServer:
                 result = {}
             else:
                 return _error_response(
-                    rpc_id, METHOD_NOT_FOUND,
+                    rpc_id,
+                    METHOD_NOT_FOUND,
                     f"method {method!r} not supported by this MCP server",
                 )
         except _MCPDispatchError as exc:

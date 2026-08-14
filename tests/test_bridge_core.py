@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
 
 from otaman_bridge import core
 from otaman_bridge.core import (
@@ -34,9 +30,11 @@ def _clean_registry():
     yield
     core._reset_registry_for_tests()
     from otaman_bridge.transports.null import NullTransport
+
     core.register_transport("null", NullTransport)
     try:
         from otaman_bridge.transports.telegram import TelegramTransport
+
         core.register_transport("telegram", TelegramTransport)
     except ImportError:
         pass
@@ -64,20 +62,33 @@ class TestApprovalRequest:
 
     def test_request_id_unique(self):
         r1 = ApprovalRequest(
-            account="p", project="x", repo="r", agent="a",
-            tool_name="Bash", tool_input={},
+            account="p",
+            project="x",
+            repo="r",
+            agent="a",
+            tool_name="Bash",
+            tool_input={},
         )
         r2 = ApprovalRequest(
-            account="p", project="x", repo="r", agent="a",
-            tool_name="Bash", tool_input={},
+            account="p",
+            project="x",
+            repo="r",
+            agent="a",
+            tool_name="Bash",
+            tool_input={},
         )
         assert r1.request_id != r2.request_id
 
     def test_to_from_dict_roundtrip(self):
         req = ApprovalRequest(
-            account="p", project="x", repo="r", agent="a",
-            tool_name="Bash", tool_input={"command": "ls"},
-            reason="list files", priority="high",
+            account="p",
+            project="x",
+            repo="r",
+            agent="a",
+            tool_name="Bash",
+            tool_input={"command": "ls"},
+            reason="list files",
+            priority="high",
         )
         d = req.to_dict()
         req2 = ApprovalRequest.from_dict(d)
@@ -94,7 +105,8 @@ class TestApprovalResponse:
 
     def test_with_updated_input(self):
         resp = ApprovalResponse(
-            decision="allow", request_id="abc",
+            decision="allow",
+            request_id="abc",
             updated_input={"command": "ls -la"},
         )
         d = resp.to_dict()
@@ -102,8 +114,10 @@ class TestApprovalResponse:
 
     def test_roundtrip(self):
         resp = ApprovalResponse(
-            decision="deny", request_id="xyz",
-            responder="telegram:@roman", message="too risky",
+            decision="deny",
+            request_id="xyz",
+            responder="telegram:@roman",
+            message="too risky",
         )
         assert ApprovalResponse.from_dict(resp.to_dict()) == resp
 
@@ -118,8 +132,11 @@ class TestApprovalResponse:
 class TestInfoMessage:
     def test_roundtrip(self):
         msg = InfoMessage(
-            account="personal", project="demo", severity="info",
-            title="task complete", body="auth-service finished task 3.1",
+            account="personal",
+            project="demo",
+            severity="info",
+            title="task complete",
+            body="auth-service finished task 3.1",
         )
         assert InfoMessage.from_dict(msg.to_dict()) == msg
 
@@ -127,8 +144,10 @@ class TestInfoMessage:
 class TestInboundReply:
     def test_roundtrip(self):
         r = InboundReply(
-            request_id="abc", action="approve",
-            responder="telegram:@roman", comment="looks fine",
+            request_id="abc",
+            action="approve",
+            responder="telegram:@roman",
+            comment="looks fine",
         )
         assert InboundReply.from_dict(r.to_dict()) == r
 
@@ -193,12 +212,22 @@ class TestRegistry:
     def test_register_overwrites(self):
         class Other:
             name = "dummy"
-            async def send_approval(self, req): pass  # noqa: E704
-            async def send_info(self, msg): pass  # noqa: E704
-            async def update(self, h, s): pass  # noqa: E704
+
+            async def send_approval(self, req):
+                pass  # noqa: E704
+
+            async def send_info(self, msg):
+                pass  # noqa: E704
+
+            async def update(self, h, s):
+                pass  # noqa: E704
+
             async def listen(self):
-                if False: yield  # noqa: E701,E702,E703
-            async def allowlist_check(self, u): return True  # noqa: E704
+                if False:
+                    yield  # noqa: E701,E702,E703
+
+            async def allowlist_check(self, u):
+                return True  # noqa: E704
 
         register_transport("dummy", DummyTransport)
         register_transport("dummy", Other)
@@ -210,6 +239,7 @@ class TestProtocolConformance:
 
     def test_null_satisfies_protocol(self):
         from otaman_bridge.transports.null import NullTransport
+
         assert isinstance(NullTransport(), Transport)
 
     def test_plain_object_does_not_satisfy(self):

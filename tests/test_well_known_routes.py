@@ -8,7 +8,6 @@ authorization server they need to talk to.
 from __future__ import annotations
 
 import json
-import os
 import types
 import urllib.error
 import urllib.request
@@ -23,7 +22,6 @@ from otaman_bridge.daemon import (
     read_endpoint_file,
 )
 from otaman_bridge.transports.null import NullTransport
-
 
 # --- pure helper tests -----------------------------------------------------
 
@@ -52,7 +50,8 @@ class TestBuildProtectedResourceMetadata:
     def test_authorization_servers_is_a_list(self):
         # RFC 9728: this field is an ARRAY even when there's only one.
         m = _build_protected_resource_metadata(
-            issuer="https://i", resource="http://r",
+            issuer="https://i",
+            resource="http://r",
         )
         assert isinstance(m["authorization_servers"], list)
         assert len(m["authorization_servers"]) == 1
@@ -84,7 +83,9 @@ def running_daemon(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.start()
     try:

@@ -14,8 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from otaman_bridge.session_registry import SqliteSessionRegistry
-from otaman_bridge.spawn_decision import SpawnOutcome, handle_bus_event
-
+from otaman_bridge.spawn_decision import handle_bus_event
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -129,7 +128,13 @@ class TestHeadlessSpawn:
 
     def test_trigger_source_in_context(self, bus_dir, registry, runner_mock):
         path = _write_task_assignment(bus_dir / "active", mode_annot="[headless]")
-        _call(path, bus_dir=bus_dir, registry=registry, runner_mock=runner_mock, trigger_source="scheduled")
+        _call(
+            path,
+            bus_dir=bus_dir,
+            registry=registry,
+            runner_mock=runner_mock,
+            trigger_source="scheduled",
+        )
         _, kwargs = runner_mock.spawn.call_args
         assert kwargs["context"]["trigger_source"] == "scheduled"
 
@@ -137,7 +142,8 @@ class TestHeadlessSpawn:
         path = _write_task_assignment(bus_dir / "active", mode_annot="[headless]")
         _call(path, bus_dir=bus_dir, registry=registry, runner_mock=runner_mock)
         spawned_files = [
-            f for f in (bus_dir / "active").glob("*.md")
+            f
+            for f in (bus_dir / "active").glob("*.md")
             if "spawn_start" in f.name or "spawn-start" in f.name
         ]
         assert len(spawned_files) == 1
@@ -166,7 +172,9 @@ class TestDedup:
         assert outcome2.action == "warm-session"
 
     def test_dedup_key_is_deterministic(self, bus_dir, registry, runner_mock):
-        p1 = _write_task_assignment(bus_dir / "active", change="my-feature", mode_annot="[headless]")
+        p1 = _write_task_assignment(
+            bus_dir / "active", change="my-feature", mode_annot="[headless]"
+        )
         p2 = _write_task_assignment(
             bus_dir / "active",
             stem="20260601T120002-second",
@@ -280,6 +288,7 @@ class TestSkipCases:
 class TestSpawnFailure:
     def test_runner_unreachable_returns_spawn_failed(self, bus_dir, registry):
         from otaman_bridge.runner_client import RunnerUnreachableError
+
         rc = MagicMock()
         rc.spawn.side_effect = RunnerUnreachableError("no runner")
         path = _write_task_assignment(bus_dir / "active", mode_annot="[headless]")
@@ -297,6 +306,7 @@ class TestSpawnFailure:
 
     def test_spawn_failure_emits_spawn_failed_bus_message(self, bus_dir, registry):
         from otaman_bridge.runner_client import SpawnError
+
         rc = MagicMock()
         rc.spawn.side_effect = SpawnError("runner rejected: bad agent")
         path = _write_task_assignment(bus_dir / "active", mode_annot="[headless]")
@@ -309,7 +319,8 @@ class TestSpawnFailure:
             project_root=PROJECT_ROOT,
         )
         failed_files = [
-            f for f in (bus_dir / "active").glob("*.md")
+            f
+            for f in (bus_dir / "active").glob("*.md")
             if "spawn_failed" in f.name or "spawn-failed" in f.name
         ]
         assert len(failed_files) == 1

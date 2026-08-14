@@ -194,7 +194,8 @@ class TestLiveReload:
 
         # Overwrite solutions.yaml with a stripped version
         (registry_dir / "solutions.yaml").write_text(
-            "solutions:\n  - id: SOL-99-new\n    outcome-id: JTBD-1-create-account\n    dependencies: []\n",
+            "solutions:\n  - id: SOL-99-new\n"
+            "    outcome-id: JTBD-1-create-account\n    dependencies: []\n",
             encoding="utf-8",
         )
         idx._rebuild()  # simulate fswatch event
@@ -210,9 +211,7 @@ class TestLiveReload:
 
 class TestFromProjectRoot:
     def _write_platform(self, root: Path, repos: list[dict]) -> None:
-        (root / "platform.yaml").write_text(
-            yaml.dump({"repos": repos}), encoding="utf-8"
-        )
+        (root / "platform.yaml").write_text(yaml.dump({"repos": repos}), encoding="utf-8")
 
     def _write_registries(self, business: Path) -> None:
         business.mkdir(parents=True, exist_ok=True)
@@ -237,9 +236,7 @@ class TestFromProjectRoot:
         biz = tmp_path / "env-biz"
         self._write_registries(biz)
         self._write_platform(tmp_path, [{"owner": "cpo-agent", "path": "wrong-dir"}])
-        idx = RegistryLinkIndex.from_project_root(
-            tmp_path, env={"OTAMAN_BUSINESS_DIR": str(biz)}
-        )
+        idx = RegistryLinkIndex.from_project_root(tmp_path, env={"OTAMAN_BUSINESS_DIR": str(biz)})
         assert idx.outcome_for_solution("SOL-1-email-password") == "JTBD-1-create-account"
 
     def test_raises_when_no_business_repo(self, tmp_path):

@@ -171,10 +171,11 @@ __all__ = [
 ]
 
 
-import json as _json
-import urllib.error as _urlerror
-import urllib.parse as _urlparse
-import urllib.request as _urlrequest
+# Deliberate late imports: keeps the section-ordered module layout intact.
+import json as _json  # noqa: E402
+import urllib.error as _urlerror  # noqa: E402
+import urllib.parse as _urlparse  # noqa: E402
+import urllib.request as _urlrequest  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -188,7 +189,7 @@ class TokenResponse:
     token_type: str
 
     @classmethod
-    def from_dict(cls, d) -> "TokenResponse":
+    def from_dict(cls, d) -> TokenResponse:
         if "access_token" not in d:
             raise ValueError(f"token response missing access_token: keys={sorted(d)}")
         return cls(
@@ -237,13 +238,15 @@ class TokenExchanger:
         success. Does NOT validate the id_token -- that's the caller's
         job (via OIDCValidator).
         """
-        body = _urlparse.urlencode({
-            "grant_type": "authorization_code",
-            "code": code,
-            "code_verifier": code_verifier,
-            "client_id": self.config.client_id,
-            "redirect_uri": self.config.redirect_uri,
-        }).encode("ascii")
+        body = _urlparse.urlencode(
+            {
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": code_verifier,
+                "client_id": self.config.client_id,
+                "redirect_uri": self.config.redirect_uri,
+            }
+        ).encode("ascii")
         try:
             payload = self._fetcher(self.config.token_endpoint(), body, self.timeout)
         except TokenExchangeError:
@@ -281,16 +284,18 @@ class TokenExchanger:
                 desc = data.get("error_description", "")
                 raise TokenExchangeError(f"HTTP {e.code} from token endpoint: {err}: {desc}")
             except _json.JSONDecodeError:
-                raise TokenExchangeError(f"HTTP {e.code} from token endpoint: {text[:200]}")
+                raise TokenExchangeError(f"HTTP {e.code} from token endpoint: {text[:200]}") from e
         except _urlerror.URLError as e:
             raise TokenExchangeError(f"network error contacting token endpoint: {e}") from e
 
 
-__all__.extend([
-    "TokenResponse",
-    "TokenExchangeError",
-    "TokenExchanger",
-])
+__all__.extend(
+    [
+        "TokenResponse",
+        "TokenExchangeError",
+        "TokenExchanger",
+    ]
+)
 
 
 class LoginCompleteError(RuntimeError):
@@ -324,10 +329,10 @@ class LoginCompleter:
     def __init__(
         self,
         *,
-        token_exchanger: "TokenExchanger",
+        token_exchanger: TokenExchanger,
         validator,
-        session_store: "object",
-        pending_store: "PendingLoginStore",
+        session_store: object,
+        pending_store: PendingLoginStore,
     ) -> None:
         self.token_exchanger = token_exchanger
         self.validator = validator

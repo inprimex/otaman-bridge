@@ -13,7 +13,6 @@ the upstream issuer URL) as the authorization server.
 from __future__ import annotations
 
 import json
-import os
 import types
 import urllib.error
 import urllib.request
@@ -22,9 +21,8 @@ from pathlib import Path
 import pytest
 
 from otaman_bridge.daemon import BridgeDaemon, read_endpoint_file
-from otaman_bridge_ee.dcr_shim import IdpConfig, MetadataCache
 from otaman_bridge.transports.null import NullTransport
-
+from otaman_bridge_ee.dcr_shim import IdpConfig, MetadataCache
 
 # ---- fixtures -------------------------------------------------------------
 
@@ -34,7 +32,10 @@ def _fake_oidc_validator(issuer: str = "http://idp.example") -> object:
     return types.SimpleNamespace(
         config=types.SimpleNamespace(issuer=issuer),
         validate=lambda _hdr: types.SimpleNamespace(
-            ok=False, user_id=None, email=None, roles=(),
+            ok=False,
+            user_id=None,
+            email=None,
+            roles=(),
         ),
     )
 
@@ -56,7 +57,9 @@ def daemon_with_shim(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.oidc_validator = _fake_oidc_validator()
     daemon.idp_config = _shim_config()
@@ -74,7 +77,9 @@ def daemon_without_shim(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.oidc_validator = _fake_oidc_validator()
     # idp_config stays None (env didn't enable it)
@@ -95,8 +100,11 @@ def _get(url, *, headers=None):
 
 
 def _post(url, *, body=None, headers=None):
-    data = (json.dumps(body) if body is not None else b"").encode("utf-8") \
-        if not isinstance(body, (bytes, type(None))) else (body or b"")
+    data = (
+        (json.dumps(body) if body is not None else b"").encode("utf-8")
+        if not isinstance(body, (bytes, type(None)))
+        else (body or b"")
+    )
     h = {"Content-Type": "application/json"}
     if headers:
         h.update(headers)
@@ -119,10 +127,13 @@ def _daemon_url(endpoint_file: Path) -> str:
 class TestASMetadataOverlay:
     """Both paths serve the same overlaid payload when shim is on."""
 
-    @pytest.mark.parametrize("path", [
-        "/.well-known/oauth-authorization-server",
-        "/.well-known/openid-configuration",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/.well-known/oauth-authorization-server",
+            "/.well-known/openid-configuration",
+        ],
+    )
     def test_returns_overlay_when_shim_enabled(self, daemon_with_shim, monkeypatch, path):
         daemon, endpoint = daemon_with_shim
         # Stub the upstream fetch so we don't actually call out to idp.example.
@@ -133,8 +144,10 @@ class TestASMetadataOverlay:
             "jwks_uri": "http://idp.example/oauth/v2/keys",
         }
         from otaman_bridge_ee import dcr_shim
+
         monkeypatch.setattr(
-            dcr_shim, "fetch_upstream_metadata",
+            dcr_shim,
+            "fetch_upstream_metadata",
             lambda base_url, **kw: upstream,
         )
 
@@ -153,10 +166,13 @@ class TestASMetadataOverlay:
         # registration_endpoint points at the bridge, not at idp
         assert "idp.example" not in m["registration_endpoint"]
 
-    @pytest.mark.parametrize("path", [
-        "/.well-known/oauth-authorization-server",
-        "/.well-known/openid-configuration",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/.well-known/oauth-authorization-server",
+            "/.well-known/openid-configuration",
+        ],
+    )
     def test_returns_404_when_shim_disabled(self, daemon_without_shim, path):
         _, endpoint = daemon_without_shim
         code, _, body = _get(_daemon_url(endpoint) + path)
@@ -173,6 +189,7 @@ class TestASMetadataOverlay:
             return upstream
 
         from otaman_bridge_ee import dcr_shim
+
         monkeypatch.setattr(dcr_shim, "fetch_upstream_metadata", _counting_fetch)
 
         # First call: fetch upstream.
@@ -206,8 +223,10 @@ class TestASMetadataOverlay:
         """Metadata endpoints are public per OAuth spec — no auth headers needed."""
         daemon, endpoint = daemon_with_shim
         from otaman_bridge_ee import dcr_shim
+
         monkeypatch.setattr(
-            dcr_shim, "fetch_upstream_metadata",
+            dcr_shim,
+            "fetch_upstream_metadata",
             lambda base_url, **kw: {"issuer": "http://idp.example"},
         )
         # No Authorization header
@@ -251,8 +270,11 @@ class TestRegisterRouteGate:
 
     def test_returns_404_when_shim_disabled(self, daemon_without_shim):
         _, endpoint = daemon_without_shim
-        code, _, body = _post(_daemon_url(endpoint) + "/oauth/register", body={
-            "redirect_uris": ["http://localhost:54321/cb"],
-        })
+        code, _, body = _post(
+            _daemon_url(endpoint) + "/oauth/register",
+            body={
+                "redirect_uris": ["http://localhost:54321/cb"],
+            },
+        )
         assert code == 404
         assert b"DCR shim" in body

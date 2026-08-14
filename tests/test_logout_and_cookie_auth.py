@@ -23,7 +23,9 @@ def running_daemon(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.start()
     try:
@@ -42,10 +44,12 @@ def _request(url, *, method="GET", cookie=None, token=None, body=None):
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
+
     # 302 must NOT be auto-followed (we test the 302 itself, not where it leads)
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **kw):
             return None
+
     opener = urllib.request.build_opener(_NoRedirect())
     try:
         with opener.open(req, timeout=2) as resp:
@@ -75,11 +79,14 @@ class TestAuthLogout:
         daemon, endpoint = running_daemon
         _wire_full_web_auth(daemon)
         sess = daemon.session_store.create(
-            user_id="u1", email="a@b", roles=("otaman:viewer",),
+            user_id="u1",
+            email="a@b",
+            roles=("otaman:viewer",),
         )
         base = _daemon_url(endpoint)
         code, headers, _ = _request(
-            f"{base}/auth/logout", method="POST",
+            f"{base}/auth/logout",
+            method="POST",
             cookie=f"otaman_bridge_sid={sess.id}",
         )
         assert code == 302
@@ -103,7 +110,8 @@ class TestAuthLogout:
         _wire_full_web_auth(daemon)
         base = _daemon_url(endpoint)
         code, _, _ = _request(
-            f"{base}/auth/logout", method="POST",
+            f"{base}/auth/logout",
+            method="POST",
             cookie="otaman_bridge_sid=never-existed",
         )
         assert code == 302
@@ -128,11 +136,14 @@ class TestSessionCookieAuth:
         daemon, endpoint = running_daemon
         _wire_full_web_auth(daemon)
         sess = daemon.session_store.create(
-            user_id="u1", email=None, roles=(),
+            user_id="u1",
+            email=None,
+            roles=(),
         )
         # /shutdown is auth'd; if cookie works we get 200 not 401
         code, _, _ = _request(
-            self._shutdown_url(endpoint), method="POST",
+            self._shutdown_url(endpoint),
+            method="POST",
             cookie=f"otaman_bridge_sid={sess.id}",
         )
         assert code != 401, "valid session cookie was rejected"
@@ -142,7 +153,8 @@ class TestSessionCookieAuth:
         _wire_full_web_auth(daemon)
         # Unknown cookie + no Bearer = 401 (no fallback succeeds)
         code, _, _ = _request(
-            self._shutdown_url(endpoint), method="POST",
+            self._shutdown_url(endpoint),
+            method="POST",
             cookie="otaman_bridge_sid=never-existed",
         )
         assert code == 401
@@ -152,7 +164,8 @@ class TestSessionCookieAuth:
         _wire_full_web_auth(daemon)
         # No cookie, but valid loopback bearer -> accepted (existing path)
         code, _, _ = _request(
-            self._shutdown_url(endpoint), method="POST",
+            self._shutdown_url(endpoint),
+            method="POST",
             token=daemon.token,
         )
         assert code != 401

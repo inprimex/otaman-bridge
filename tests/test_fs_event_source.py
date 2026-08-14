@@ -86,7 +86,7 @@ class TestFileSystemEventSourceLatency:
             src.stop()
 
         assert len(detect_times) == 20, f"Missed {20 - len(detect_times)} events"
-        latencies_ms = [(d - w) * 1000 for w, d in zip(write_times, detect_times)]
+        latencies_ms = [(d - w) * 1000 for w, d in zip(write_times, detect_times, strict=True)]
         median_ms = statistics.median(latencies_ms)
         max_ms = max(latencies_ms)
         print(f"\nLatency: median={median_ms:.1f}ms  max={max_ms:.1f}ms")
@@ -123,6 +123,7 @@ class TestFileSystemEventSourceAsync:
     def test_async_dispatch_via_schedule_in_loop(self, tmp_path):
         # schedule_in_loop() bridges watchdog thread to asyncio loop.
         import asyncio
+
         received: list[BusFileEvent] = []
 
         async def async_handler(evt: BusFileEvent) -> None:

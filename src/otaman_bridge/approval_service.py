@@ -17,7 +17,8 @@ import asyncio
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from otaman_bridge.core import ApprovalRequest, ApprovalResponse, TransportHandle
 
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from otaman_bridge.core import Transport
     from otaman_bridge.daemon import _AsyncLoopThread
 
-_log = logging.getLogger("maestro.bridge.approval_service")
+_log = logging.getLogger("maestro.bridge.approval_service")  # legacy: renamed at core 1.0
 
 
 class _PendingApproval:

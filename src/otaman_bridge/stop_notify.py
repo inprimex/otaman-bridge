@@ -33,15 +33,20 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from otaman_core._resolve import find_maestro_root, read_expected_account, active_routing_env  # legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0  # noqa: E402
-from otaman_bridge.afk import read_afk  # noqa: E402
+# legacy: find_maestro_root renamed find_otaman_root at otaman-core 1.0
+from otaman_core._resolve import (  # noqa: E402
+    active_routing_env,
+    find_maestro_root,
+    read_expected_account,
+)
 
+from otaman_bridge.afk import read_afk  # noqa: E402
 
 # Tunables — exposed at module level so tests can shrink them.
 MIN_DEBOUNCE_SECONDS = 60
 PRUNE_OLDER_THAN_SECONDS = 24 * 60 * 60
-TAIL_CHARS = 1500       # body length included in the Telegram notification
-DETECTION_CHARS = 300   # look at last N chars for the `?` heuristic
+TAIL_CHARS = 1500  # body length included in the Telegram notification
+DETECTION_CHARS = 300  # look at last N chars for the `?` heuristic
 
 
 def _log_warn(msg: str) -> None:
@@ -124,9 +129,9 @@ def _load_state(state_path: Path) -> dict:
 
 def _prune_state(state: dict, now: int) -> dict:
     return {
-        sid: v for sid, v in state.items()
-        if isinstance(v, dict)
-        and (now - int(v.get("ts", 0))) < PRUNE_OLDER_THAN_SECONDS
+        sid: v
+        for sid, v in state.items()
+        if isinstance(v, dict) and (now - int(v.get("ts", 0))) < PRUNE_OLDER_THAN_SECONDS
     }
 
 
@@ -169,7 +174,7 @@ def _derive_account(project_root: Path) -> str | None:
     if config_dir:
         base = os.path.basename(config_dir.rstrip("/\\"))
         if base.startswith(".claude-"):
-            return base[len(".claude-"):]
+            return base[len(".claude-") :]
         if base in ("", ".claude"):
             return "default"
     marker_account = read_expected_account(project_root)
@@ -180,6 +185,7 @@ def _derive_account(project_root: Path) -> str | None:
 
 def _endpoint_file(account: str) -> Path:
     from otaman_bridge.daemon import endpoint_path  # noqa: PLC0415
+
     return endpoint_path(account)  # respects OTAMAN_BRIDGE_DIR / MAESTRO_BRIDGE_DIR
 
 
@@ -299,7 +305,8 @@ def main() -> int:
 
     try:
         post_notify(
-            port=port, token=token,
+            port=port,
+            token=token,
             account=account,
             project=_session_project(project_root),
             agent=_current_agent(project_root),

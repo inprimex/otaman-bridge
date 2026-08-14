@@ -74,8 +74,10 @@ class TestSendHappyPath:
     def test_priority_and_type_propagate(self, tool, inbox, sender_ctx):
         tool.handler(
             {
-                "target_user_id": "user-B", "body": "urgent please",
-                "priority": "high", "type": "review-request",
+                "target_user_id": "user-B",
+                "body": "urgent please",
+                "priority": "high",
+                "type": "review-request",
             },
             sender_ctx,
         )
@@ -86,7 +88,8 @@ class TestSendHappyPath:
     def test_in_reply_to_propagates(self, tool, inbox, sender_ctx):
         tool.handler(
             {
-                "target_user_id": "user-B", "body": "re: that thing",
+                "target_user_id": "user-B",
+                "body": "re: that thing",
                 "in_reply_to": "20260518T140000Z-userA-greeting",
             },
             sender_ctx,

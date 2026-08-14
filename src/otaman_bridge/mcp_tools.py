@@ -12,7 +12,7 @@ the MCP spec's tool handler shape.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from otaman_bridge.mcp_server import CallContext, Tool
 from otaman_bridge.runner_client import (
@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 _log = logging.getLogger("otaman.bridge.mcp.tools")
 
 # Privacy mode for surfacing other users' identities to a calling user.
-PRIVACY_EMAILS = "emails"     # default; useful for small trusted teams
-PRIVACY_OPAQUE = "opaque"     # strip user_email, just return user_id
+PRIVACY_EMAILS = "emails"  # default; useful for small trusted teams
+PRIVACY_OPAQUE = "opaque"  # strip user_email, just return user_id
 
 
 # Tools that require an authenticated user identity (ctx.user_id non-empty).
@@ -49,14 +49,16 @@ PRIVACY_OPAQUE = "opaque"     # strip user_email, just return user_id
 #
 # TODO: lift this into Tool dataclass metadata so tools self-describe
 # their auth requirements instead of being listed by name in two places.
-IDENTITY_REQUIRED_TOOLS: frozenset[str] = frozenset({
-    "send_message_to_user",
-    "check_messages",
-    "mark_message_read",
-    "request_review",
-    "get_recent_activity",
-    "kill_session_for_user",
-})
+IDENTITY_REQUIRED_TOOLS: frozenset[str] = frozenset(
+    {
+        "send_message_to_user",
+        "check_messages",
+        "mark_message_read",
+        "request_review",
+        "get_recent_activity",
+        "kill_session_for_user",
+    }
+)
 
 # ADMIN_ROLE moved to otaman_bridge_ee.mcp_tools_admin in Phase 2d:
 # CE's builder is un-gated by default (Q2 (a) decision); EE provides
@@ -98,28 +100,38 @@ def build_list_team_sessions_tool(
             _log.warning("list_team_sessions: runner unreachable: %s", exc)
             return {
                 "isError": True,
-                "content": [{"type": "text", "text": (
-                    "Team session list is unavailable: the runner is not "
-                    f"reachable from this bridge ({exc}). This is not the "
-                    "same as 'no team sessions' -- it means we can't tell."
-                )}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Team session list is unavailable: the runner is not "
+                            f"reachable from this bridge ({exc}). This is not the "
+                            "same as 'no team sessions' -- it means we can't tell."
+                        ),
+                    }
+                ],
             }
         except RunnerAuthError as exc:
             _log.warning("list_team_sessions: runner auth failed: %s", exc)
             return {
                 "isError": True,
-                "content": [{"type": "text", "text": (
-                    "Team session list is unavailable: the bridge's loopback "
-                    f"token for the runner is stale ({exc}). The runner may "
-                    "have restarted; the bridge needs to re-read the endpoint "
-                    "file."
-                )}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Team session list is unavailable: the bridge's loopback "
+                            f"token for the runner is stale ({exc}). The runner may "
+                            "have restarted; the bridge needs to re-read the endpoint "
+                            "file."
+                        ),
+                    }
+                ],
             }
 
         sessions_out = []
         for s in raw_sessions:
             user_id = s.get("user") or ""
-            is_self = (user_id == ctx.user_id)
+            is_self = user_id == ctx.user_id
             if is_self and not include_self:
                 continue
             entry = {
@@ -212,7 +224,8 @@ __all__ = [
 ]
 
 
-from otaman_bridge.inbox import Inbox
+# Deliberate late import: keeps the section-ordered module layout intact.
+from otaman_bridge.inbox import Inbox  # noqa: E402
 
 
 def build_send_message_to_user_tool(
@@ -252,7 +265,7 @@ def build_send_message_to_user_tool(
         try:
             sent = inbox.write_message(
                 from_user=ctx.user_id,
-                from_email=ctx.user_email,   # may be None; that's fine
+                from_email=ctx.user_email,  # may be None; that's fine
                 to_user=target_user_id,
                 subject=subject,
                 body=body,
@@ -264,10 +277,15 @@ def build_send_message_to_user_tool(
             return _mcp_error(f"invalid message: {exc}")
 
         return {
-            "content": [{"type": "text", "text": (
-                f"Sent message to {target_user_id} "
-                f"(subject: {sent.subject!r}, id: {sent.id})."
-            )}],
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"Sent message to {target_user_id} "
+                        f"(subject: {sent.subject!r}, id: {sent.id})."
+                    ),
+                }
+            ],
             "structuredContent": {
                 "message_id": sent.id,
                 "to_user": sent.to_user,
@@ -297,7 +315,10 @@ def build_send_message_to_user_tool(
                 },
                 "subject": {
                     "type": "string",
-                    "description": "Optional one-line subject. Default: derived from body's first line, max 80 chars.",
+                    "description": (
+                        "Optional one-line subject. "
+                        "Default: derived from body's first line, max 80 chars."
+                    ),
                 },
                 "priority": {
                     "type": "string",
@@ -312,7 +333,10 @@ def build_send_message_to_user_tool(
                     "type": "string",
                     "enum": ["chat", "review-request", "task-handoff", "approval-request"],
                     "default": "chat",
-                    "description": "Message category. Default chat; richer types are for tools that wrap send_message_to_user.",
+                    "description": (
+                        "Message category. Default chat; richer types are for "
+                        "tools that wrap send_message_to_user."
+                    ),
                 },
             },
         },
@@ -346,9 +370,7 @@ def _compose_review_body(
     if checklist:
         clean = [item.strip() for item in checklist if item and item.strip()]
         if clean:
-            parts.append(
-                "**Please check:**\n" + "\n".join(f"- {item}" for item in clean)
-            )
+            parts.append("**Please check:**\n" + "\n".join(f"- {item}" for item in clean))
     return "\n\n".join(parts)
 
 
@@ -409,9 +431,7 @@ def build_request_review_tool(
         pr_url = args.get("pr_url")
         urgency = args.get("urgency", "normal")
         if urgency not in ("low", "normal", "high"):
-            return _mcp_error(
-                f"invalid urgency {urgency!r}: must be low / normal / high"
-            )
+            return _mcp_error(f"invalid urgency {urgency!r}: must be low / normal / high")
         checklist = args.get("checklist")
         if checklist is not None and not isinstance(checklist, list):
             return _mcp_error("checklist must be an array of strings")
@@ -421,17 +441,24 @@ def build_request_review_tool(
                     return _mcp_error("checklist must be an array of strings")
 
         for field_name, value in (
-            ("repo", repo), ("branch", branch), ("pr_url", pr_url),
+            ("repo", repo),
+            ("branch", branch),
+            ("pr_url", pr_url),
         ):
             if value is not None and not isinstance(value, str):
                 return _mcp_error(f"{field_name} must be a string")
 
         body = _compose_review_body(
-            summary=summary, repo=repo, branch=branch, pr_url=pr_url,
+            summary=summary,
+            repo=repo,
+            branch=branch,
+            pr_url=pr_url,
             checklist=checklist,
         )
         subject = args.get("subject") or _compose_review_subject(
-            summary=summary, repo=repo, branch=branch,
+            summary=summary,
+            repo=repo,
+            branch=branch,
         )
 
         try:
@@ -449,10 +476,15 @@ def build_request_review_tool(
             return _mcp_error(f"invalid message: {exc}")
 
         return {
-            "content": [{"type": "text", "text": (
-                f"Review request sent to {target_user_id} "
-                f"(subject: {sent.subject!r}, id: {sent.id})."
-            )}],
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"Review request sent to {target_user_id} "
+                        f"(subject: {sent.subject!r}, id: {sent.id})."
+                    ),
+                }
+            ],
             "structuredContent": {
                 "message_id": sent.id,
                 "to_user": sent.to_user,
@@ -524,6 +556,7 @@ def _iso_since_hours_ago(hours: int, *, now=None) -> str:
     Zitadel / inbox sent_at format (UTC, Z suffix, second precision).
     """
     import datetime
+
     cur = now if now is not None else datetime.datetime.now(tz=datetime.timezone.utc)
     if cur.tzinfo is None:
         cur = cur.replace(tzinfo=datetime.timezone.utc)
@@ -593,17 +626,14 @@ def _format_recent_activity(
     lines: list[str] = [f"Recent activity (last {window_hours}h):", ""]
 
     inbox_line = f"Inbox: {inbox_summary['total']} message(s)"
-    if inbox_summary['total']:
+    if inbox_summary["total"]:
         inbox_line += f" ({inbox_summary['unread']} unread)"
     lines.append(inbox_line)
 
-    if inbox_summary['total']:
-        by_type = inbox_summary['by_type']
+    if inbox_summary["total"]:
+        by_type = inbox_summary["by_type"]
         if by_type:
-            lines.append(
-                "  types: "
-                + ", ".join(f"{n} {t}" for t, n in sorted(by_type.items()))
-            )
+            lines.append("  types: " + ", ".join(f"{n} {t}" for t, n in sorted(by_type.items())))
         for m in inbox_messages[:10]:
             read_marker = "read" if getattr(m, "read_at", None) else "unread"
             mtype = getattr(m, "type", "chat") or "chat"
@@ -611,17 +641,14 @@ def _format_recent_activity(
             subject = getattr(m, "subject", "") or "(no subject)"
             sent = getattr(m, "sent_at", "")
             sender = getattr(m, "from_user", "(unknown)")
-            lines.append(
-                f"  - [{sent}] {sender} — {subject} "
-                f"[{mprio}, {mtype}, {read_marker}]"
-            )
+            lines.append(f"  - [{sent}] {sender} — {subject} [{mprio}, {mtype}, {read_marker}]")
         if len(inbox_messages) > 10:
             lines.append(f"  (... {len(inbox_messages) - 10} more)")
 
     if team_summary is not None:
         lines.append("")
         lines.append(f"Team: {team_summary['total']} active session(s) from others")
-        for repo, n in sorted(team_summary['by_repo'].items()):
+        for repo, n in sorted(team_summary["by_repo"].items()):
             lines.append(f"  - {repo}: {n}")
 
     return "\n".join(lines)
@@ -650,9 +677,7 @@ def build_get_recent_activity_tool(
 
     def handler(args: dict, ctx: CallContext) -> dict:
         if not ctx.user_id:
-            return _mcp_error(
-                "caller identity required (loopback bearer has no user identity)"
-            )
+            return _mcp_error("caller identity required (loopback bearer has no user identity)")
 
         hours = args.get("hours", 24)
         if not isinstance(hours, int) or isinstance(hours, bool):
@@ -687,7 +712,8 @@ def build_get_recent_activity_tool(
             try:
                 sessions = runner_client.list_sessions() or []
                 team_summary = _summarize_team_sessions(
-                    sessions, exclude_user_id=ctx.user_id,
+                    sessions,
+                    exclude_user_id=ctx.user_id,
                 )
             except RunnerUnreachableError as exc:
                 team_error = f"runner unreachable: {exc}"
@@ -802,9 +828,7 @@ def build_kill_session_for_user_tool(
         # Defensive identity check (HTTP layer also gates, but a stale
         # IDENTITY_REQUIRED_TOOLS set shouldn't lead to data loss).
         if not ctx.user_id:
-            return _mcp_error(
-                "caller identity required (loopback bearer has no user identity)"
-            )
+            return _mcp_error("caller identity required (loopback bearer has no user identity)")
         if require_role is not None:
             roles = getattr(ctx, "roles", ()) or ()
             if require_role not in roles:
@@ -823,12 +847,14 @@ def build_kill_session_for_user_tool(
 
         _log.info(
             "kill_session_for_user: user=%s session=%s reason=%r",
-            ctx.user_id, session_id, reason or "(none given)",
+            ctx.user_id,
+            session_id,
+            reason or "(none given)",
         )
 
         try:
             runner_client.kill_session(session_id)
-        except SessionNotFoundError as exc:
+        except SessionNotFoundError:
             return _mcp_error(f"session not found: {session_id}")
         except RunnerAuthError as exc:
             return _mcp_error(f"runner auth failed: {exc}")
@@ -838,11 +864,16 @@ def build_kill_session_for_user_tool(
             return _mcp_error(f"invalid session_id: {exc}")
 
         return {
-            "content": [{"type": "text", "text": (
-                f"Killed session {session_id}"
-                + (f" (reason: {reason})" if reason else "")
-                + "."
-            )}],
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"Killed session {session_id}"
+                        + (f" (reason: {reason})" if reason else "")
+                        + "."
+                    ),
+                }
+            ],
             "structuredContent": {
                 "session_id": session_id,
                 "killed_by": ctx.user_id,
@@ -866,8 +897,7 @@ def build_kill_session_for_user_tool(
                 "session_id": {
                     "type": "string",
                     "description": (
-                        "UUID of the session to terminate "
-                        "(from list_team_sessions.session_id)."
+                        "UUID of the session to terminate (from list_team_sessions.session_id)."
                     ),
                 },
                 "reason": {
@@ -906,9 +936,7 @@ def build_check_messages_tool(*, inbox: Inbox) -> Tool:
 
     def handler(args: dict, ctx: CallContext) -> dict:
         if not ctx.user_id:
-            return _mcp_error(
-                "caller identity required (loopback bearer has no user identity)"
-            )
+            return _mcp_error("caller identity required (loopback bearer has no user identity)")
         unread_only = bool(args.get("unread_only", True))
         from_user = args.get("from_user")
         since = args.get("since")
@@ -1018,9 +1046,7 @@ def build_mark_message_read_tool(*, inbox: Inbox) -> Tool:
 
     def handler(args: dict, ctx: CallContext) -> dict:
         if not ctx.user_id:
-            return _mcp_error(
-                "caller identity required (loopback bearer has no user identity)"
-            )
+            return _mcp_error("caller identity required (loopback bearer has no user identity)")
         message_id = args.get("message_id")
         if not message_id or not isinstance(message_id, str):
             return _mcp_error("missing or invalid message_id")
@@ -1028,16 +1054,15 @@ def build_mark_message_read_tool(*, inbox: Inbox) -> Tool:
 
         try:
             count = inbox.mark_read(
-                ctx.user_id, message_id, mark_all_before=mark_all_before,
+                ctx.user_id,
+                message_id,
+                mark_all_before=mark_all_before,
             )
         except Exception as exc:
             return _mcp_error(f"mark_read failed: {exc}")
 
         if count == 0:
-            text = (
-                f"No change: message {message_id!r} is already read"
-                " or does not exist."
-            )
+            text = f"No change: message {message_id!r} is already read or does not exist."
         elif mark_all_before:
             text = f"Marked {count} message(s) read (up through {message_id})."
         else:

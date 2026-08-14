@@ -33,8 +33,9 @@ from __future__ import annotations
 
 import os
 import secrets as _secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Protocol
 
 from otaman_bridge.mcp_server import CallContext
 
@@ -83,7 +84,7 @@ class LoopbackAuthProvider:
         header = headers.get("Authorization", "")
         if not header.startswith("Bearer "):
             return None
-        supplied = header[len("Bearer "):].strip()
+        supplied = header[len("Bearer ") :].strip()
         if not _secrets.compare_digest(supplied, self.token):
             return None
         return CallContext(user_id="", user_email=None, roles=())
@@ -115,7 +116,7 @@ class SimpleAuthProvider:
     env_user: str | None = None
 
     @classmethod
-    def from_env(cls) -> "SimpleAuthProvider":
+    def from_env(cls) -> SimpleAuthProvider:
         """Build a provider that pulls the fallback user from env."""
         return cls(env_user=os.environ.get("OTAMAN_USER", "").strip() or None)
 

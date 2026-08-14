@@ -27,8 +27,6 @@ from __future__ import annotations
 
 import os
 import re
-import secrets
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,13 +50,13 @@ class StoredMessage:
     from_email: str | None
     to_user: str
     subject: str
-    sent_at: str             # ISO-8601 UTC
-    read_at: str | None      # ISO-8601 UTC, None = unread
+    sent_at: str  # ISO-8601 UTC
+    read_at: str | None  # ISO-8601 UTC, None = unread
     in_reply_to: str | None
-    priority: str            # low | normal | high
-    type: str                # chat | review-request | task-handoff | approval-request
+    priority: str  # low | normal | high
+    type: str  # chat | review-request | task-handoff | approval-request
     body: str
-    path: Path               # absolute path on disk; not serialized
+    path: Path  # absolute path on disk; not serialized
 
 
 class Inbox:
@@ -114,25 +112,37 @@ class Inbox:
             except FileExistsError:
                 attempt += 1
                 if attempt > 99:
-                    raise RuntimeError(f"too many collisions on {base_id}")
+                    raise RuntimeError(f"too many collisions on {base_id}") from None
                 continue
             try:
                 content = _render_message(
                     id=candidate_id,
-                    from_user=from_user, from_email=from_email,
-                    to_user=to_user, subject=eff_subject,
-                    sent_at=sent_at, in_reply_to=in_reply_to,
-                    priority=priority, msg_type=msg_type, body=body,
+                    from_user=from_user,
+                    from_email=from_email,
+                    to_user=to_user,
+                    subject=eff_subject,
+                    sent_at=sent_at,
+                    in_reply_to=in_reply_to,
+                    priority=priority,
+                    msg_type=msg_type,
+                    body=body,
                 )
                 os.write(fd, content.encode("utf-8"))
             finally:
                 os.close(fd)
             return StoredMessage(
                 id=candidate_id,
-                from_user=from_user, from_email=from_email,
-                to_user=to_user, subject=eff_subject,
-                sent_at=sent_at, read_at=None, in_reply_to=in_reply_to,
-                priority=priority, type=msg_type, body=body, path=target,
+                from_user=from_user,
+                from_email=from_email,
+                to_user=to_user,
+                subject=eff_subject,
+                sent_at=sent_at,
+                read_at=None,
+                in_reply_to=in_reply_to,
+                priority=priority,
+                type=msg_type,
+                body=body,
+                path=target,
             )
 
     # ---- reads -------------------------------------------------------
@@ -241,16 +251,25 @@ def _derive_subject(body: str) -> str:
     return ""
 
 
-def _render_message(*, id, from_user, from_email, to_user, subject,
-                    sent_at, in_reply_to, priority, msg_type, body) -> str:
+def _render_message(
+    *, id, from_user, from_email, to_user, subject, sent_at, in_reply_to, priority, msg_type, body
+) -> str:
     def yaml_value(v):
         if v is None:
             return "null"
         s = str(v)
         # Quote if YAML-special; v0+ keeps it simple.
-        if re.search(r'[":\n#&*!\[\]\{\}\|>%@`]', s) or s.lower() in ("true", "false", "null", "yes", "no", "~"):
-            return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+        if re.search(r'[":\n#&*!\[\]\{\}\|>%@`]', s) or s.lower() in (
+            "true",
+            "false",
+            "null",
+            "yes",
+            "no",
+            "~",
+        ):
+            return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
         return s
+
     lines = [
         _FRONTMATTER_DELIM,
         f"id: {yaml_value(id)}",
@@ -259,7 +278,7 @@ def _render_message(*, id, from_user, from_email, to_user, subject,
         f"to_user: {yaml_value(to_user)}",
         f"subject: {yaml_value(subject)}",
         f"sent_at: {yaml_value(sent_at)}",
-        f"read_at: null",
+        "read_at: null",
         f"in_reply_to: {yaml_value(in_reply_to)}",
         f"priority: {yaml_value(priority)}",
         f"type: {yaml_value(msg_type)}",
@@ -275,12 +294,12 @@ def _read_message(path: Path) -> StoredMessage:
     text = path.read_text(encoding="utf-8")
     if not text.startswith(_FRONTMATTER_DELIM):
         raise ValueError(f"missing frontmatter delimiter in {path}")
-    rest = text[len(_FRONTMATTER_DELIM):].lstrip("\n")
+    rest = text[len(_FRONTMATTER_DELIM) :].lstrip("\n")
     fm_end = rest.find(f"\n{_FRONTMATTER_DELIM}")
     if fm_end < 0:
         raise ValueError(f"unclosed frontmatter in {path}")
     fm_text = rest[:fm_end]
-    body = rest[fm_end + len(_FRONTMATTER_DELIM) + 1:].lstrip("\n")
+    body = rest[fm_end + len(_FRONTMATTER_DELIM) + 1 :].lstrip("\n")
 
     fields: dict[str, str | None] = {}
     for line in fm_text.splitlines():
@@ -292,7 +311,7 @@ def _read_message(path: Path) -> StoredMessage:
         if v == "null" or v == "":
             fields[k] = None
         elif v.startswith('"') and v.endswith('"'):
-            fields[k] = v[1:-1].replace('\\"', '"').replace('\\\\', '\\')
+            fields[k] = v[1:-1].replace('\\"', '"').replace("\\\\", "\\")
         else:
             fields[k] = v
 

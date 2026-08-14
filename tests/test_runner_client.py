@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -14,8 +15,6 @@ from otaman_bridge.runner_client import (
     RunnerUnreachableError,
     SessionNotFoundError,
 )
-import urllib.error
-
 
 # ---- Helpers -----------------------------------------------------------
 
@@ -91,14 +90,32 @@ class TestListSessions:
     def test_returns_session_list_on_200(self, tmp_path):
         ep = tmp_path / "runner.endpoint"
         _write_endpoint(ep)
-        opener = _StubOpener(response=_StubResponse(json.dumps({
-            "sessions": [
-                {"session_id": "s1", "user": "u1", "agent": "a", "repo": "r",
-                 "session_name": "n1", "started_at": "2026-05-15T00:00:00Z"},
-                {"session_id": "s2", "user": "u2", "agent": "a", "repo": "r",
-                 "session_name": "n2", "started_at": "2026-05-15T00:00:00Z"},
-            ],
-        })))
+        opener = _StubOpener(
+            response=_StubResponse(
+                json.dumps(
+                    {
+                        "sessions": [
+                            {
+                                "session_id": "s1",
+                                "user": "u1",
+                                "agent": "a",
+                                "repo": "r",
+                                "session_name": "n1",
+                                "started_at": "2026-05-15T00:00:00Z",
+                            },
+                            {
+                                "session_id": "s2",
+                                "user": "u2",
+                                "agent": "a",
+                                "repo": "r",
+                                "session_name": "n2",
+                                "started_at": "2026-05-15T00:00:00Z",
+                            },
+                        ],
+                    }
+                )
+            )
+        )
         client = RunnerClient(endpoint_file=ep, opener=opener)
         sessions = client.list_sessions()
         assert len(sessions) == 2
@@ -116,30 +133,43 @@ class TestListSessions:
 
     def test_401_raises_auth_error(self, tmp_path):
         import urllib.error
+
         ep = tmp_path / "runner.endpoint"
         _write_endpoint(ep)
-        opener = _StubOpener(raise_exc=urllib.error.HTTPError(
-            url="http://x", code=401, msg="Unauthorized", hdrs=None,
-            fp=io.BytesIO(b'{"error":"bad token"}'),
-        ))
+        opener = _StubOpener(
+            raise_exc=urllib.error.HTTPError(
+                url="http://x",
+                code=401,
+                msg="Unauthorized",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":"bad token"}'),
+            )
+        )
         client = RunnerClient(endpoint_file=ep, opener=opener)
         with pytest.raises(RunnerAuthError, match="401"):
             client.list_sessions()
 
     def test_500_raises_unreachable(self, tmp_path):
         import urllib.error
+
         ep = tmp_path / "runner.endpoint"
         _write_endpoint(ep)
-        opener = _StubOpener(raise_exc=urllib.error.HTTPError(
-            url="http://x", code=500, msg="Server Error", hdrs=None,
-            fp=io.BytesIO(b'{"error":"internal"}'),
-        ))
+        opener = _StubOpener(
+            raise_exc=urllib.error.HTTPError(
+                url="http://x",
+                code=500,
+                msg="Server Error",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":"internal"}'),
+            )
+        )
         client = RunnerClient(endpoint_file=ep, opener=opener)
         with pytest.raises(RunnerUnreachableError, match="500"):
             client.list_sessions()
 
     def test_connection_refused_raises_unreachable(self, tmp_path):
         import urllib.error
+
         ep = tmp_path / "runner.endpoint"
         _write_endpoint(ep)
         opener = _StubOpener(raise_exc=urllib.error.URLError("Connection refused"))
@@ -178,14 +208,17 @@ class TestListSessions:
 class _KillStubOpener(_StubOpener):
     """Variant that also captures request data + method so we can assert
     on the POST body shape."""
+
     def open(self, req, timeout=None):
-        self.calls.append({
-            "url": req.full_url,
-            "method": req.get_method(),
-            "headers": dict(req.headers),
-            "data": req.data,
-            "timeout": timeout,
-        })
+        self.calls.append(
+            {
+                "url": req.full_url,
+                "method": req.get_method(),
+                "headers": dict(req.headers),
+                "data": req.data,
+                "timeout": timeout,
+            }
+        )
         if self.raise_exc is not None:
             raise self.raise_exc
         return self.response
@@ -213,9 +246,15 @@ class TestKillSession:
     def test_404_raises_session_not_found(self, tmp_path):
         ep = tmp_path / "runner.endpoint"
         _write_endpoint(ep)
-        opener = _KillStubOpener(raise_exc=urllib.error.HTTPError(
-            "http://x/kill", 404, "Not Found", {}, io.BytesIO(b'{"error":"session not found"}'),
-        ))
+        opener = _KillStubOpener(
+            raise_exc=urllib.error.HTTPError(
+                "http://x/kill",
+                404,
+                "Not Found",
+                {},
+                io.BytesIO(b'{"error":"session not found"}'),
+            )
+        )
         client = RunnerClient(endpoint_file=ep, opener=opener)
         with pytest.raises(SessionNotFoundError, match="sess-gone"):
             client.kill_session("sess-gone")
@@ -223,9 +262,15 @@ class TestKillSession:
     def test_401_raises_auth_error(self, tmp_path):
         ep = tmp_path / "runner.endpoint"
         _write_endpoint(ep)
-        opener = _KillStubOpener(raise_exc=urllib.error.HTTPError(
-            "http://x/kill", 401, "Unauthorized", {}, io.BytesIO(b"{}"),
-        ))
+        opener = _KillStubOpener(
+            raise_exc=urllib.error.HTTPError(
+                "http://x/kill",
+                401,
+                "Unauthorized",
+                {},
+                io.BytesIO(b"{}"),
+            )
+        )
         client = RunnerClient(endpoint_file=ep, opener=opener)
         with pytest.raises(RunnerAuthError, match="stale"):
             client.kill_session("sess-1")
@@ -233,9 +278,15 @@ class TestKillSession:
     def test_500_raises_unreachable(self, tmp_path):
         ep = tmp_path / "runner.endpoint"
         _write_endpoint(ep)
-        opener = _KillStubOpener(raise_exc=urllib.error.HTTPError(
-            "http://x/kill", 500, "Server Error", {}, io.BytesIO(b"{}"),
-        ))
+        opener = _KillStubOpener(
+            raise_exc=urllib.error.HTTPError(
+                "http://x/kill",
+                500,
+                "Server Error",
+                {},
+                io.BytesIO(b"{}"),
+            )
+        )
         client = RunnerClient(endpoint_file=ep, opener=opener)
         with pytest.raises(RunnerUnreachableError, match="HTTP 500"):
             client.kill_session("sess-1")

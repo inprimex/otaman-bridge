@@ -70,7 +70,9 @@ def _daemon_url(endpoint_file: Path) -> str:
 
 class TestPmSyncWebhookAuth:
     def test_secret_not_configured_returns_503_and_does_not_process(
-        self, daemon_with_stub_pm_sync, monkeypatch,
+        self,
+        daemon_with_stub_pm_sync,
+        monkeypatch,
     ):
         monkeypatch.delenv(_SECRET_ENV, raising=False)
         daemon, stub = daemon_with_stub_pm_sync
@@ -83,7 +85,9 @@ class TestPmSyncWebhookAuth:
         assert stub.calls == []
 
     def test_missing_auth_header_returns_401_and_does_not_process(
-        self, daemon_with_stub_pm_sync, monkeypatch,
+        self,
+        daemon_with_stub_pm_sync,
+        monkeypatch,
     ):
         monkeypatch.setenv(_SECRET_ENV, _SECRET)
         daemon, stub = daemon_with_stub_pm_sync
@@ -95,7 +99,9 @@ class TestPmSyncWebhookAuth:
         assert stub.calls == []
 
     def test_wrong_secret_returns_401_and_does_not_process(
-        self, daemon_with_stub_pm_sync, monkeypatch,
+        self,
+        daemon_with_stub_pm_sync,
+        monkeypatch,
     ):
         monkeypatch.setenv(_SECRET_ENV, _SECRET)
         daemon, stub = daemon_with_stub_pm_sync
@@ -108,7 +114,9 @@ class TestPmSyncWebhookAuth:
         assert stub.calls == []
 
     def test_correct_secret_processes_normally(
-        self, daemon_with_stub_pm_sync, monkeypatch,
+        self,
+        daemon_with_stub_pm_sync,
+        monkeypatch,
     ):
         monkeypatch.setenv(_SECRET_ENV, _SECRET)
         daemon, stub = daemon_with_stub_pm_sync
@@ -123,7 +131,9 @@ class TestPmSyncWebhookAuth:
         assert stub.calls == [payload]
 
     def test_non_bearer_auth_header_is_rejected(
-        self, daemon_with_stub_pm_sync, monkeypatch,
+        self,
+        daemon_with_stub_pm_sync,
+        monkeypatch,
     ):
         monkeypatch.setenv(_SECRET_ENV, _SECRET)
         daemon, stub = daemon_with_stub_pm_sync

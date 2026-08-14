@@ -134,8 +134,8 @@ class IdpConfig:
     # Cleanup sweep: delete shim-managed apps older than ``cleanup_ttl_seconds``.
     # ``cleanup_sweep_interval_seconds`` = 0 disables the background sweep
     # (manual cleanup via the `dcr-cleanup` CLI command still works).
-    cleanup_sweep_interval_seconds: int = 3600     # 1h default
-    cleanup_ttl_seconds: int = 30 * 24 * 3600      # 30d default
+    cleanup_sweep_interval_seconds: int = 3600  # 1h default
+    cleanup_ttl_seconds: int = 30 * 24 * 3600  # 30d default
 
     @classmethod
     def from_env(
@@ -197,6 +197,7 @@ class IdpConfig:
         host_default = ""
         if mgmt.startswith(("http://", "https://")):
             host_default = mgmt.split("://", 1)[1].split("/", 1)[0]
+
         # Cleanup config (D6). Durations accept Ns / Nm / Nh / Nd, default
         # to compiled-in values. 0 / "0s" / "disabled" disables the
         # background sweep entirely (manual CLI still works).
@@ -209,11 +210,14 @@ class IdpConfig:
             except ValueError:
                 _log.warning("invalid duration %r, using default %ds", s, default)
                 return default
+
         sweep_interval = _parse_duration(
-            e.get("OTAMAN_DCR_SHIM_SWEEP_INTERVAL", ""), 3600,
+            e.get("OTAMAN_DCR_SHIM_SWEEP_INTERVAL", ""),
+            3600,
         )
         cleanup_ttl = _parse_duration(
-            e.get("OTAMAN_DCR_SHIM_TTL", ""), 30 * 24 * 3600,
+            e.get("OTAMAN_DCR_SHIM_TTL", ""),
+            30 * 24 * 3600,
         )
         return cls(
             type=e.get("OTAMAN_DCR_SHIM_TYPE", "zitadel").strip().lower() or "zitadel",
@@ -224,12 +228,9 @@ class IdpConfig:
             machine_user_client_id=e.get("OTAMAN_DCR_SHIM_CLIENT_ID", "").strip(),
             machine_user_client_secret=e.get("OTAMAN_DCR_SHIM_SECRET", "").strip(),
             org_id=(
-                e.get("OTAMAN_DCR_SHIM_ORG_ID", "").strip()
-                or e.get("OIDC_ORG_ID", "").strip()
+                e.get("OTAMAN_DCR_SHIM_ORG_ID", "").strip() or e.get("OIDC_ORG_ID", "").strip()
             ),
-            expected_host=(
-                e.get("OTAMAN_DCR_SHIM_EXPECTED_HOST", "").strip() or host_default
-            ),
+            expected_host=(e.get("OTAMAN_DCR_SHIM_EXPECTED_HOST", "").strip() or host_default),
             registration_trust=trust,
             metadata_cache_seconds=max(1, cache_secs),
             cleanup_sweep_interval_seconds=sweep_interval,
@@ -300,7 +301,8 @@ def fetch_upstream_metadata(
     """
     url = f"{base_url.rstrip('/')}/.well-known/openid-configuration"
     req = urllib.request.Request(
-        url, method="GET",
+        url,
+        method="GET",
         headers={
             "Accept": "application/json",
             "User-Agent": "otaman-bridge-dcr-shim/1.0",
@@ -310,9 +312,7 @@ def fetch_upstream_metadata(
     try:
         with o.open(req, timeout=timeout_seconds) as resp:
             if resp.status != 200:
-                raise MetadataFetchError(
-                    f"upstream {url} returned HTTP {resp.status}"
-                )
+                raise MetadataFetchError(f"upstream {url} returned HTTP {resp.status}")
             raw = resp.read()
     except urllib.error.URLError as exc:
         raise MetadataFetchError(f"upstream {url} unreachable: {exc}") from exc
@@ -321,9 +321,7 @@ def fetch_upstream_metadata(
     try:
         doc = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as exc:
-        raise MetadataFetchError(
-            f"upstream {url} returned malformed JSON: {exc}"
-        ) from exc
+        raise MetadataFetchError(f"upstream {url} returned malformed JSON: {exc}") from exc
     if not isinstance(doc, dict):
         raise MetadataFetchError(f"upstream {url} returned non-object JSON")
     return doc
@@ -458,7 +456,8 @@ def parse_register_request(body: Any) -> RegisterRequest:
     if auth_method != "none":
         raise DCRError(
             ERR_INVALID_CLIENT_METADATA,
-            "token_endpoint_auth_method must be 'none' (the shim only emits public clients with PKCE)",
+            "token_endpoint_auth_method must be 'none' "
+            "(the shim only emits public clients with PKCE)",
         )
 
     grant_types = body.get("grant_types", ["authorization_code"])
@@ -468,7 +467,8 @@ def parse_register_request(body: Any) -> RegisterRequest:
     if bad:
         raise DCRError(
             ERR_INVALID_CLIENT_METADATA,
-            f"grant_types contains unsupported value(s): {bad}; allowed: {sorted(ALLOWED_GRANT_TYPES)}",
+            f"grant_types contains unsupported value(s): {bad}; "
+            f"allowed: {sorted(ALLOWED_GRANT_TYPES)}",
         )
 
     response_types = body.get("response_types", ["code"])
@@ -478,7 +478,8 @@ def parse_register_request(body: Any) -> RegisterRequest:
     if bad_r:
         raise DCRError(
             ERR_INVALID_CLIENT_METADATA,
-            f"response_types contains unsupported value(s): {bad_r}; allowed: {sorted(ALLOWED_RESPONSE_TYPES)}",
+            f"response_types contains unsupported value(s): {bad_r}; "
+            f"allowed: {sorted(ALLOWED_RESPONSE_TYPES)}",
         )
 
     def _str_or_none(key: str) -> str | None:
@@ -505,7 +506,7 @@ def _is_loopback_http_uri(u: str) -> bool:
     """RFC 8252 §7.3 loopback-redirect check (http://localhost or 127.0.0.1)."""
     if not u.startswith("http://"):
         return False
-    rest = u[len("http://"):]
+    rest = u[len("http://") :]
     # Strip optional port + path.
     host = rest.split("/", 1)[0].split(":", 1)[0]
     return host in ("localhost", "127.0.0.1")
@@ -523,6 +524,7 @@ def compute_fingerprint(
     fingerprint → new app created (TTL sweep prunes orphans later).
     """
     import hashlib
+
     parts = [software_id or "", *sorted(redirect_uris)]
     raw = "\n".join(parts).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:16]
@@ -606,9 +608,7 @@ class ZitadelMgmtClient:
         if self.pat:
             return self.pat
         if not (self.client_id and self.client_secret):
-            raise ZitadelMgmtError(
-                "no auth configured: set either pat or client_id+client_secret"
-            )
+            raise ZitadelMgmtError("no auth configured: set either pat or client_id+client_secret")
         n = now if now is not None else time.monotonic()
         with self._token_lock:
             if self._access_token and n < self._token_expires_at - self._TOKEN_REFRESH_LEEWAY:
@@ -627,15 +627,12 @@ class ZitadelMgmtClient:
         Zitadel uses to authorize the bearer for /management/v1 calls.
         """
         import base64
+
         body = (
             "grant_type=client_credentials"
-            "&scope=" + urllib.parse.quote(
-                "openid urn:zitadel:iam:org:project:id:zitadel:aud"
-            )
+            "&scope=" + urllib.parse.quote("openid urn:zitadel:iam:org:project:id:zitadel:aud")
         ).encode("utf-8")
-        basic = base64.b64encode(
-            f"{self.client_id}:{self.client_secret}".encode("utf-8")
-        ).decode("ascii")
+        basic = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode("ascii")
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Authorization": f"Basic {basic}",
@@ -646,7 +643,10 @@ class ZitadelMgmtClient:
         if self.expected_host:
             headers["Host"] = self.expected_host
         req = urllib.request.Request(
-            self.token_url, data=body, headers=headers, method="POST",
+            self.token_url,
+            data=body,
+            headers=headers,
+            method="POST",
         )
         o = self._opener or urllib.request.build_opener()
         try:
@@ -661,7 +661,8 @@ class ZitadelMgmtClient:
             text = e.read().decode("utf-8", errors="replace")
             raise ZitadelMgmtError(
                 f"client_credentials request HTTP {e.code}: {text}",
-                status=e.code, body=text,
+                status=e.code,
+                body=text,
             ) from e
         except urllib.error.URLError as exc:
             raise ZitadelMgmtError(f"token endpoint unreachable: {exc}") from exc
@@ -695,7 +696,8 @@ class ZitadelMgmtClient:
             text = e.read().decode("utf-8", errors="replace")
             raise ZitadelMgmtError(
                 f"Zitadel API {method} {path} HTTP {e.code}: {text}",
-                status=e.code, body=text,
+                status=e.code,
+                body=text,
             ) from e
         except urllib.error.URLError as exc:
             raise ZitadelMgmtError(
@@ -707,11 +709,7 @@ class ZitadelMgmtClient:
         r = self._mgmt_request(
             "POST",
             f"/management/v1/projects/{project_id}/apps/_search",
-            body={
-                "queries": [
-                    {"nameQuery": {"name": name, "method": "TEXT_QUERY_METHOD_EQUALS"}}
-                ]
-            },
+            body={"queries": [{"nameQuery": {"name": name, "method": "TEXT_QUERY_METHOD_EQUALS"}}]},
         )
         results = r.get("result") or []
         return results[0] if results else None
@@ -736,10 +734,12 @@ class ZitadelMgmtClient:
             f"/management/v1/projects/{project_id}/apps/_search",
             body={
                 "queries": [
-                    {"nameQuery": {
-                        "name": name_prefix,
-                        "method": "TEXT_QUERY_METHOD_STARTS_WITH",
-                    }}
+                    {
+                        "nameQuery": {
+                            "name": name_prefix,
+                            "method": "TEXT_QUERY_METHOD_STARTS_WITH",
+                        }
+                    }
                 ],
             },
         )
@@ -836,7 +836,8 @@ def find_or_create_client(
     clientId string. Raises ZitadelMgmtError on any upstream failure.
     """
     fp = compute_fingerprint(
-        software_id=request.software_id, redirect_uris=request.redirect_uris,
+        software_id=request.software_id,
+        redirect_uris=request.redirect_uris,
     )
     name = f"{name_prefix}{fp}"
     existing = mgmt_client.find_app_by_name(project_id=project_id, name=name)
@@ -861,7 +862,10 @@ def find_or_create_client(
 
 
 def to_rfc7591_response(
-    *, request: RegisterRequest, client_id: str, now_unix: int,
+    *,
+    request: RegisterRequest,
+    client_id: str,
+    now_unix: int,
 ) -> dict:
     """Shape a successful create as an RFC 7591 client_information_response.
 
@@ -942,6 +946,7 @@ def app_age_seconds(app: dict, *, now: float | None = None) -> int | None:
     reuse covers "same client returns" without needing extension-on-use.
     """
     import datetime
+
     iso = ((app.get("details") or {}).get("creationDate") or "").strip()
     if not iso:
         return None
@@ -967,10 +972,11 @@ def app_age_seconds(app: dict, *, now: float | None = None) -> int | None:
 @dataclass(frozen=True)
 class SweepReport:
     """Outcome of a sweep run — what was found, what was deleted, what failed."""
-    found: int = 0          # total shim-managed apps inspected
-    eligible: int = 0       # passed age + name-prefix checks
-    deleted: int = 0        # actually removed (or would-have if dry_run)
-    failed: int = 0         # delete attempted but raised
+
+    found: int = 0  # total shim-managed apps inspected
+    eligible: int = 0  # passed age + name-prefix checks
+    deleted: int = 0  # actually removed (or would-have if dry_run)
+    failed: int = 0  # delete attempted but raised
     deleted_ids: tuple[str, ...] = ()
     failed_ids: tuple[str, ...] = ()
 
@@ -1002,7 +1008,8 @@ def sweep_orphans(
         _log.debug("sweep skipped: ttl_seconds=%d not positive", ttl_seconds)
         return SweepReport()
     apps = mgmt_client.list_apps_with_prefix(
-        project_id=project_id, name_prefix=name_prefix,
+        project_id=project_id,
+        name_prefix=name_prefix,
     )
     found = 0
     eligible: list[tuple[str, str]] = []  # (app_id, name)

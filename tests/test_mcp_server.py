@@ -9,11 +9,10 @@ from __future__ import annotations
 import pytest
 
 from otaman_bridge.mcp_server import (
-    INTERNAL_ERROR,
     INVALID_PARAMS,
     INVALID_REQUEST,
-    METHOD_NOT_FOUND,
     MCP_PROTOCOL_VERSION,
+    METHOD_NOT_FOUND,
     CallContext,
     MCPServer,
     Tool,
@@ -105,7 +104,9 @@ class TestToolsCall:
         server.register(_echo_tool())
         resp = server.handle_request(
             {
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
                 "params": {"name": "echo", "arguments": {"msg": "hello"}},
             },
             context=ctx,
@@ -116,7 +117,9 @@ class TestToolsCall:
     def test_unknown_tool_returns_method_not_found(self, server, ctx):
         resp = server.handle_request(
             {
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
                 "params": {"name": "nope", "arguments": {}},
             },
             context=ctx,
@@ -127,7 +130,9 @@ class TestToolsCall:
     def test_missing_name_returns_invalid_params(self, server, ctx):
         resp = server.handle_request(
             {
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
                 "params": {"arguments": {}},
             },
             context=ctx,
@@ -138,7 +143,9 @@ class TestToolsCall:
         server.register(_echo_tool())
         resp = server.handle_request(
             {
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
                 "params": {"name": "echo", "arguments": "not-a-dict"},
             },
             context=ctx,
@@ -147,14 +154,23 @@ class TestToolsCall:
 
     def test_handler_exception_returns_mcp_error_result(self, server, ctx):
         """Tool errors become CallToolResult with isError=true, NOT JSON-RPC errors."""
+
         def boom(args, ctx):
             raise RuntimeError("tool blew up")
-        server.register(Tool(
-            name="boom", description="", input_schema={}, handler=boom,
-        ))
+
+        server.register(
+            Tool(
+                name="boom",
+                description="",
+                input_schema={},
+                handler=boom,
+            )
+        )
         resp = server.handle_request(
             {
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
                 "params": {"name": "boom", "arguments": {}},
             },
             context=ctx,
@@ -166,15 +182,24 @@ class TestToolsCall:
 
     def test_handler_receives_context(self, server, ctx):
         captured = []
+
         def capture(args, c):
             captured.append((c.user_id, c.user_email, c.roles))
             return {"content": []}
-        server.register(Tool(
-            name="capture", description="", input_schema={}, handler=capture,
-        ))
+
+        server.register(
+            Tool(
+                name="capture",
+                description="",
+                input_schema={},
+                handler=capture,
+            )
+        )
         server.handle_request(
             {
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
                 "params": {"name": "capture", "arguments": {}},
             },
             context=ctx,

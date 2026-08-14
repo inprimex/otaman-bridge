@@ -37,7 +37,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-_log = logging.getLogger("maestro.bridge.auth_stack")
+_log = logging.getLogger("maestro.bridge.auth_stack")  # legacy: logger renamed at otaman-core 1.0
 
 
 class AuthStack:
@@ -73,6 +73,7 @@ class AuthStack:
         self._dcr_mgmt_client_cached = None
         try:
             from otaman_bridge_ee.dcr_shim import IdpConfig, MetadataCache
+
             self.idp_config = IdpConfig.from_env(project_root=project_root)
             if self.idp_config is not None:
                 self._idp_metadata_cache = MetadataCache(
@@ -105,6 +106,7 @@ class AuthStack:
             # resolve here.
             from otaman_bridge_ee.web_auth import LoginCompleter, TokenExchanger
             from otaman_bridge_ee.web_session import SessionCookie, SessionStore
+
             self.session_store = SessionStore()
             # Cookie Secure flag derived from the registered redirect_uri
             # scheme (https -> Secure, http -> not). Production always
@@ -133,6 +135,7 @@ class AuthStack:
         # this object) and have the auth chain track changes without
         # rebuilding the composite.
         from otaman_bridge.auth import CompositeAuthProvider, LoopbackAuthProvider
+
         providers: list = []
         try:
             from otaman_bridge_ee.auth_oidc import OIDCAuthProvider
@@ -140,12 +143,14 @@ class AuthStack:
             _log.info("EE package not installed; CE-only auth chain (loopback only)")
             OIDCAuthProvider = None  # type: ignore[assignment]
         if OIDCAuthProvider is not None:
-            providers.append(OIDCAuthProvider(
-                validator_getter=lambda d=self: d.oidc_validator,
-                session_store_getter=lambda d=self: d.session_store,
-                session_cookie_getter=lambda d=self: d.session_cookie,
-                resource_url_fn=_resolve_public_resource_url,
-            ))
+            providers.append(
+                OIDCAuthProvider(
+                    validator_getter=lambda d=self: d.oidc_validator,
+                    session_store_getter=lambda d=self: d.session_store,
+                    session_cookie_getter=lambda d=self: d.session_cookie,
+                    resource_url_fn=_resolve_public_resource_url,
+                )
+            )
         providers.append(LoopbackAuthProvider(token=token))
         self.auth_provider = CompositeAuthProvider(providers=tuple(providers))
 
@@ -154,6 +159,7 @@ class AuthStack:
         # do_GET fall through to the catch-all 404.
         try:
             from otaman_bridge_ee.routes_dcr import try_handle as _ee_dcr_try_handle
+
             self._ee_dcr_try_handle = _ee_dcr_try_handle
         except ImportError:
             self._ee_dcr_try_handle = None
@@ -176,6 +182,7 @@ class AuthStack:
         if not cfg.org_id or not (has_pat or has_client_creds):
             return None
         from otaman_bridge_ee.dcr_shim import ZitadelMgmtClient
+
         # token endpoint is the standard OIDC location on the mgmt host.
         token_url = f"{cfg.management_base_url}/oauth/v2/token"
         self._dcr_mgmt_client_cached = ZitadelMgmtClient(
@@ -198,12 +205,15 @@ class AuthStack:
         Failures are logged but never abort the loop.
         """
         from otaman_bridge_ee.dcr_shim import sweep_orphans
+
         cfg = self.idp_config
         interval = cfg.cleanup_sweep_interval_seconds
         _log.info(
-            "DCR shim cleanup loop started "
-            "(interval=%ds ttl=%ds prefix=%s project=%s)",
-            interval, cfg.cleanup_ttl_seconds, cfg.managed_name_prefix, cfg.project_id,
+            "DCR shim cleanup loop started (interval=%ds ttl=%ds prefix=%s project=%s)",
+            interval,
+            cfg.cleanup_ttl_seconds,
+            cfg.managed_name_prefix,
+            cfg.project_id,
         )
         while True:
             try:
@@ -226,7 +236,10 @@ class AuthStack:
                 if report.deleted or report.failed:
                     _log.info(
                         "DCR sweep: found=%d eligible=%d deleted=%d failed=%d",
-                        report.found, report.eligible, report.deleted, report.failed,
+                        report.found,
+                        report.eligible,
+                        report.deleted,
+                        report.failed,
                     )
                 else:
                     _log.debug("DCR sweep: nothing to delete (found=%d)", report.found)

@@ -24,7 +24,6 @@ import pytest
 
 from otaman_bridge.pm_sync_handler import PmSyncHandler
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -130,8 +129,11 @@ def handler(workspace: Path) -> PmSyncHandler:
 class TestSpecChangeApproved:
     def test_calls_create_issue(self, handler: PmSyncHandler) -> None:
         handler.handle_bus_event(
-            "spec-change-approved", "spec-agent", "human",
-            "pm-sync-adapter: PmSyncAdapter protocol", "openspec/changes/pm-sync-adapter/tasks.md",
+            "spec-change-approved",
+            "spec-agent",
+            "human",
+            "pm-sync-adapter: PmSyncAdapter protocol",
+            "openspec/changes/pm-sync-adapter/tasks.md",
             "pm-sync-adapter",
         )
         handler.adapter.create_issue.assert_called_once()
@@ -139,15 +141,23 @@ class TestSpecChangeApproved:
     def test_persists_issue_id(self, handler: PmSyncHandler) -> None:
         handler.adapter.create_issue.return_value = _make_issue(99)
         handler.handle_bus_event(
-            "spec-change-approved", "spec-agent", "human",
-            "Some spec change", None, "my-change",
+            "spec-change-approved",
+            "spec-agent",
+            "human",
+            "Some spec change",
+            None,
+            "my-change",
         )
         assert handler._load_issue_id("my-change") == 99
 
     def test_posts_comment_if_issue_comments_enabled(self, handler: PmSyncHandler) -> None:
         handler.handle_bus_event(
-            "spec-change-approved", "spec-agent", "human",
-            "My spec", None, "my-change",
+            "spec-change-approved",
+            "spec-agent",
+            "human",
+            "My spec",
+            None,
+            "my-change",
         )
         handler.adapter.add_comment.assert_called_once()
         comment = handler.adapter.add_comment.call_args[0][1]
@@ -156,8 +166,12 @@ class TestSpecChangeApproved:
     def test_no_comment_if_issue_comments_disabled(self, handler: PmSyncHandler) -> None:
         handler.adapter = _make_adapter(issue_comments=False)
         handler.handle_bus_event(
-            "spec-change-approved", "spec-agent", "human",
-            "My spec", None, "my-change",
+            "spec-change-approved",
+            "spec-agent",
+            "human",
+            "My spec",
+            None,
+            "my-change",
         )
         handler.adapter.add_comment.assert_not_called()
 
@@ -171,8 +185,12 @@ class TestTaskAssignment:
     def test_updates_issue_to_in_progress(self, handler: PmSyncHandler) -> None:
         handler._save_issue_id("my-change", 42)
         handler.handle_bus_event(
-            "task-assignment", "otaman", "bridge-agent",
-            "Implement pm_sync_handler", None, "my-change",
+            "task-assignment",
+            "otaman",
+            "bridge-agent",
+            "Implement pm_sync_handler",
+            None,
+            "my-change",
         )
         handler.adapter.update_issue.assert_called_once()
         call_args = handler.adapter.update_issue.call_args
@@ -183,8 +201,12 @@ class TestTaskAssignment:
     def test_posts_comment_with_correct_format(self, handler: PmSyncHandler) -> None:
         handler._save_issue_id("my-change", 42)
         handler.handle_bus_event(
-            "task-assignment", "roman", "bridge-agent",
-            "Do something", None, "my-change",
+            "task-assignment",
+            "roman",
+            "bridge-agent",
+            "Do something",
+            None,
+            "my-change",
         )
         handler.adapter.add_comment.assert_called_once()
         comment = handler.adapter.add_comment.call_args[0][1]
@@ -196,15 +218,23 @@ class TestTaskAssignment:
         handler.adapter = _make_adapter(issue_comments=False)
         handler._save_issue_id("my-change", 42)
         handler.handle_bus_event(
-            "task-assignment", "otaman", "bridge-agent",
-            "Do something", None, "my-change",
+            "task-assignment",
+            "otaman",
+            "bridge-agent",
+            "Do something",
+            None,
+            "my-change",
         )
         handler.adapter.add_comment.assert_not_called()
 
     def test_skips_when_no_issue_resolved(self, handler: PmSyncHandler) -> None:
         handler.handle_bus_event(
-            "task-assignment", "otaman", "bridge-agent",
-            "unknown change", None, "nonexistent-change",
+            "task-assignment",
+            "otaman",
+            "bridge-agent",
+            "unknown change",
+            None,
+            "nonexistent-change",
         )
         handler.adapter.update_issue.assert_not_called()
 
@@ -218,8 +248,12 @@ class TestTaskComplete:
     def test_updates_issue_to_done(self, handler: PmSyncHandler) -> None:
         handler._save_issue_id("my-change", 42)
         handler.handle_bus_event(
-            "task-complete", "bridge-agent", "human",
-            "pm_sync_handler implemented", None, "my-change",
+            "task-complete",
+            "bridge-agent",
+            "human",
+            "pm_sync_handler implemented",
+            None,
+            "my-change",
         )
         handler.adapter.update_issue.assert_called_once()
         call_args = handler.adapter.update_issue.call_args
@@ -230,8 +264,12 @@ class TestTaskComplete:
     def test_posts_comment_with_correct_format(self, handler: PmSyncHandler) -> None:
         handler._save_issue_id("my-change", 42)
         handler.handle_bus_event(
-            "task-complete", "bridge-agent", "human",
-            "pm_sync_handler done", None, "my-change",
+            "task-complete",
+            "bridge-agent",
+            "human",
+            "pm_sync_handler done",
+            None,
+            "my-change",
         )
         handler.adapter.add_comment.assert_called_once()
         comment = handler.adapter.add_comment.call_args[0][1]
@@ -242,8 +280,12 @@ class TestTaskComplete:
         handler.adapter = _make_adapter(issue_comments=False)
         handler._save_issue_id("my-change", 42)
         handler.handle_bus_event(
-            "task-complete", "bridge-agent", "human",
-            "done", None, "my-change",
+            "task-complete",
+            "bridge-agent",
+            "human",
+            "done",
+            None,
+            "my-change",
         )
         handler.adapter.add_comment.assert_not_called()
 
@@ -261,8 +303,10 @@ class TestInboundWebhook:
         self, handler: PmSyncHandler, workspace: Path
     ) -> None:
         evt = _make_inbound_event(
-            event_type="update", issue_id=7,
-            new_status="Done", spec_path="openspec/changes/foo/tasks.md",
+            event_type="update",
+            issue_id=7,
+            new_status="Done",
+            spec_path="openspec/changes/foo/tasks.md",
         )
         handler.adapter.handle_inbound_event.return_value = evt
         result = handler.handle_inbound_webhook({"action": "update", "issue": {}})
@@ -334,10 +378,9 @@ class TestInboundWebhook:
 
 
 class TestMcpTier2:
-    def test_returns_none_when_mcp_client_unavailable(
-        self, handler: PmSyncHandler
-    ) -> None:
+    def test_returns_none_when_mcp_client_unavailable(self, handler: PmSyncHandler) -> None:
         import otaman_bridge.pm_sync_handler as _mod
+
         original = _mod._MCP_CLIENT_CLS
         _mod._MCP_CLIENT_CLS = None
         try:
@@ -354,6 +397,7 @@ class TestMcpTier2:
 
     def test_calls_mcp_client_when_available(self, handler: PmSyncHandler) -> None:
         import otaman_bridge.pm_sync_handler as _mod
+
         original = _mod._MCP_CLIENT_CLS
 
         mock_mcp_cls = MagicMock()
@@ -407,7 +451,6 @@ class TestIssueMapPersistence:
 
 from otaman_bridge.pm_sync_handler import resolve_assignee  # noqa: E402
 
-
 ROSTER = [
     {"name": "Roman", "roles": ["cofounder", "cto"], "pm-user-id": 1},
     {"name": "Alice", "roles": ["developer"], "pm-user-id": 7},
@@ -425,7 +468,10 @@ class TestResolveAssignee:
         assert resolve_assignee("developer-agent", ROSTER) == 7
 
     def test_no_match_returns_none(self) -> None:
-        assert resolve_assignee("cpo-agent", [{"name": "X", "roles": ["developer"], "pm-user-id": 5}]) is None
+        assert (
+            resolve_assignee("cpo-agent", [{"name": "X", "roles": ["developer"], "pm-user-id": 5}])
+            is None
+        )
 
     def test_missing_pm_user_id_returns_none(self) -> None:
         roster = [{"name": "X", "roles": ["cofounder"]}]
@@ -436,7 +482,9 @@ class TestResolveAssignee:
 
 
 class TestSpecsRepoName:
-    def test_derives_repo_name_from_specs_root(self, handler_with_openspec: PmSyncHandler, workspace: Path) -> None:
+    def test_derives_repo_name_from_specs_root(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
         # workspace/openspec/changes → workspace is the "repo" dir, name = tmp dir name
         # The fallback when _specs_root returns an in-workspace path is just the basename
         name = handler_with_openspec._specs_repo_name()
@@ -452,8 +500,12 @@ class TestSpecsRepoName:
     ) -> None:
         """agent_name in SpecChange must be the specs repo name, not the message sender."""
         handler_with_openspec.handle_bus_event(
-            "spec-change-approved", "plugin-agent", "spec-agent",
-            "My spec", None, "my-change",
+            "spec-change-approved",
+            "plugin-agent",
+            "spec-agent",
+            "My spec",
+            None,
+            "my-change",
         )
         call_args = handler_with_openspec.adapter.create_issue.call_args[0][0]
         assert getattr(call_args, "agent_name", None) != "plugin-agent"
@@ -463,8 +515,12 @@ class TestSpecChangeApprovedWithRoster:
     def test_resolve_assignee_called_and_passed(self, handler: PmSyncHandler) -> None:
         # handler has ROSTER from PLATFORM_YAML_CONTENT; to=human → pm-user-id=1
         handler.handle_bus_event(
-            "spec-change-approved", "spec-agent", "human",
-            "My spec", None, "my-change",
+            "spec-change-approved",
+            "spec-agent",
+            "human",
+            "My spec",
+            None,
+            "my-change",
         )
         call_args = handler.adapter.create_issue.call_args[0][0]
         # _SpecChangeWithAssignee wraps SpecChange and exposes assigned_to_id
@@ -494,12 +550,17 @@ class TestPmSyncYaml:
     ) -> None:
         handler_with_openspec.adapter.create_issue.return_value = _make_issue(42)
         handler_with_openspec.handle_bus_event(
-            "spec-change-approved", "spec-agent", "human",
-            "My spec", None, "my-change",
+            "spec-change-approved",
+            "spec-agent",
+            "human",
+            "My spec",
+            None,
+            "my-change",
         )
         pm_sync = workspace / "openspec" / "changes" / "my-change" / ".pm-sync.yaml"
         assert pm_sync.is_file()
         import yaml
+
         data = yaml.safe_load(pm_sync.read_text())
         assert data["change_issue_id"] == 42
 
@@ -549,6 +610,7 @@ class TestPmSyncYaml:
         pm_sync.write_text("change_issue_id: 10\ntasks:\n  '2.1': 43\n", encoding="utf-8")
         handler_with_openspec._write_pm_sync_yaml("my-change", 10)
         import yaml
+
         data = yaml.safe_load(pm_sync.read_text())
         assert data.get("tasks", {}).get("2.1") == 43
 
@@ -609,8 +671,12 @@ class TestSpecChangeApprovedRichTitle:
         proposal = workspace / "openspec" / "changes" / "my-change" / "proposal.md"
         proposal.write_text("# Rich Issue Title\n\nBody.", encoding="utf-8")
         handler_with_openspec.handle_bus_event(
-            "spec-change-approved", "spec-agent", "human",
-            "Approved: my-change: some description", None, "my-change",
+            "spec-change-approved",
+            "spec-agent",
+            "human",
+            "Approved: my-change: some description",
+            None,
+            "my-change",
         )
         call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
         assert getattr(call_sc, "title", "") == "[my-change] Rich Issue Title"
@@ -620,8 +686,12 @@ class TestSpecChangeApprovedRichTitle:
     ) -> None:
         # No proposal.md written — _read_proposal_description returns ""
         handler_with_openspec.handle_bus_event(
-            "spec-change-approved", "spec-agent", "human",
-            "Approved: my-change", None, "my-change",
+            "spec-change-approved",
+            "spec-agent",
+            "human",
+            "Approved: my-change",
+            None,
+            "my-change",
         )
         call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
         assert getattr(call_sc, "title", "") == "[my-change] my-change"
@@ -632,15 +702,17 @@ class TestSpecChangeApprovedRichTitle:
         proposal = workspace / "openspec" / "changes" / "my-change" / "proposal.md"
         proposal.write_text("# Title\n\nFull description body.", encoding="utf-8")
         handler_with_openspec.handle_bus_event(
-            "spec-change-approved", "spec-agent", "human",
-            "Approved: my-change", None, "my-change",
+            "spec-change-approved",
+            "spec-agent",
+            "human",
+            "Approved: my-change",
+            None,
+            "my-change",
         )
         call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
         assert "Full description body." in getattr(call_sc, "description", "")
 
-    def test_jtbd_id_threaded_from_handle_event(
-        self, handler_with_openspec: PmSyncHandler
-    ) -> None:
+    def test_jtbd_id_threaded_from_handle_event(self, handler_with_openspec: PmSyncHandler) -> None:
         class _FakeMsg:
             type = "spec-change-approved"
             from_ = "spec-agent"
@@ -691,10 +763,7 @@ class TestNoChangeFrontmatterSkipsRatherThanGuesses:
 
         handler_with_openspec.handle_event(_FakeMsg())
         handler_with_openspec.adapter.create_issue.assert_not_called()
-        assert any(
-            "no 'change:' frontmatter field" in rec.message
-            for rec in caplog.records
-        )
+        assert any("no 'change:' frontmatter field" in rec.message for rec in caplog.records)
 
     def test_valid_change_frontmatter_still_works(
         self, handler_with_openspec: PmSyncHandler
@@ -727,12 +796,8 @@ class TestWriteNeverCreatesChangeDirectory:
 
         handler._write_pm_sync_yaml("does-not-exist-yet", 99)
 
-        assert not target_dir.exists(), (
-            "_write_pm_sync_yaml must not create a new change directory"
-        )
-        assert any(
-            "refusing to create it" in rec.message for rec in caplog.records
-        )
+        assert not target_dir.exists(), "_write_pm_sync_yaml must not create a new change directory"
+        assert any("refusing to create it" in rec.message for rec in caplog.records)
 
     def test_existing_change_dir_still_gets_written(
         self, handler_with_openspec: PmSyncHandler, workspace: Path
@@ -779,7 +844,9 @@ class TestLoadAdapterCustomFields:
         """_load_adapter injects platform_custom_fields from config into the adapter."""
         from unittest.mock import patch
 
-        (workspace / "platform.yaml").write_text(_PLATFORM_YAML_WITH_CUSTOM_FIELDS, encoding="utf-8")
+        (workspace / "platform.yaml").write_text(
+            _PLATFORM_YAML_WITH_CUSTOM_FIELDS, encoding="utf-8"
+        )
 
         mock_cls = MagicMock()
         mock_cls.return_value.capabilities = _make_capabilities()

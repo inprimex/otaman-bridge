@@ -20,7 +20,7 @@ import logging
 import os
 from pathlib import Path
 
-_log = logging.getLogger("maestro.bridge.mcp_dispatch_service")
+_log = logging.getLogger("maestro.bridge.mcp_dispatch_service")  # legacy: renamed at core 1.0
 
 
 class McpDispatchService:
@@ -55,18 +55,21 @@ class McpDispatchService:
         privacy = os.environ.get("OTAMAN_BRIDGE_PRIVACY_MODE", PRIVACY_EMAILS).strip()
         if privacy not in (PRIVACY_EMAILS, PRIVACY_OPAQUE):
             _log.warning(
-                "invalid OTAMAN_BRIDGE_PRIVACY_MODE=%r, using emails", privacy,
+                "invalid OTAMAN_BRIDGE_PRIVACY_MODE=%r, using emails",
+                privacy,
             )
             privacy = PRIVACY_EMAILS
         # Only register list_team_sessions when session_store exists --
         # the tool's email lookup depends on it. If web auth is
         # disabled, the tool falls back to opaque (no email source).
         if session_store is not None:
-            self.mcp_server.register(build_list_team_sessions_tool(
-                runner_client=self._runner_client,
-                session_store=session_store,
-                privacy_mode=privacy,
-            ))
+            self.mcp_server.register(
+                build_list_team_sessions_tool(
+                    runner_client=self._runner_client,
+                    session_store=session_store,
+                    privacy_mode=privacy,
+                )
+            )
             _log.info("MCP: list_team_sessions registered (privacy=%s)", privacy)
 
         # Messaging tools (v0+): send_message_to_user / check_messages /
@@ -76,17 +79,26 @@ class McpDispatchService:
         # of the three auth paths; loopback bearer is rejected at handler).
         inbox_root = os.environ.get("OTAMAN_BRIDGE_INBOX_ROOT", "").strip()
         self.inbox = Inbox(root=Path(inbox_root)) if inbox_root else Inbox()
-        self.mcp_server.register(build_send_message_to_user_tool(
-            inbox=self.inbox, session_store=session_store,
-        ))
+        self.mcp_server.register(
+            build_send_message_to_user_tool(
+                inbox=self.inbox,
+                session_store=session_store,
+            )
+        )
         self.mcp_server.register(build_check_messages_tool(inbox=self.inbox))
         self.mcp_server.register(build_mark_message_read_tool(inbox=self.inbox))
-        self.mcp_server.register(build_request_review_tool(
-            inbox=self.inbox, session_store=session_store,
-        ))
-        self.mcp_server.register(build_get_recent_activity_tool(
-            inbox=self.inbox, runner_client=self._runner_client,
-        ))
+        self.mcp_server.register(
+            build_request_review_tool(
+                inbox=self.inbox,
+                session_store=session_store,
+            )
+        )
+        self.mcp_server.register(
+            build_get_recent_activity_tool(
+                inbox=self.inbox,
+                runner_client=self._runner_client,
+            )
+        )
         # Pick the admin-gated EE builder when EE is installed; else CE's
         # un-gated builder (Q2 (a) decision: CE = mutual-trust small team).
         try:
@@ -95,7 +107,9 @@ class McpDispatchService:
             )
         except ImportError:
             _build_kill_session = build_kill_session_for_user_tool
-        self.mcp_server.register(_build_kill_session(
-            runner_client=self._runner_client,
-        ))
+        self.mcp_server.register(
+            _build_kill_session(
+                runner_client=self._runner_client,
+            )
+        )
         _log.info("MCP: messaging tools registered (inbox=%s)", self.inbox.root)

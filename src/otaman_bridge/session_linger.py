@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 _log = logging.getLogger(__name__)
 
@@ -92,7 +92,10 @@ class SessionLingerManager:
             self._entries[key] = entry
         _log.debug(
             "Linger timer started: (%s, %s) session=%s delay=%.0fs",
-            agent_id, human_id, session_id, delay,
+            agent_id,
+            human_id,
+            session_id,
+            delay,
         )
 
     def reset(self, agent_id: str, human_id: str) -> bool:
@@ -151,7 +154,9 @@ class SessionLingerManager:
             return  # was cancelled between timer fire and lock acquisition
         _log.info(
             "Linger expired for (%s, %s) session=%s",
-            entry.agent_id, entry.human_id, entry.session_id,
+            entry.agent_id,
+            entry.human_id,
+            entry.session_id,
         )
         try:
             self._on_expire(
@@ -161,9 +166,7 @@ class SessionLingerManager:
                 entry.change_id,
             )
         except Exception:
-            _log.exception(
-                "on_expire callback raised for (%s, %s)", entry.agent_id, entry.human_id
-            )
+            _log.exception("on_expire callback raised for (%s, %s)", entry.agent_id, entry.human_id)
 
 
 # ---------------------------------------------------------------------------

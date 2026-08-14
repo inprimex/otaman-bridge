@@ -15,13 +15,16 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 try:
     from watchdog.events import (
         FileCreatedEvent,
+    )
+    from watchdog.events import (
         FileSystemEventHandler as _WDHandler,
     )
     from watchdog.observers import Observer as _Observer
@@ -207,6 +210,7 @@ def _parse_frontmatter(text: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 if _WATCHDOG:
+
     class _Handler(_WDHandler):
         def __init__(self, callback: Callable[[Path], None]) -> None:
             super().__init__()
@@ -216,6 +220,7 @@ if _WATCHDOG:
             if not event.is_directory and str(event.src_path).endswith(".md"):
                 self._cb(Path(str(event.src_path)))
 else:
+
     class _Handler:  # type: ignore[no-redef]
         def __init__(self, *a, **kw) -> None:
             pass

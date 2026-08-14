@@ -4,9 +4,9 @@ import asyncio
 import logging
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Awaitable
 
 from watchdog.events import FileCreatedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
@@ -21,6 +21,7 @@ _log = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class BusFileEvent:
     "Emitted when a new .md file appears in the bus active directory."
+
     path: Path
     detected_at: float = field(default_factory=time.monotonic)  # seconds since epoch (monotonic)
 
@@ -115,6 +116,7 @@ class FileSystemEventSource:
         Watchdog callbacks run in a non-asyncio thread. This method bridges the
         threading gap: events are posted to the given loop from the watchdog thread.
         """
+
         def sync_bridge(evt: BusFileEvent) -> None:
             asyncio.run_coroutine_threadsafe(async_handler(evt), loop)
 
@@ -151,4 +153,3 @@ class _BusHandler(FileSystemEventHandler):
         path = Path(str(event.src_path))
         if path.suffix == ".md":
             self._callback(path)
-

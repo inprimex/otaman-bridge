@@ -96,7 +96,8 @@ def _should_skip(path: Path) -> bool:
     for skip in SKIP_DIRS:
         if skip in parts:
             return True
-    # Files inside any *transports/ directory are allowed transport libs (legacy bridge/transports/ + new otaman_bridge/transports/).
+    # Files inside any *transports/ directory are allowed transport libs
+    # (legacy bridge/transports/ + new otaman_bridge/transports/).
     if "transports" in parts:
         return True
     return False
@@ -113,8 +114,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
                 violations.append((py, lineno, module))
 
     if not violations:
-        print("transport boundary OK "
-              f"(scanned .py files outside bridge/transports/)")
+        print("transport boundary OK (scanned .py files outside bridge/transports/)")
         return 0
 
     print("ERROR: transport-specific imports found outside bridge/transports/:")

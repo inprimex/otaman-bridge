@@ -120,7 +120,7 @@ def _extract_mode(body: str, owned_agents: dict[str, str]) -> tuple[str, str, st
             continue
 
         # Validate: check for unknown reserved tokens appearing after @otaman-<repo>
-        after_prefix = raw_line[m.end():]
+        after_prefix = raw_line[m.end() :]
         bracket_m = re.match(r"\s*\[([^\]]+)\]", after_prefix)
         if bracket_m and annotation is None:
             token = bracket_m.group(1)
@@ -129,9 +129,7 @@ def _extract_mode(body: str, owned_agents: dict[str, str]) -> tuple[str, str, st
                     f"Reserved annotation [{token}] not yet supported in: {raw_line.strip()!r}"
                 )
             if token not in ("headless", "interactive"):
-                raise ValueError(
-                    f"Unknown mode annotation [{token}] in: {raw_line.strip()!r}"
-                )
+                raise ValueError(f"Unknown mode annotation [{token}] in: {raw_line.strip()!r}")
 
         mode = annotation if annotation else "interactive"
         return owned_agents[full_repo_name], mode, full_repo_name
@@ -237,7 +235,9 @@ def handle_bus_event(
     if to_field not in our_agent_ids:
         _log.debug(
             "task-assignment not for us (to=%r, ours=%s): %s",
-            to_field, our_agent_ids, message_path.name,
+            to_field,
+            our_agent_ids,
+            message_path.name,
         )
         return None
 
@@ -256,9 +256,7 @@ def handle_bus_event(
         # Message targets this agent but no matching task lines found — use conservative defaults.
         agent_id = to_field
         mode = "interactive"
-        repo_name = next(
-            (r for r, a in owned_agents.items() if a == to_field), to_field
-        )
+        repo_name = next((r for r, a in owned_agents.items() if a == to_field), to_field)
     else:
         agent_id, mode, repo_name = task_info
 
@@ -268,7 +266,10 @@ def handle_bus_event(
     if registry.is_sessioned(agent_id, human_id):
         _log.info(
             "Warm session exists for (%s, %s) — no spawn (trigger=%s, change=%s)",
-            agent_id, human_id, trigger_source, change_id,
+            agent_id,
+            human_id,
+            trigger_source,
+            change_id,
         )
         return SpawnOutcome(
             agent_id=agent_id,
@@ -298,7 +299,10 @@ def handle_bus_event(
         except (RunnerUnreachableError, SpawnError) as exc:
             _log.error(
                 "Spawn failed for (%s, %s) change=%s: %s",
-                agent_id, human_id, change_id, exc,
+                agent_id,
+                human_id,
+                change_id,
+                exc,
             )
             try:
                 emit_spawn_failed(
@@ -309,7 +313,9 @@ def handle_bus_event(
                     change_id=change_id,
                     error=str(exc),
                 )
-                otel_spawn_span("spawn-failed", agent_id=agent_id, session_id=dedup, change_id=change_id)
+                otel_spawn_span(
+                    "spawn-failed", agent_id=agent_id, session_id=dedup, change_id=change_id
+                )
             except Exception:
                 _log.exception("Failed to emit spawn-failed lifecycle event")
             return SpawnOutcome(
@@ -326,11 +332,17 @@ def handle_bus_event(
         if not claimed:
             _log.warning(
                 "Session %s spawned but claim_session returned False for (%s, %s) — race?",
-                spawned_id, agent_id, human_id,
+                spawned_id,
+                agent_id,
+                human_id,
             )
         _log.info(
             "Spawned headless session %s for (%s, %s) trigger=%s change=%s",
-            spawned_id, agent_id, human_id, trigger_source, change_id,
+            spawned_id,
+            agent_id,
+            human_id,
+            trigger_source,
+            change_id,
         )
         try:
             emit_spawn_start(
@@ -343,7 +355,9 @@ def handle_bus_event(
                 mode=mode,
                 trigger_source=trigger_source,
             )
-            otel_spawn_span("spawn-start", agent_id=agent_id, session_id=spawned_id, change_id=change_id)
+            otel_spawn_span(
+                "spawn-start", agent_id=agent_id, session_id=spawned_id, change_id=change_id
+            )
         except Exception:
             _log.exception("Failed to emit spawn-start lifecycle event")
         if linger_manager is not None:
@@ -370,7 +384,9 @@ def handle_bus_event(
     )
     _log.info(
         "Interactive task: emitted request-human-review for (%s, %s) change=%s",
-        agent_id, human_id, change_id,
+        agent_id,
+        human_id,
+        change_id,
     )
     return SpawnOutcome(
         agent_id=agent_id,

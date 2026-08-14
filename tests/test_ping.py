@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -10,7 +9,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).parent.parent
 PING_INVOKE = [sys.executable, "-m", "otaman_bridge.ping"]
@@ -21,7 +19,8 @@ def maestro_folder(tmp_path):
     root = tmp_path / "my-maestro"
     root.mkdir()
     (root / "platform.yaml").write_text(
-        "project: ping-test\nversion: '1.0'\nrepos: []\n", encoding="utf-8",
+        "project: ping-test\nversion: '1.0'\nrepos: []\n",
+        encoding="utf-8",
     )
     (root / ".agents").mkdir()
     return root
@@ -47,19 +46,25 @@ def _run(args: list[str], *, cwd: Path, home: Path, env_extra=None):
         env.update(env_extra)
     return subprocess.run(
         PING_INVOKE + list(args),
-        capture_output=True, text=True, timeout=15,
-        cwd=cwd, env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=cwd,
+        env=env,
     )
 
 
 def _start_daemon(account: str, home: Path):
     from otaman_bridge.daemon import BridgeDaemon
     from otaman_bridge.transports.null import NullTransport
+
     transport = NullTransport(allowlist={"*"})
     endpoint = home / ".maestro" / f"bridge-{account}.endpoint"
     endpoint.parent.mkdir(parents=True, exist_ok=True)
     daemon = BridgeDaemon(
-        account=account, transport=transport, endpoint_file=endpoint,
+        account=account,
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.start()
     return daemon, transport
@@ -74,14 +79,18 @@ class TestPingErrors:
     def test_no_account_resolvable_errors(self, maestro_folder, tmp_path):
         """Run from a non-maestro dir with no account hints — clear error."""
         result = _run(
-            ["hello"], cwd=tmp_path, home=maestro_folder,
+            ["hello"],
+            cwd=tmp_path,
+            home=maestro_folder,
         )
         assert result.returncode == 1
         assert "account" in result.stderr.lower()
 
     def test_no_daemon_endpoint_errors(self, maestro_folder):
         result = _run(
-            ["hi"], cwd=maestro_folder, home=maestro_folder,
+            ["hi"],
+            cwd=maestro_folder,
+            home=maestro_folder,
             env_extra={"MAESTRO_ACTIVE_ACCOUNT": "ghost"},
         )
         assert result.returncode == 1
@@ -92,7 +101,8 @@ class TestPingErrors:
     def test_invalid_severity_errors(self, maestro_folder):
         result = _run(
             ["--severity", "disaster", "test"],
-            cwd=maestro_folder, home=maestro_folder,
+            cwd=maestro_folder,
+            home=maestro_folder,
             env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
         )
         # argparse catches bogus choices
@@ -105,7 +115,8 @@ class TestPingHappyPath:
         try:
             result = _run(
                 ["I", "need", "help"],
-                cwd=maestro_folder, home=maestro_folder,
+                cwd=maestro_folder,
+                home=maestro_folder,
                 env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
             )
             assert result.returncode == 0, result.stderr
@@ -127,10 +138,9 @@ class TestPingHappyPath:
         daemon, transport = _start_daemon("personal", maestro_folder)
         try:
             result = _run(
-                ["--title", "Deploy failed",
-                 "--severity", "blocking",
-                 "build", "broken"],
-                cwd=maestro_folder, home=maestro_folder,
+                ["--title", "Deploy failed", "--severity", "blocking", "build", "broken"],
+                cwd=maestro_folder,
+                home=maestro_folder,
                 env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
             )
             assert result.returncode == 0
@@ -151,7 +161,8 @@ class TestPingHappyPath:
         try:
             result = _run(
                 ["--account", "riseapps", "hello"],
-                cwd=maestro_folder, home=maestro_folder,
+                cwd=maestro_folder,
+                home=maestro_folder,
                 # Env points elsewhere — flag should override
                 env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
             )
@@ -171,7 +182,8 @@ class TestPingHappyPath:
             for _ in range(3):
                 _run(
                     ["same", "message"],
-                    cwd=maestro_folder, home=maestro_folder,
+                    cwd=maestro_folder,
+                    home=maestro_folder,
                     env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
                 )
             for _ in range(40):
@@ -190,7 +202,9 @@ class TestStdoutConfirmation:
         daemon, _ = _start_daemon("personal", maestro_folder)
         try:
             result = _run(
-                ["hello"], cwd=maestro_folder, home=maestro_folder,
+                ["hello"],
+                cwd=maestro_folder,
+                home=maestro_folder,
                 env_extra={"MAESTRO_ACTIVE_ACCOUNT": "personal"},
             )
             assert result.returncode == 0

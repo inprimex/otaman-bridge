@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
-
 from otaman_bridge.idle_afk import (
-    AFK_FILENAME,
     ACTIVITY_FILENAME,
+    AFK_FILENAME,
     IdleAFKMonitor,
     _read_afk_source,
 )
@@ -40,8 +38,7 @@ def _write_activity(root: Path, *, age_seconds: float = 0.0) -> Path:
 def _write_afk(root: Path, source: str = "manual") -> Path:
     path = root / ".maestro" / AFK_FILENAME
     path.write_text(
-        f"enabled_at: 2026-04-24T12:00:00+00:00\n"
-        f"source: {source}\n",
+        f"enabled_at: 2026-04-24T12:00:00+00:00\nsource: {source}\n",
         encoding="utf-8",
     )
     return path
@@ -92,9 +89,7 @@ class TestCheckOnce:
         monitor = IdleAFKMonitor(maestro_root, idle_minutes=1)
         asyncio.run(monitor._check_once())
         assert (maestro_root / ".maestro" / AFK_FILENAME).is_file()
-        assert _read_afk_source(
-            maestro_root / ".maestro" / AFK_FILENAME
-        ) == "manual"
+        assert _read_afk_source(maestro_root / ".maestro" / AFK_FILENAME) == "manual"
 
     def test_does_not_clear_unattended_afk(self, maestro_root):
         """Unattended session AFK also survives."""
@@ -102,9 +97,7 @@ class TestCheckOnce:
         _write_afk(maestro_root, source="unattended")
         monitor = IdleAFKMonitor(maestro_root, idle_minutes=1)
         asyncio.run(monitor._check_once())
-        assert _read_afk_source(
-            maestro_root / ".maestro" / AFK_FILENAME
-        ) == "unattended"
+        assert _read_afk_source(maestro_root / ".maestro" / AFK_FILENAME) == "unattended"
 
     def test_does_not_enable_if_manual_already_set(self, maestro_root):
         """Stale activity + existing manual AFK → do nothing (don't overwrite)."""
@@ -112,9 +105,7 @@ class TestCheckOnce:
         _write_afk(maestro_root, source="manual")
         monitor = IdleAFKMonitor(maestro_root, idle_minutes=1)
         asyncio.run(monitor._check_once())
-        assert _read_afk_source(
-            maestro_root / ".maestro" / AFK_FILENAME
-        ) == "manual"
+        assert _read_afk_source(maestro_root / ".maestro" / AFK_FILENAME) == "manual"
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +115,15 @@ class TestCheckOnce:
 class TestCallbacks:
     def test_on_enabled_called_when_flipping_idle(self, maestro_root):
         calls = []
+
         async def on_enabled(reason):
             calls.append(reason)
+
         _write_activity(maestro_root, age_seconds=180)
         monitor = IdleAFKMonitor(
-            maestro_root, idle_minutes=1, on_enabled=on_enabled,
+            maestro_root,
+            idle_minutes=1,
+            on_enabled=on_enabled,
         )
         asyncio.run(monitor._check_once())
         assert len(calls) == 1
@@ -137,11 +132,15 @@ class TestCallbacks:
     def test_on_enabled_not_called_twice(self, maestro_root):
         """Multiple idle ticks with AFK already set should NOT re-notify."""
         calls = []
+
         async def on_enabled(reason):
             calls.append(reason)
+
         _write_activity(maestro_root, age_seconds=180)
         monitor = IdleAFKMonitor(
-            maestro_root, idle_minutes=1, on_enabled=on_enabled,
+            maestro_root,
+            idle_minutes=1,
+            on_enabled=on_enabled,
         )
         asyncio.run(monitor._check_once())
         asyncio.run(monitor._check_once())
@@ -150,12 +149,16 @@ class TestCallbacks:
 
     def test_on_cleared_called_when_user_returns(self, maestro_root):
         cleared = []
+
         async def on_cleared():
             cleared.append(True)
+
         _write_activity(maestro_root, age_seconds=5)
         _write_afk(maestro_root, source="idle-auto")
         monitor = IdleAFKMonitor(
-            maestro_root, idle_minutes=1, on_cleared=on_cleared,
+            maestro_root,
+            idle_minutes=1,
+            on_cleared=on_cleared,
         )
         asyncio.run(monitor._check_once())
         assert len(cleared) == 1
@@ -163,9 +166,12 @@ class TestCallbacks:
     def test_callback_failure_does_not_crash_monitor(self, maestro_root):
         async def bad_cb(*_args):
             raise RuntimeError("boom")
+
         _write_activity(maestro_root, age_seconds=180)
         monitor = IdleAFKMonitor(
-            maestro_root, idle_minutes=1, on_enabled=bad_cb,
+            maestro_root,
+            idle_minutes=1,
+            on_enabled=bad_cb,
         )
         # Should not raise.
         asyncio.run(monitor._check_once())
@@ -206,7 +212,9 @@ class TestRoundTrip:
 class TestRunStop:
     def test_run_stops_cleanly(self, maestro_root):
         monitor = IdleAFKMonitor(
-            maestro_root, idle_minutes=1, poll_interval=5.0,
+            maestro_root,
+            idle_minutes=1,
+            poll_interval=5.0,
         )
 
         async def driver():
@@ -233,6 +241,8 @@ class TestConfig:
     def test_poll_interval_floored(self, maestro_root):
         """Poll interval under 5s would hammer the filesystem needlessly."""
         monitor = IdleAFKMonitor(
-            maestro_root, idle_minutes=10, poll_interval=0.1,
+            maestro_root,
+            idle_minutes=10,
+            poll_interval=0.1,
         )
         assert monitor.poll_interval >= 5.0

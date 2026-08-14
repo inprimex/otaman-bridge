@@ -110,9 +110,7 @@ class RegistryLinkIndex:
     def start(self) -> None:
         """Start file-watching. No-op if watchdog is not installed."""
         if not _WATCHDOG_AVAILABLE:
-            _log.warning(
-                "watchdog not installed — RegistryLinkIndex will not auto-reload"
-            )
+            _log.warning("watchdog not installed — RegistryLinkIndex will not auto-reload")
             return
         with self._lock:
             if self._observer is not None:

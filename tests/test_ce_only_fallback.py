@@ -95,11 +95,11 @@ def test_daemon_degrades_gracefully_with_ee_absent():
     """
     result = subprocess.run(
         [sys.executable, "-c", _SCRIPT],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, (
-        f"CE-only fallback check failed:\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}"
+        f"CE-only fallback check failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert "CE_ONLY_FALLBACK_OK" in result.stdout

@@ -45,7 +45,10 @@ def _fake_oidc_validator(issuer: str = "https://zitadel.example") -> object:
     return types.SimpleNamespace(
         config=types.SimpleNamespace(issuer=issuer),
         validate=lambda _hdr: types.SimpleNamespace(
-            ok=False, user_id=None, email=None, roles=(),
+            ok=False,
+            user_id=None,
+            email=None,
+            roles=(),
         ),
     )
 
@@ -55,7 +58,9 @@ def daemon_with_oidc(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.session_store = SessionStore()
     daemon.session_cookie = SessionCookie(secure=False)
@@ -64,11 +69,14 @@ def daemon_with_oidc(tmp_path):
     # auto-registered (it needs the store for email lookup). Register
     # it now so the identity-less regression test can call it.
     from otaman_bridge.mcp_tools import build_list_team_sessions_tool
+
     if "list_team_sessions" not in daemon.mcp_server.tools:
-        daemon.mcp_server.register(build_list_team_sessions_tool(
-            runner_client=daemon._runner_client,
-            session_store=daemon.session_store,
-        ))
+        daemon.mcp_server.register(
+            build_list_team_sessions_tool(
+                runner_client=daemon._runner_client,
+                session_store=daemon.session_store,
+            )
+        )
     daemon.start()
     try:
         yield daemon, endpoint
@@ -81,7 +89,9 @@ def daemon_without_oidc(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.start()
     try:
@@ -118,9 +128,14 @@ def _www_auth(headers: dict) -> str:
 class TestUnauthenticatedRequestChallenge:
     def test_no_auth_returns_401_with_challenge(self, daemon_with_oidc):
         _, endpoint = daemon_with_oidc
-        code, headers, _ = _post(_daemon_url(endpoint) + "/mcp", body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
-        })
+        code, headers, _ = _post(
+            _daemon_url(endpoint) + "/mcp",
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+            },
+        )
         assert code == 401
         challenge = _www_auth(headers)
         assert challenge.startswith("Bearer ")
@@ -130,10 +145,15 @@ class TestUnauthenticatedRequestChallenge:
 
     def test_invalid_bearer_returns_401_with_challenge(self, daemon_with_oidc):
         _, endpoint = daemon_with_oidc
-        code, headers, _ = _post(_daemon_url(endpoint) + "/mcp",
-                                 token="not-the-real-token", body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
-        })
+        code, headers, _ = _post(
+            _daemon_url(endpoint) + "/mcp",
+            token="not-the-real-token",
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+            },
+        )
         assert code == 401
         assert "resource_metadata=" in _www_auth(headers)
 
@@ -141,9 +161,14 @@ class TestUnauthenticatedRequestChallenge:
         """Without OIDC there's no authorization server to point clients at,
         so emitting the challenge would just confuse them."""
         _, endpoint = daemon_without_oidc
-        code, headers, _ = _post(_daemon_url(endpoint) + "/mcp", body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
-        })
+        code, headers, _ = _post(
+            _daemon_url(endpoint) + "/mcp",
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+            },
+        )
         assert code == 401
         assert _www_auth(headers) == ""
 
@@ -152,18 +177,26 @@ class TestUnauthenticatedRequestChallenge:
 
 
 class TestIdentityRequiredToolChallenge:
-    @pytest.mark.parametrize("tool_name", [
-        "send_message_to_user",
-        "check_messages",
-        "mark_message_read",
-    ])
+    @pytest.mark.parametrize(
+        "tool_name",
+        [
+            "send_message_to_user",
+            "check_messages",
+            "mark_message_read",
+        ],
+    )
     def test_loopback_bearer_gets_challenge(self, daemon_with_oidc, tool_name):
         daemon, endpoint = daemon_with_oidc
-        code, headers, body = _post(_daemon_url(endpoint) + "/mcp",
-                                    token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": tool_name, "arguments": {}},
-        })
+        code, headers, body = _post(
+            _daemon_url(endpoint) + "/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": tool_name, "arguments": {}},
+            },
+        )
         assert code == 401
         challenge = _www_auth(headers)
         assert "resource_metadata=" in challenge
@@ -176,10 +209,15 @@ class TestIdentityRequiredToolChallenge:
     def test_loopback_bearer_can_still_list_tools(self, daemon_with_oidc):
         """tools/list is a meta-method, not a tool invocation; never gated."""
         daemon, endpoint = daemon_with_oidc
-        code, _, body = _post(_daemon_url(endpoint) + "/mcp",
-                              token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
-        })
+        code, _, body = _post(
+            _daemon_url(endpoint) + "/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+            },
+        )
         assert code == 200
         envelope = json.loads(body)
         assert "result" in envelope
@@ -196,11 +234,16 @@ class TestIdentityRequiredToolChallenge:
         that the route did NOT return 401.
         """
         daemon, endpoint = daemon_with_oidc
-        code, _, body = _post(_daemon_url(endpoint) + "/mcp",
-                              token=daemon.token, body={
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": "list_team_sessions", "arguments": {}},
-        })
+        code, _, body = _post(
+            _daemon_url(endpoint) + "/mcp",
+            token=daemon.token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "list_team_sessions", "arguments": {}},
+            },
+        )
         assert code == 200
         envelope = json.loads(body)
         assert envelope.get("jsonrpc") == "2.0"

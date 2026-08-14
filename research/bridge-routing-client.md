@@ -61,6 +61,7 @@ The routing client constructs a `RoutingRequest` from the bridge's session conte
 from datetime import datetime, timezone
 from otaman_core.routing import RoutingRequest, DataClassification
 
+
 def build_routing_request(
     *,
     session_id: str,
@@ -102,8 +103,9 @@ import json
 import urllib.request
 import urllib.error
 
-ROUTER_ENDPOINT_ENV = "OTAMAN_ROUTER_URL"   # e.g. "http://router:8080"
-DEFAULT_ROUTER_TIMEOUT = 2.0                # seconds; sub-ms expected latency
+ROUTER_ENDPOINT_ENV = "OTAMAN_ROUTER_URL"  # e.g. "http://router:8080"
+DEFAULT_ROUTER_TIMEOUT = 2.0  # seconds; sub-ms expected latency
+
 
 class RoutingClient:
     def __init__(
@@ -197,12 +199,12 @@ the routing client returns a **default decision**:
 ```python
 def _default_decision(req: RoutingRequest) -> RoutingDecision:
     return RoutingDecision(
-        harness="claude-code",       # platform default
-        backend="anthropic",         # platform default
-        model=None,                  # let the harness pick
+        harness="claude-code",  # platform default
+        backend="anthropic",  # platform default
+        model=None,  # let the harness pick
         rule_matched="default",
         cost_estimate_usd=None,
-        compliance_cleared=True,     # operator responsibility in fallback mode
+        compliance_cleared=True,  # operator responsibility in fallback mode
         routing_id=f"fallback-{req.session_id}",
     )
 ```

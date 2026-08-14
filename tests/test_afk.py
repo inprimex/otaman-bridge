@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,7 +11,9 @@ import pytest
 def _load():
     """Reload afk per-test for fresh globals (the dataclass module-cache trick still applies)."""
     import importlib
+
     from otaman_bridge import afk as _afk
+
     return importlib.reload(_afk)
 
 
@@ -161,25 +160,31 @@ class TestAfkState:
 
     def test_invalid_source_rejected(self):
         with pytest.raises(ValueError):
-            afk.AfkState.from_dict({
-                "enabled_at": "2026-04-23T19:30:00Z",
-                "source": "invalid",
-            })
+            afk.AfkState.from_dict(
+                {
+                    "enabled_at": "2026-04-23T19:30:00Z",
+                    "source": "invalid",
+                }
+            )
 
     def test_unattended_source_accepted(self):
         """Hooks/ssh-auto-afk.sh writes ``source: unattended``; the state
         loader must parse it (was a silent-fail bug — files appeared off)."""
-        state = afk.AfkState.from_dict({
-            "enabled_at": "2026-04-23T19:30:00Z",
-            "source": "unattended",
-        })
+        state = afk.AfkState.from_dict(
+            {
+                "enabled_at": "2026-04-23T19:30:00Z",
+                "source": "unattended",
+            }
+        )
         assert state.source == "unattended"
 
     def test_idle_auto_source_accepted(self):
-        state = afk.AfkState.from_dict({
-            "enabled_at": "2026-04-23T19:30:00Z",
-            "source": "idle-auto",
-        })
+        state = afk.AfkState.from_dict(
+            {
+                "enabled_at": "2026-04-23T19:30:00Z",
+                "source": "idle-auto",
+            }
+        )
         assert state.source == "idle-auto"
 
     def test_missing_enabled_at_rejected(self):
@@ -188,10 +193,12 @@ class TestAfkState:
 
     def test_z_suffix_parsed(self):
         """ISO 8601 with Z (UTC shorthand) must parse cleanly."""
-        state = afk.AfkState.from_dict({
-            "enabled_at": "2026-04-23T19:30:00Z",
-            "source": "manual",
-        })
+        state = afk.AfkState.from_dict(
+            {
+                "enabled_at": "2026-04-23T19:30:00Z",
+                "source": "manual",
+            }
+        )
         assert state.enabled_at.tzinfo is not None
 
     def test_expiry_in_past_marks_expired(self):
@@ -245,14 +252,16 @@ class TestReadWrite:
     def test_read_corrupt_returns_none(self, maestro_folder):
         (maestro_folder / ".maestro").mkdir()
         (maestro_folder / ".maestro" / "afk").write_text(
-            "not: valid: yaml: [", encoding="utf-8",
+            "not: valid: yaml: [",
+            encoding="utf-8",
         )
         assert afk.read_afk(maestro_folder) is None
 
     def test_read_missing_enabled_at_returns_none(self, maestro_folder):
         (maestro_folder / ".maestro").mkdir()
         (maestro_folder / ".maestro" / "afk").write_text(
-            "source: manual\n", encoding="utf-8",
+            "source: manual\n",
+            encoding="utf-8",
         )
         assert afk.read_afk(maestro_folder) is None
 
@@ -346,7 +355,10 @@ class TestCli:
         assert "no expiry" in out.lower()
 
     def test_status_when_on_with_duration_shows_remaining(
-        self, maestro_folder, monkeypatch, capsys,
+        self,
+        maestro_folder,
+        monkeypatch,
+        capsys,
     ):
         monkeypatch.chdir(maestro_folder)
         self._invoke(maestro_folder, "on", "1h30m")
@@ -405,23 +417,31 @@ class _Captured:
         self.body = req.data.decode("utf-8") if req.data else None
         if self.raise_exc is not None:
             raise self.raise_exc
+
         class _Resp:
-            def __enter__(self_): return self_  # noqa: N805
-            def __exit__(self_, *a): return False  # noqa: N805
-            def read(self_): return b"{}"  # noqa: N805
+            def __enter__(self_):
+                return self_  # noqa: N805
+
+            def __exit__(self_, *a):
+                return False  # noqa: N805
+
+            def read(self_):
+                return b"{}"  # noqa: N805
+
         return _Resp()
 
 
-def _setup_endpoint(home: Path, account: str, *, port: int = 12345,
-                    token: str = "tok-abc") -> Path:
+def _setup_endpoint(home: Path, account: str, *, port: int = 12345, token: str = "tok-abc") -> Path:
     """Create a fake ~/.maestro/bridge-<account>.endpoint."""
     import json as _json
+
     base = home / ".maestro"
     base.mkdir(parents=True, exist_ok=True)
     path = base / f"bridge-{account}.endpoint"
     path.write_text(
-        _json.dumps({"port": port, "token": token, "pid": 1, "account": account,
-                     "transport": "null"}),
+        _json.dumps(
+            {"port": port, "token": token, "pid": 1, "account": account, "transport": "null"}
+        ),
         encoding="utf-8",
     )
     return path
@@ -443,7 +463,11 @@ class TestNotify:
         return cap
 
     def test_notify_skipped_when_kill_switch(
-        self, maestro_folder, home_dir, monkeypatch, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        captured,
     ):
         """MAESTRO_AFK_NO_NOTIFY=1 must short-circuit before any I/O."""
         monkeypatch.setenv("MAESTRO_AFK_NO_NOTIFY", "1")
@@ -451,13 +475,18 @@ class TestNotify:
         _setup_endpoint(home_dir, "personal")
         state = afk.AfkState(
             enabled_at=datetime.now(timezone.utc),
-            expires_at=None, source="manual",
+            expires_at=None,
+            source="manual",
         )
         assert afk.notify_afk_enabled(maestro_folder, state) is False
         assert captured.url is None
 
     def test_notify_skipped_without_account(
-        self, maestro_folder, home_dir, monkeypatch, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        captured,
     ):
         """No env hints → no .maestro marker → silent skip."""
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
@@ -466,13 +495,18 @@ class TestNotify:
         monkeypatch.chdir(maestro_folder)
         state = afk.AfkState(
             enabled_at=datetime.now(timezone.utc),
-            expires_at=None, source="manual",
+            expires_at=None,
+            source="manual",
         )
         assert afk.notify_afk_enabled(maestro_folder, state) is False
         assert captured.url is None
 
     def test_notify_skipped_without_endpoint_file(
-        self, maestro_folder, home_dir, monkeypatch, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        captured,
     ):
         """Account resolves but no daemon → silent skip (no daemon running)."""
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
@@ -480,13 +514,18 @@ class TestNotify:
         # No endpoint file written.
         state = afk.AfkState(
             enabled_at=datetime.now(timezone.utc),
-            expires_at=None, source="manual",
+            expires_at=None,
+            source="manual",
         )
         assert afk.notify_afk_enabled(maestro_folder, state) is False
         assert captured.url is None
 
     def test_notify_posts_to_daemon_when_running(
-        self, maestro_folder, home_dir, monkeypatch, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        captured,
     ):
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
         monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
@@ -506,6 +545,7 @@ class TestNotify:
         auth = {k.lower(): v for k, v in captured.headers.items()}
         assert auth["authorization"] == "Bearer tok-xyz"
         import json as _json
+
         body = _json.loads(captured.body)
         assert body["account"] == "personal"
         assert body["title"] == "🌙 AFK enabled"
@@ -514,41 +554,59 @@ class TestNotify:
         assert "going to bed" in body["body"]
 
     def test_notify_swallows_urlopen_errors(
-        self, maestro_folder, home_dir, monkeypatch, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        captured,
     ):
         """Daemon endpoint exists but is unreachable → False, no exception."""
         import urllib.error as _err
+
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "personal")
         _setup_endpoint(home_dir, "personal")
         captured.raise_exc = _err.URLError("connection refused")
         state = afk.AfkState(
             enabled_at=datetime.now(timezone.utc),
-            expires_at=None, source="manual",
+            expires_at=None,
+            source="manual",
         )
         # Must not raise.
         assert afk.notify_afk_enabled(maestro_folder, state) is False
 
     def test_cleared_notification_includes_prior_source(
-        self, maestro_folder, home_dir, monkeypatch, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        captured,
     ):
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
         monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
         monkeypatch.delenv("OTAMAN_ACTIVE_ACCOUNT", raising=False)
         monkeypatch.setenv("MAESTRO_ACTIVE_ACCOUNT", "personal")
         _setup_endpoint(home_dir, "personal")
-        assert afk.notify_afk_cleared(
-            maestro_folder, prior_source="idle-auto",
-            reason="new Claude session",
-        ) is True
+        assert (
+            afk.notify_afk_cleared(
+                maestro_folder,
+                prior_source="idle-auto",
+                reason="new Claude session",
+            )
+            is True
+        )
         import json as _json
+
         body = _json.loads(captured.body)
         assert body["title"] == "☀️ AFK cleared"
         assert "idle-auto" in body["body"]
         assert "new Claude session" in body["body"]
 
     def test_account_resolution_priority(
-        self, maestro_folder, home_dir, monkeypatch,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
     ):
         """MAESTRO_ACTIVE_ACCOUNT wins over CLAUDE_CONFIG_DIR basename."""
         monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
@@ -561,7 +619,12 @@ class TestNotify:
         assert afk._resolve_account_for_notify() == "secondary"
 
     def test_send_event_subcommand_enabled(
-        self, maestro_folder, home_dir, monkeypatch, capsys, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        capsys,
+        captured,
     ):
         """The hidden ``_send-event enabled`` subcommand reads the live AFK
         state and notifies — used by ssh-auto-afk.sh after it writes the file
@@ -574,25 +637,38 @@ class TestNotify:
         monkeypatch.chdir(maestro_folder)
 
         # Pre-write the AFK file (mimics ssh-auto-afk.sh's cat <<EOF).
-        afk.write_afk(maestro_folder, afk.AfkState(
-            enabled_at=datetime.now(timezone.utc),
-            expires_at=None, source="unattended",
-            enabled_by="root",
-        ))
+        afk.write_afk(
+            maestro_folder,
+            afk.AfkState(
+                enabled_at=datetime.now(timezone.utc),
+                expires_at=None,
+                source="unattended",
+                enabled_by="root",
+            ),
+        )
 
-        rc = afk.main([
-            "_send-event", "enabled",
-            "--reason", "launcher flagged this connection as unattended",
-        ])
+        rc = afk.main(
+            [
+                "_send-event",
+                "enabled",
+                "--reason",
+                "launcher flagged this connection as unattended",
+            ]
+        )
         assert rc == 0
         import json as _json
+
         body = _json.loads(captured.body)
         assert body["title"] == "🌙 AFK enabled"
         assert "Source: unattended" in body["body"]
         assert "launcher flagged" in body["body"]
 
     def test_send_event_subcommand_cleared(
-        self, maestro_folder, home_dir, monkeypatch, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        captured,
     ):
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
         monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
@@ -601,20 +677,30 @@ class TestNotify:
         _setup_endpoint(home_dir, "personal")
         monkeypatch.chdir(maestro_folder)
 
-        rc = afk.main([
-            "_send-event", "cleared",
-            "--source", "manual",
-            "--reason", "new Claude session started",
-        ])
+        rc = afk.main(
+            [
+                "_send-event",
+                "cleared",
+                "--source",
+                "manual",
+                "--reason",
+                "new Claude session started",
+            ]
+        )
         assert rc == 0
         import json as _json
+
         body = _json.loads(captured.body)
         assert body["title"] == "☀️ AFK cleared"
         assert "manual" in body["body"]
         assert "new Claude session" in body["body"]
 
     def test_cmd_on_triggers_notify(
-        self, maestro_folder, home_dir, monkeypatch, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        captured,
     ):
         """End-to-end: ``maestro afk on`` writes file AND notifies."""
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
@@ -630,11 +716,16 @@ class TestNotify:
         # Notification sent
         assert captured.url and captured.url.endswith("/notify")
         import json as _json
+
         body = _json.loads(captured.body)
         assert "lunch break" in body["body"]
 
     def test_cmd_off_triggers_notify_with_prior_source(
-        self, maestro_folder, home_dir, monkeypatch, captured,
+        self,
+        maestro_folder,
+        home_dir,
+        monkeypatch,
+        captured,
     ):
         monkeypatch.delenv("MAESTRO_AFK_NO_NOTIFY", raising=False)
         monkeypatch.delenv("OTAMAN_ACTIVE_ROUTING", raising=False)
@@ -651,6 +742,7 @@ class TestNotify:
         assert afk.main(["off"]) == 0
         assert captured.url and captured.url.endswith("/notify")
         import json as _json
+
         body = _json.loads(captured.body)
         assert body["title"] == "☀️ AFK cleared"
         assert "manual" in body["body"]

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 DEFAULT_DB_PATH = Path.home() / ".otaman" / "session-registry.db"
-DEFAULT_STALE_THRESHOLD = 2 * 3600.0   # seconds; rows older than this are pruned
+DEFAULT_STALE_THRESHOLD = 2 * 3600.0  # seconds; rows older than this are pruned
 
 
 def _now_iso() -> str:
@@ -131,17 +131,17 @@ class SqliteSessionRegistry:
     def heartbeat(self, agent_id: str, human_id: str, session_id: str) -> bool:
         with self._lock:
             cur = self._conn.execute(  # type: ignore[union-attr]
-                "UPDATE sessions SET heartbeat_at=? WHERE agent_id=? AND human_id=? AND session_id=?",
+                "UPDATE sessions SET heartbeat_at=? "
+                "WHERE agent_id=? AND human_id=? AND session_id=?",
                 (_now_iso(), agent_id, human_id, session_id),
             )
             self._conn.commit()  # type: ignore[union-attr]
             return cur.rowcount > 0
 
-    def cleanup_stale(
-        self, *, stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD
-    ) -> int:
+    def cleanup_stale(self, *, stale_threshold_seconds: float = DEFAULT_STALE_THRESHOLD) -> int:
         """Remove rows where heartbeat_at is older than stale_threshold_seconds."""
         import time
+
         cutoff = datetime.fromtimestamp(
             time.time() - stale_threshold_seconds, tz=timezone.utc
         ).isoformat()
@@ -160,8 +160,12 @@ class SqliteSessionRegistry:
             ).fetchall()
             return [
                 {
-                    "agent_id": r[0], "human_id": r[1], "session_id": r[2],
-                    "mode": r[3], "claimed_at": r[4], "heartbeat_at": r[5],
+                    "agent_id": r[0],
+                    "human_id": r[1],
+                    "session_id": r[2],
+                    "mode": r[3],
+                    "claimed_at": r[4],
+                    "heartbeat_at": r[5],
                 }
                 for r in rows
             ]
@@ -193,9 +197,7 @@ class SqliteSessionRegistry:
                 PRIMARY KEY (agent_id, human_id)
             )"""
         )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_heartbeat ON sessions (heartbeat_at)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_heartbeat ON sessions (heartbeat_at)")
         conn.commit()
         self._conn = conn
 
@@ -219,7 +221,9 @@ class NatsKvSessionRegistry:
     def is_sessioned(self, agent_id: str, human_id: str) -> bool:
         raise NotImplementedError("NatsKvSessionRegistry not yet implemented")
 
-    def claim_session(self, agent_id: str, human_id: str, session_id: str, *, mode: str = "headless") -> bool:
+    def claim_session(
+        self, agent_id: str, human_id: str, session_id: str, *, mode: str = "headless"
+    ) -> bool:
         raise NotImplementedError
 
     def release_session(self, agent_id: str, human_id: str, session_id: str) -> bool:

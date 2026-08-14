@@ -13,7 +13,6 @@ Three layers:
 from __future__ import annotations
 
 import json
-import time
 import types
 import urllib.error
 import urllib.request
@@ -22,9 +21,8 @@ from pathlib import Path
 import pytest
 
 from otaman_bridge.daemon import BridgeDaemon, read_endpoint_file
+from otaman_bridge.transports.null import NullTransport
 from otaman_bridge_ee.dcr_shim import (
-    ALLOWED_GRANT_TYPES,
-    ALLOWED_RESPONSE_TYPES,
     DCRError,
     IdpConfig,
     MetadataCache,
@@ -37,8 +35,6 @@ from otaman_bridge_ee.dcr_shim import (
     parse_register_request,
     to_rfc7591_response,
 )
-from otaman_bridge.transports.null import NullTransport
-
 
 # ---- parse_register_request ----------------------------------------------
 
@@ -85,60 +81,74 @@ class TestParseRegisterRequest:
             parse_register_request({"redirect_uris": []})
         assert e.value.error == "invalid_redirect_uri"
 
-    @pytest.mark.parametrize("uri", [
-        "https://example.com/cb",
-        "http://example.com/cb",
-        "http://10.0.0.1:54321/cb",
-        "custom-scheme://cb",
-        "http://localhost.evil.com/cb",
-    ])
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://example.com/cb",
+            "http://example.com/cb",
+            "http://10.0.0.1:54321/cb",
+            "custom-scheme://cb",
+            "http://localhost.evil.com/cb",
+        ],
+    )
     def test_non_loopback_redirect_rejected(self, uri):
         with pytest.raises(DCRError) as e:
             parse_register_request({"redirect_uris": [uri]})
         assert e.value.error == "invalid_redirect_uri"
 
-    @pytest.mark.parametrize("uri", [
-        "http://localhost/cb",
-        "http://localhost:0/cb",
-        "http://localhost:54321/oauth/callback",
-        "http://127.0.0.1:54321/cb",
-        "http://127.0.0.1/cb",
-    ])
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "http://localhost/cb",
+            "http://localhost:0/cb",
+            "http://localhost:54321/oauth/callback",
+            "http://127.0.0.1:54321/cb",
+            "http://127.0.0.1/cb",
+        ],
+    )
     def test_loopback_redirect_accepted(self, uri):
         req = parse_register_request({"redirect_uris": [uri]})
         assert uri in req.redirect_uris
 
     def test_token_endpoint_auth_method_must_be_none(self):
         with pytest.raises(DCRError) as e:
-            parse_register_request({
-                "redirect_uris": ["http://localhost:1/cb"],
-                "token_endpoint_auth_method": "client_secret_basic",
-            })
+            parse_register_request(
+                {
+                    "redirect_uris": ["http://localhost:1/cb"],
+                    "token_endpoint_auth_method": "client_secret_basic",
+                }
+            )
         assert e.value.error == "invalid_client_metadata"
 
     def test_unsupported_grant_type_rejected(self):
         with pytest.raises(DCRError) as e:
-            parse_register_request({
-                "redirect_uris": ["http://localhost:1/cb"],
-                "grant_types": ["password"],
-            })
+            parse_register_request(
+                {
+                    "redirect_uris": ["http://localhost:1/cb"],
+                    "grant_types": ["password"],
+                }
+            )
         assert e.value.error == "invalid_client_metadata"
         assert "password" in e.value.description
 
     def test_unsupported_response_type_rejected(self):
         with pytest.raises(DCRError) as e:
-            parse_register_request({
-                "redirect_uris": ["http://localhost:1/cb"],
-                "response_types": ["token"],
-            })
+            parse_register_request(
+                {
+                    "redirect_uris": ["http://localhost:1/cb"],
+                    "response_types": ["token"],
+                }
+            )
         assert e.value.error == "invalid_client_metadata"
 
     def test_non_string_field_rejected(self):
         with pytest.raises(DCRError) as e:
-            parse_register_request({
-                "redirect_uris": ["http://localhost:1/cb"],
-                "client_name": 42,
-            })
+            parse_register_request(
+                {
+                    "redirect_uris": ["http://localhost:1/cb"],
+                    "client_name": 42,
+                }
+            )
         assert e.value.error == "invalid_client_metadata"
 
 
@@ -207,7 +217,8 @@ class TestBuildZitadelOidcPayload:
 
     def test_always_native_public_pkce(self):
         p = build_zitadel_oidc_payload(
-            name="x", redirect_uris=["http://localhost:1/cb"],
+            name="x",
+            redirect_uris=["http://localhost:1/cb"],
             grant_types=("authorization_code",),
         )
         assert p["appType"] == "OIDC_APP_TYPE_NATIVE"
@@ -221,7 +232,8 @@ class TestBuildZitadelOidcPayload:
         roles must land in the access token (accessTokenRoleAssertion=true)
         so the bridge can use them for authorization decisions."""
         p = build_zitadel_oidc_payload(
-            name="x", redirect_uris=["http://localhost:1/cb"],
+            name="x",
+            redirect_uris=["http://localhost:1/cb"],
             grant_types=("authorization_code",),
         )
         assert p["accessTokenType"] == "OIDC_TOKEN_TYPE_JWT"
@@ -231,7 +243,8 @@ class TestBuildZitadelOidcPayload:
     def test_redirect_uris_passed_through(self):
         uris = ["http://localhost:1/a", "http://localhost:2/b"]
         p = build_zitadel_oidc_payload(
-            name="x", redirect_uris=uris,
+            name="x",
+            redirect_uris=uris,
             grant_types=("authorization_code",),
         )
         assert p["redirectUris"] == uris
@@ -242,6 +255,7 @@ class TestBuildZitadelOidcPayload:
 
 class _StubMgmtClient:
     """Stand-in for ZitadelMgmtClient. Records calls and returns canned data."""
+
     def __init__(self, *, find_returns=None, create_returns=None, create_raises=None):
         self.find_returns = find_returns
         self.create_returns = create_returns
@@ -268,12 +282,16 @@ def _req():
 
 class TestFindOrCreateClient:
     def test_reuses_existing_app(self):
-        stub = _StubMgmtClient(find_returns={
-            "id": "app-A",
-            "oidcConfig": {"clientId": "CLIENT-XYZ"},
-        })
+        stub = _StubMgmtClient(
+            find_returns={
+                "id": "app-A",
+                "oidcConfig": {"clientId": "CLIENT-XYZ"},
+            }
+        )
         cid = find_or_create_client(
-            mgmt_client=stub, project_id="proj", request=_req(),
+            mgmt_client=stub,
+            project_id="proj",
+            request=_req(),
         )
         assert cid == "CLIENT-XYZ"
         # No create call when reused.
@@ -285,7 +303,9 @@ class TestFindOrCreateClient:
             create_returns={"appId": "app-A", "clientId": "NEW-CLIENT"},
         )
         cid = find_or_create_client(
-            mgmt_client=stub, project_id="proj", request=_req(),
+            mgmt_client=stub,
+            project_id="proj",
+            request=_req(),
         )
         assert cid == "NEW-CLIENT"
         assert [c[0] for c in stub.calls] == ["find", "create"]
@@ -310,7 +330,9 @@ class TestFindOrCreateClient:
         stub.find_app_by_name = find_side_effect
         stub.create_oidc_app = create_raises
         cid = find_or_create_client(
-            mgmt_client=stub, project_id="proj", request=_req(),
+            mgmt_client=stub,
+            project_id="proj",
+            request=_req(),
         )
         assert cid == "RACED-CLIENT"
 
@@ -321,15 +343,18 @@ class TestFindOrCreateClient:
         )
         with pytest.raises(ZitadelMgmtError):
             find_or_create_client(
-                mgmt_client=stub, project_id="proj", request=_req(),
+                mgmt_client=stub,
+                project_id="proj",
+                request=_req(),
             )
 
     def test_fingerprint_determines_app_name(self):
-        stub = _StubMgmtClient(find_returns=None,
-                               create_returns={"appId": "x", "clientId": "Y"})
+        stub = _StubMgmtClient(find_returns=None, create_returns={"appId": "x", "clientId": "Y"})
         req = _req()
         find_or_create_client(
-            mgmt_client=stub, project_id="proj", request=req,
+            mgmt_client=stub,
+            project_id="proj",
+            request=req,
             name_prefix="dcr-shim:",
         )
         # Find + create both target the same fingerprint-derived name.
@@ -347,24 +372,27 @@ class _FakeResponse:
     def __init__(self, *, status: int, body: bytes):
         self.status = status
         self._body = body
+
     def read(self):
         return self._body
+
     def __enter__(self):
         return self
+
     def __exit__(self, *a):
         return False
 
 
 class _FakeOpener:
     """Records every request and returns canned responses keyed by URL."""
+
     def __init__(self, responses: dict):
         self.responses = responses
         self.requests = []
+
     def open(self, req, timeout=None):
         self.requests.append((req.method, req.full_url, dict(req.headers), req.data))
-        body, status = self.responses.get(
-            req.full_url, (b'{"error":"not stubbed"}', 404)
-        )
+        body, status = self.responses.get(req.full_url, (b'{"error":"not stubbed"}', 404))
         if status >= 400:
             raise urllib.error.HTTPError(req.full_url, status, "x", req.headers, _FakeBody(body))
         return _FakeResponse(status=status, body=body)
@@ -372,10 +400,13 @@ class _FakeOpener:
 
 class _FakeBody:
     """Minimal stand-in for HTTPError's `fp` attribute (which has .read() + .close())."""
+
     def __init__(self, b):
         self._b = b
+
     def read(self):
         return self._b
+
     def close(self):
         pass
 
@@ -405,7 +436,8 @@ class TestZitadelMgmtClientPATMode:
         c = ZitadelMgmtClient(
             base_url="http://mgmt.example",
             token_url="http://mgmt.example/oauth/v2/token",
-            pat="MY-PAT-TOKEN", org_id="org-1",
+            pat="MY-PAT-TOKEN",
+            org_id="org-1",
             opener=_FakeOpener({}),
         )
         tok = c._get_access_token()
@@ -418,8 +450,10 @@ class TestZitadelMgmtClientPATMode:
         c = ZitadelMgmtClient(
             base_url="http://mgmt.example",
             token_url="http://mgmt.example/oauth/v2/token",
-            client_id="svc", client_secret="sec",
-            pat="MY-PAT-TOKEN", org_id="org-1",
+            client_id="svc",
+            client_secret="sec",
+            pat="MY-PAT-TOKEN",
+            org_id="org-1",
             opener=_FakeOpener({}),
         )
         assert c._get_access_token() == "MY-PAT-TOKEN"
@@ -429,12 +463,16 @@ class TestZitadelMgmtClientPATMode:
         c = ZitadelMgmtClient(
             base_url="http://mgmt.example",
             token_url="http://mgmt.example/oauth/v2/token",
-            pat="MY-PAT-TOKEN", org_id="org-1",
-            opener=_FakeOpener({
-                "http://mgmt.example/management/v1/projects/p/apps/_search": (
-                    json.dumps({"result": []}).encode(), 200,
-                ),
-            }),
+            pat="MY-PAT-TOKEN",
+            org_id="org-1",
+            opener=_FakeOpener(
+                {
+                    "http://mgmt.example/management/v1/projects/p/apps/_search": (
+                        json.dumps({"result": []}).encode(),
+                        200,
+                    ),
+                }
+            ),
         )
         c.find_app_by_name(project_id="p", name="dcr-shim:x")
         # The mgmt request should carry the PAT as Bearer.
@@ -482,7 +520,8 @@ class TestZitadelMgmtClientAuth:
     def test_get_access_token_caches(self):
         opener_responses = {
             "http://mgmt.example/oauth/v2/token": (
-                json.dumps({"access_token": "T1", "expires_in": 3600}).encode(), 200,
+                json.dumps({"access_token": "T1", "expires_in": 3600}).encode(),
+                200,
             ),
         }
         c = _mgmt_client_with_responses(opener_responses)
@@ -498,16 +537,22 @@ class TestZitadelMgmtClientAuth:
             (json.dumps({"access_token": "T2", "expires_in": 60}).encode(), 200),
         ]
         call_n = {"i": 0}
+
         def _opener_open(req, timeout=None):
-            i = call_n["i"]; call_n["i"] += 1
+            i = call_n["i"]
+            call_n["i"] += 1
             body, status = responses_by_call[min(i, 1)]
             return _FakeResponse(status=status, body=body)
+
         opener = types.SimpleNamespace(open=_opener_open)
         c = ZitadelMgmtClient(
             base_url="http://mgmt.example",
             token_url="http://mgmt.example/oauth/v2/token",
-            client_id="x", client_secret="y", org_id="o",
-            expected_host="mgmt.example", opener=opener,
+            client_id="x",
+            client_secret="y",
+            org_id="o",
+            expected_host="mgmt.example",
+            opener=opener,
         )
         # First call mints T1 at t=1000 (expires at 1060).
         assert c._get_access_token(now=1000.0) == "T1"
@@ -515,9 +560,11 @@ class TestZitadelMgmtClientAuth:
         assert c._get_access_token(now=1031.0) == "T2"
 
     def test_token_endpoint_http_error_raises(self):
-        c = _mgmt_client_with_responses({
-            "http://mgmt.example/oauth/v2/token": (b'{"error":"invalid_client"}', 401),
-        })
+        c = _mgmt_client_with_responses(
+            {
+                "http://mgmt.example/oauth/v2/token": (b'{"error":"invalid_client"}', 401),
+            }
+        )
         with pytest.raises(ZitadelMgmtError) as e:
             c._get_access_token()
         assert e.value.status == 401
@@ -527,7 +574,8 @@ class TestZitadelMgmtClientApi:
     def _client(self, *more_responses):
         responses = {
             "http://mgmt.example/oauth/v2/token": (
-                json.dumps({"access_token": "AT", "expires_in": 3600}).encode(), 200,
+                json.dumps({"access_token": "AT", "expires_in": 3600}).encode(),
+                200,
             ),
         }
         for d in more_responses:
@@ -535,37 +583,44 @@ class TestZitadelMgmtClientApi:
         return _mgmt_client_with_responses(responses)
 
     def test_find_app_by_name_returns_match(self):
-        search_resp = {"result": [{"id": "app-1", "name": "dcr-shim:abc",
-                                    "oidcConfig": {"clientId": "CID"}}]}
-        c = self._client({
-            "http://mgmt.example/management/v1/projects/proj/apps/_search": (
-                json.dumps(search_resp).encode(), 200,
-            ),
-        })
+        search_resp = {
+            "result": [{"id": "app-1", "name": "dcr-shim:abc", "oidcConfig": {"clientId": "CID"}}]
+        }
+        c = self._client(
+            {
+                "http://mgmt.example/management/v1/projects/proj/apps/_search": (
+                    json.dumps(search_resp).encode(),
+                    200,
+                ),
+            }
+        )
         app = c.find_app_by_name(project_id="proj", name="dcr-shim:abc")
         assert app["id"] == "app-1"
 
     def test_find_app_by_name_returns_none_when_empty(self):
-        c = self._client({
-            "http://mgmt.example/management/v1/projects/proj/apps/_search": (
-                json.dumps({"result": []}).encode(), 200,
-            ),
-        })
+        c = self._client(
+            {
+                "http://mgmt.example/management/v1/projects/proj/apps/_search": (
+                    json.dumps({"result": []}).encode(),
+                    200,
+                ),
+            }
+        )
         assert c.find_app_by_name(project_id="proj", name="anything") is None
 
     def test_create_oidc_app_sends_correct_headers(self):
-        c = self._client({
-            "http://mgmt.example/management/v1/projects/proj/apps/oidc": (
-                json.dumps({"appId": "a-1", "clientId": "C-NEW"}).encode(), 200,
-            ),
-        })
+        c = self._client(
+            {
+                "http://mgmt.example/management/v1/projects/proj/apps/oidc": (
+                    json.dumps({"appId": "a-1", "clientId": "C-NEW"}).encode(),
+                    200,
+                ),
+            }
+        )
         resp = c.create_oidc_app(project_id="proj", payload={"name": "x"})
         assert resp["clientId"] == "C-NEW"
         # Find the recorded POST to /apps/oidc. The token request happens first.
-        oidc_requests = [
-            r for r in c._opener.requests
-            if r[1].endswith("/apps/oidc")
-        ]
+        oidc_requests = [r for r in c._opener.requests if r[1].endswith("/apps/oidc")]
         assert len(oidc_requests) == 1
         headers = {k.lower(): v for k, v in oidc_requests[0][2].items()}
         assert headers["authorization"] == "Bearer AT"
@@ -573,11 +628,14 @@ class TestZitadelMgmtClientApi:
         assert headers["host"] == "mgmt.example"
 
     def test_mgmt_http_error_carries_status_and_body(self):
-        c = self._client({
-            "http://mgmt.example/management/v1/projects/proj/apps/oidc": (
-                json.dumps({"code": 3, "message": "invalid argument"}).encode(), 400,
-            ),
-        })
+        c = self._client(
+            {
+                "http://mgmt.example/management/v1/projects/proj/apps/oidc": (
+                    json.dumps({"code": 3, "message": "invalid argument"}).encode(),
+                    400,
+                ),
+            }
+        )
         with pytest.raises(ZitadelMgmtError) as e:
             c.create_oidc_app(project_id="proj", payload={})
         assert e.value.status == 400
@@ -624,7 +682,10 @@ def _fake_oidc_validator(issuer="http://idp.example") -> object:
     return types.SimpleNamespace(
         config=types.SimpleNamespace(issuer=issuer),
         validate=lambda _hdr: types.SimpleNamespace(
-            ok=False, user_id=None, email=None, roles=(),
+            ok=False,
+            user_id=None,
+            email=None,
+            roles=(),
         ),
     )
 
@@ -649,7 +710,9 @@ def daemon_shim_open(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.oidc_validator = _fake_oidc_validator()
     daemon.idp_config = _shim_config(trust="open")
@@ -666,7 +729,9 @@ def daemon_shim_protected(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.oidc_validator = _fake_oidc_validator()
     daemon.idp_config = _shim_config(trust="protected")
@@ -684,7 +749,9 @@ def daemon_shim_no_creds(tmp_path):
     transport = NullTransport(allowlist={"*"})
     endpoint = tmp_path / ".maestro" / "bridge-test.endpoint"
     daemon = BridgeDaemon(
-        account="test", transport=transport, endpoint_file=endpoint,
+        account="test",
+        transport=transport,
+        endpoint_file=endpoint,
     )
     daemon.oidc_validator = _fake_oidc_validator()
     daemon.idp_config = _shim_config(with_creds=False)
@@ -723,15 +790,19 @@ class TestRegisterRouteIntegration:
 
     def test_happy_path_creates_and_returns_201(self, daemon_shim_open):
         daemon, endpoint = daemon_shim_open
-        self._attach_stub(daemon,
+        self._attach_stub(
+            daemon,
             find_returns=None,
             create_returns={"appId": "a1", "clientId": "C-CREATED"},
         )
-        code, _, body = _post_register(_daemon_url(endpoint) + "/oauth/register", body={
-            "redirect_uris": ["http://localhost:54321/cb"],
-            "client_name": "Claude Code",
-            "software_id": "claude-code",
-        })
+        code, _, body = _post_register(
+            _daemon_url(endpoint) + "/oauth/register",
+            body={
+                "redirect_uris": ["http://localhost:54321/cb"],
+                "client_name": "Claude Code",
+                "software_id": "claude-code",
+            },
+        )
         assert code == 201
         resp = json.loads(body)
         assert resp["client_id"] == "C-CREATED"
@@ -740,22 +811,31 @@ class TestRegisterRouteIntegration:
 
     def test_reuse_existing_returns_201_same_client_id(self, daemon_shim_open):
         daemon, endpoint = daemon_shim_open
-        self._attach_stub(daemon, find_returns={
-            "id": "a1",
-            "oidcConfig": {"clientId": "C-REUSED"},
-        })
-        code, _, body = _post_register(_daemon_url(endpoint) + "/oauth/register", body={
-            "redirect_uris": ["http://localhost:54321/cb"],
-        })
+        self._attach_stub(
+            daemon,
+            find_returns={
+                "id": "a1",
+                "oidcConfig": {"clientId": "C-REUSED"},
+            },
+        )
+        code, _, body = _post_register(
+            _daemon_url(endpoint) + "/oauth/register",
+            body={
+                "redirect_uris": ["http://localhost:54321/cb"],
+            },
+        )
         assert code == 201
         assert json.loads(body)["client_id"] == "C-REUSED"
 
     def test_invalid_redirect_uri_returns_400(self, daemon_shim_open):
         daemon, endpoint = daemon_shim_open
         self._attach_stub(daemon)
-        code, _, body = _post_register(_daemon_url(endpoint) + "/oauth/register", body={
-            "redirect_uris": ["https://evil.example/cb"],
-        })
+        code, _, body = _post_register(
+            _daemon_url(endpoint) + "/oauth/register",
+            body={
+                "redirect_uris": ["https://evil.example/cb"],
+            },
+        )
         assert code == 400
         err = json.loads(body)
         assert err["error"] == "invalid_redirect_uri"
@@ -763,10 +843,13 @@ class TestRegisterRouteIntegration:
     def test_invalid_client_metadata_returns_400(self, daemon_shim_open):
         daemon, endpoint = daemon_shim_open
         self._attach_stub(daemon)
-        code, _, body = _post_register(_daemon_url(endpoint) + "/oauth/register", body={
-            "redirect_uris": ["http://localhost:1/cb"],
-            "grant_types": ["password"],
-        })
+        code, _, body = _post_register(
+            _daemon_url(endpoint) + "/oauth/register",
+            body={
+                "redirect_uris": ["http://localhost:1/cb"],
+                "grant_types": ["password"],
+            },
+        )
         assert code == 400
         assert json.loads(body)["error"] == "invalid_client_metadata"
 
@@ -791,9 +874,12 @@ class TestRegisterRouteIntegration:
 
     def test_no_creds_returns_503(self, daemon_shim_no_creds):
         _, endpoint = daemon_shim_no_creds
-        code, _, body = _post_register(_daemon_url(endpoint) + "/oauth/register", body={
-            "redirect_uris": ["http://localhost:1/cb"],
-        })
+        code, _, body = _post_register(
+            _daemon_url(endpoint) + "/oauth/register",
+            body={
+                "redirect_uris": ["http://localhost:1/cb"],
+            },
+        )
         assert code == 503
         err = json.loads(body)
         assert err["error"] == "server_error"
@@ -801,13 +887,17 @@ class TestRegisterRouteIntegration:
 
     def test_upstream_zitadel_error_returns_502(self, daemon_shim_open):
         daemon, endpoint = daemon_shim_open
-        self._attach_stub(daemon,
+        self._attach_stub(
+            daemon,
             find_returns=None,
             create_raises=ZitadelMgmtError("permission denied", status=403),
         )
-        code, _, body = _post_register(_daemon_url(endpoint) + "/oauth/register", body={
-            "redirect_uris": ["http://localhost:1/cb"],
-        })
+        code, _, body = _post_register(
+            _daemon_url(endpoint) + "/oauth/register",
+            body={
+                "redirect_uris": ["http://localhost:1/cb"],
+            },
+        )
         assert code == 502
         err = json.loads(body)
         assert err["error"] == "server_error"
@@ -815,9 +905,12 @@ class TestRegisterRouteIntegration:
 
     def test_protected_trust_rejects_anon(self, daemon_shim_protected):
         _, endpoint = daemon_shim_protected
-        code, headers, _ = _post_register(_daemon_url(endpoint) + "/oauth/register", body={
-            "redirect_uris": ["http://localhost:1/cb"],
-        })
+        code, headers, _ = _post_register(
+            _daemon_url(endpoint) + "/oauth/register",
+            body={
+                "redirect_uris": ["http://localhost:1/cb"],
+            },
+        )
         assert code == 401
         # Inherits the chunk C WWW-Authenticate challenge.
         chal = headers.get("WWW-Authenticate") or headers.get("www-authenticate") or ""

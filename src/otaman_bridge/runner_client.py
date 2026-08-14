@@ -65,15 +65,11 @@ class RunnerClient:
 
     def _read_endpoint(self):
         if not self.endpoint_file.is_file():
-            raise RunnerUnreachableError(
-                f"runner endpoint file not found: {self.endpoint_file}"
-            )
+            raise RunnerUnreachableError(f"runner endpoint file not found: {self.endpoint_file}")
         try:
             text = self.endpoint_file.read_text(encoding="utf-8")
         except OSError as exc:
-            raise RunnerUnreachableError(
-                f"failed reading runner endpoint file: {exc}"
-            ) from exc
+            raise RunnerUnreachableError(f"failed reading runner endpoint file: {exc}") from exc
         host, port, token = "127.0.0.1", None, None
         for line in text.splitlines():
             line = line.strip()
@@ -113,28 +109,21 @@ class RunnerClient:
         except urllib.error.HTTPError as exc:
             if exc.code == 401:
                 raise RunnerAuthError(
-                    f"runner rejected loopback bearer (HTTP 401) -- token may be stale"
+                    "runner rejected loopback bearer (HTTP 401) -- token may be stale"
                 ) from exc
-            raise RunnerUnreachableError(
-                f"runner returned HTTP {exc.code} on {url}"
-            ) from exc
+            raise RunnerUnreachableError(f"runner returned HTTP {exc.code} on {url}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise RunnerUnreachableError(
-                f"runner unreachable at {url}: {exc}"
-            ) from exc
+            raise RunnerUnreachableError(f"runner unreachable at {url}: {exc}") from exc
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as exc:
-            raise RunnerUnreachableError(
-                f"runner response was not valid JSON: {exc}"
-            ) from exc
+            raise RunnerUnreachableError(f"runner response was not valid JSON: {exc}") from exc
         sessions = data.get("sessions")
         if not isinstance(sessions, list):
             raise RunnerUnreachableError(
                 f"runner /sessions response missing 'sessions' list: {data}"
             )
         return sessions
-
 
     def spawn(
         self,
@@ -159,14 +148,16 @@ class RunnerClient:
         """
         host, port, token = self._read_endpoint()
         url = f"http://{host}:{port}/spawn"
-        body = json.dumps({
-            "agent": agent,
-            "repo": repo,
-            "project_root": project_root,
-            "human": human,
-            "mode": mode,
-            "context": context,
-        }).encode()
+        body = json.dumps(
+            {
+                "agent": agent,
+                "repo": repo,
+                "project_root": project_root,
+                "human": human,
+                "mode": mode,
+                "context": context,
+            }
+        ).encode()
         req = urllib.request.Request(
             url,
             data=body,
@@ -189,13 +180,9 @@ class RunnerClient:
                 detail = exc.read().decode()
             except Exception:
                 pass
-            raise SpawnError(
-                f"runner returned HTTP {exc.code} on POST /spawn: {detail}"
-            ) from exc
+            raise SpawnError(f"runner returned HTTP {exc.code} on POST /spawn: {detail}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise RunnerUnreachableError(
-                f"runner unreachable at {url}: {exc}"
-            ) from exc
+            raise RunnerUnreachableError(f"runner unreachable at {url}: {exc}") from exc
         session_id = data.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise SpawnError(f"runner /spawn response missing session_id: {data}")
@@ -237,16 +224,10 @@ class RunnerClient:
                     "runner rejected loopback bearer (HTTP 401) -- token may be stale"
                 ) from exc
             if exc.code == 404:
-                raise SessionNotFoundError(
-                    f"session not found: {session_id}"
-                ) from exc
-            raise RunnerUnreachableError(
-                f"runner returned HTTP {exc.code} on {url}"
-            ) from exc
+                raise SessionNotFoundError(f"session not found: {session_id}") from exc
+            raise RunnerUnreachableError(f"runner returned HTTP {exc.code} on {url}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise RunnerUnreachableError(
-                f"runner unreachable at {url}: {exc}"
-            ) from exc
+            raise RunnerUnreachableError(f"runner unreachable at {url}: {exc}") from exc
 
 
 __all__ = [

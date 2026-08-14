@@ -73,7 +73,7 @@ def claim_session(self, agent, human, session_id, *, ttl_seconds=3600.0) -> bool
             (agent, human, now),
         ).fetchone()
         if existing and existing[0] != session_id:
-            return False   # another session already holds the slot
+            return False  # another session already holds the slot
         # Upsert: insert or replace (covers expired + new)
         db.execute(
             "INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?)",

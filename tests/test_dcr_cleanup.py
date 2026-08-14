@@ -17,7 +17,6 @@ import urllib.request
 import pytest
 
 from otaman_bridge_ee.dcr_shim import (
-    SweepReport,
     ZitadelMgmtClient,
     ZitadelMgmtError,
     app_age_seconds,
@@ -26,31 +25,36 @@ from otaman_bridge_ee.dcr_shim import (
     sweep_orphans,
 )
 
-
 # ---- parse_duration_seconds ----------------------------------------------
 
 
 class TestParseDurationSeconds:
-    @pytest.mark.parametrize("s,expected", [
-        ("90s", 90),
-        ("15m", 900),
-        ("1h", 3600),
-        ("24h", 86400),
-        ("30d", 30 * 86400),
-        ("7d", 7 * 86400),
-        ("100", 100),  # bare integer = seconds
-    ])
+    @pytest.mark.parametrize(
+        "s,expected",
+        [
+            ("90s", 90),
+            ("15m", 900),
+            ("1h", 3600),
+            ("24h", 86400),
+            ("30d", 30 * 86400),
+            ("7d", 7 * 86400),
+            ("100", 100),  # bare integer = seconds
+        ],
+    )
     def test_happy(self, s, expected):
         assert parse_duration_seconds(s) == expected
 
-    @pytest.mark.parametrize("s", [
-        "abc",
-        "10x",
-        "h",
-        "",
-        "  ",
-        "3.5h",
-    ])
+    @pytest.mark.parametrize(
+        "s",
+        [
+            "abc",
+            "10x",
+            "h",
+            "",
+            "  ",
+            "3.5h",
+        ],
+    )
     def test_invalid_raises(self, s):
         with pytest.raises(ValueError):
             parse_duration_seconds(s)
@@ -121,6 +125,7 @@ class TestAppAgeSeconds:
 
 class _StubMgmt:
     """Stand-in for ZitadelMgmtClient with controllable list + delete behavior."""
+
     def __init__(self, apps, *, delete_raises_for=()):
         self._apps = list(apps)
         self.delete_raises_for = set(delete_raises_for)
@@ -149,8 +154,10 @@ class TestSweepOrphans:
     def test_no_apps_returns_empty_report(self):
         stub = _StubMgmt([])
         report = sweep_orphans(
-            mgmt_client=stub, project_id="p",
-            name_prefix="dcr-shim:", ttl_seconds=3600,
+            mgmt_client=stub,
+            project_id="p",
+            name_prefix="dcr-shim:",
+            ttl_seconds=3600,
         )
         assert report.found == 0
         assert report.deleted == 0
@@ -163,8 +170,11 @@ class TestSweepOrphans:
         ]
         stub = _StubMgmt(apps)
         report = sweep_orphans(
-            mgmt_client=stub, project_id="p",
-            name_prefix="dcr-shim:", ttl_seconds=3600, now=NOW,
+            mgmt_client=stub,
+            project_id="p",
+            name_prefix="dcr-shim:",
+            ttl_seconds=3600,
+            now=NOW,
         )
         assert report.found == 2
         assert report.eligible == 1
@@ -178,9 +188,12 @@ class TestSweepOrphans:
         ]
         stub = _StubMgmt(apps)
         report = sweep_orphans(
-            mgmt_client=stub, project_id="p",
-            name_prefix="dcr-shim:", ttl_seconds=3600,
-            dry_run=True, now=NOW,
+            mgmt_client=stub,
+            project_id="p",
+            name_prefix="dcr-shim:",
+            ttl_seconds=3600,
+            dry_run=True,
+            now=NOW,
         )
         assert report.deleted == 1
         assert stub.deleted == []  # no actual deletes
@@ -191,8 +204,11 @@ class TestSweepOrphans:
         ]
         stub = _StubMgmt(apps)
         report = sweep_orphans(
-            mgmt_client=stub, project_id="p",
-            name_prefix="dcr-shim:", ttl_seconds=3600, now=NOW,
+            mgmt_client=stub,
+            project_id="p",
+            name_prefix="dcr-shim:",
+            ttl_seconds=3600,
+            now=NOW,
         )
         assert report.found == 1
         assert report.eligible == 0
@@ -207,21 +223,27 @@ class TestSweepOrphans:
             _app("a2", "dcr-shim:old", "2020-01-01T00:00:00Z"),
         ]
         stub = _StubMgmt(apps)
-        report = sweep_orphans(
-            mgmt_client=stub, project_id="p",
-            name_prefix="dcr-shim:", ttl_seconds=3600, now=NOW,
+        sweep_orphans(
+            mgmt_client=stub,
+            project_id="p",
+            name_prefix="dcr-shim:",
+            ttl_seconds=3600,
+            now=NOW,
         )
         assert stub.deleted == ["a2"]
 
     def test_delete_failure_does_not_abort_sweep(self):
         apps = [
             _app("a1", "dcr-shim:fails", "2026-05-18T11:00:00Z"),
-            _app("a2", "dcr-shim:ok",    "2026-05-18T11:00:00Z"),
+            _app("a2", "dcr-shim:ok", "2026-05-18T11:00:00Z"),
         ]
         stub = _StubMgmt(apps, delete_raises_for={"a1"})
         report = sweep_orphans(
-            mgmt_client=stub, project_id="p",
-            name_prefix="dcr-shim:", ttl_seconds=3600, now=NOW,
+            mgmt_client=stub,
+            project_id="p",
+            name_prefix="dcr-shim:",
+            ttl_seconds=3600,
+            now=NOW,
         )
         assert report.deleted == 1
         assert report.failed == 1
@@ -232,8 +254,11 @@ class TestSweepOrphans:
         apps = [_app("a1", "dcr-shim:stale", "2020-01-01T00:00:00Z")]
         stub = _StubMgmt(apps)
         report = sweep_orphans(
-            mgmt_client=stub, project_id="p",
-            name_prefix="dcr-shim:", ttl_seconds=0, now=NOW,
+            mgmt_client=stub,
+            project_id="p",
+            name_prefix="dcr-shim:",
+            ttl_seconds=0,
+            now=NOW,
         )
         # Never even calls list when ttl <= 0.
         assert stub.list_calls == 0
@@ -247,24 +272,33 @@ class _FakeResponse:
     def __init__(self, *, status, body):
         self.status = status
         self._body = body
+
     def read(self):
         return self._body
+
     def __enter__(self):
         return self
+
     def __exit__(self, *a):
         return False
 
 
 class _FakeBody:
-    def __init__(self, b): self._b = b
-    def read(self): return self._b
-    def close(self): pass
+    def __init__(self, b):
+        self._b = b
+
+    def read(self):
+        return self._b
+
+    def close(self):
+        pass
 
 
 class _FakeOpener:
     def __init__(self, responses):
         self.responses = responses
         self.requests = []
+
     def open(self, req, timeout=None):
         self.requests.append((req.method, req.full_url, dict(req.headers), req.data))
         body, status = self.responses.get(req.full_url, (b'{"error":"not stubbed"}', 404))
@@ -276,14 +310,17 @@ class _FakeOpener:
 def _mgmt_with(responses):
     base = {
         "http://mgmt.example/oauth/v2/token": (
-            json.dumps({"access_token": "AT", "expires_in": 3600}).encode(), 200,
+            json.dumps({"access_token": "AT", "expires_in": 3600}).encode(),
+            200,
         ),
     }
     base.update(responses)
     return ZitadelMgmtClient(
         base_url="http://mgmt.example",
         token_url="http://mgmt.example/oauth/v2/token",
-        client_id="x", client_secret="y", org_id="org-1",
+        client_id="x",
+        client_secret="y",
+        org_id="org-1",
         expected_host="mgmt.example",
         opener=_FakeOpener(base),
     )
@@ -291,35 +328,47 @@ def _mgmt_with(responses):
 
 class TestListAppsWithPrefix:
     def test_returns_matching_apps(self):
-        c = _mgmt_with({
-            "http://mgmt.example/management/v1/projects/p/apps/_search": (
-                json.dumps({"result": [
-                    {"id": "a1", "name": "dcr-shim:abc"},
-                    {"id": "a2", "name": "dcr-shim:def"},
-                ]}).encode(), 200,
-            ),
-        })
+        c = _mgmt_with(
+            {
+                "http://mgmt.example/management/v1/projects/p/apps/_search": (
+                    json.dumps(
+                        {
+                            "result": [
+                                {"id": "a1", "name": "dcr-shim:abc"},
+                                {"id": "a2", "name": "dcr-shim:def"},
+                            ]
+                        }
+                    ).encode(),
+                    200,
+                ),
+            }
+        )
         apps = c.list_apps_with_prefix(project_id="p", name_prefix="dcr-shim:")
         assert len(apps) == 2
 
     def test_empty_result(self):
-        c = _mgmt_with({
-            "http://mgmt.example/management/v1/projects/p/apps/_search": (
-                json.dumps({"result": []}).encode(), 200,
-            ),
-        })
+        c = _mgmt_with(
+            {
+                "http://mgmt.example/management/v1/projects/p/apps/_search": (
+                    json.dumps({"result": []}).encode(),
+                    200,
+                ),
+            }
+        )
         assert c.list_apps_with_prefix(project_id="p", name_prefix="dcr-shim:") == []
 
     def test_sends_starts_with_query(self):
-        c = _mgmt_with({
-            "http://mgmt.example/management/v1/projects/p/apps/_search": (
-                json.dumps({"result": []}).encode(), 200,
-            ),
-        })
+        c = _mgmt_with(
+            {
+                "http://mgmt.example/management/v1/projects/p/apps/_search": (
+                    json.dumps({"result": []}).encode(),
+                    200,
+                ),
+            }
+        )
         c.list_apps_with_prefix(project_id="p", name_prefix="dcr-shim:")
         # Find the search request (token request is first).
-        search_req = next(r for r in c._opener.requests
-                          if r[1].endswith("/apps/_search"))
+        search_req = next(r for r in c._opener.requests if r[1].endswith("/apps/_search"))
         body = json.loads(search_req[3])
         assert body["queries"][0]["nameQuery"]["method"] == "TEXT_QUERY_METHOD_STARTS_WITH"
         assert body["queries"][0]["nameQuery"]["name"] == "dcr-shim:"
@@ -327,29 +376,37 @@ class TestListAppsWithPrefix:
 
 class TestDeleteApp:
     def test_happy_path(self):
-        c = _mgmt_with({
-            "http://mgmt.example/management/v1/projects/p/apps/a1": (b"{}", 200),
-        })
+        c = _mgmt_with(
+            {
+                "http://mgmt.example/management/v1/projects/p/apps/a1": (b"{}", 200),
+            }
+        )
         c.delete_app(project_id="p", app_id="a1")
         delete_reqs = [r for r in c._opener.requests if r[0] == "DELETE"]
         assert len(delete_reqs) == 1
         assert delete_reqs[0][1].endswith("/apps/a1")
 
     def test_404_is_idempotent(self):
-        c = _mgmt_with({
-            "http://mgmt.example/management/v1/projects/p/apps/gone": (
-                json.dumps({"code": 5, "message": "not found"}).encode(), 404,
-            ),
-        })
+        c = _mgmt_with(
+            {
+                "http://mgmt.example/management/v1/projects/p/apps/gone": (
+                    json.dumps({"code": 5, "message": "not found"}).encode(),
+                    404,
+                ),
+            }
+        )
         # Should NOT raise.
         c.delete_app(project_id="p", app_id="gone")
 
     def test_non_404_error_raises(self):
-        c = _mgmt_with({
-            "http://mgmt.example/management/v1/projects/p/apps/a1": (
-                json.dumps({"code": 7, "message": "forbidden"}).encode(), 403,
-            ),
-        })
+        c = _mgmt_with(
+            {
+                "http://mgmt.example/management/v1/projects/p/apps/a1": (
+                    json.dumps({"code": 7, "message": "forbidden"}).encode(),
+                    403,
+                ),
+            }
+        )
         with pytest.raises(ZitadelMgmtError) as e:
             c.delete_app(project_id="p", app_id="a1")
         assert e.value.status == 403

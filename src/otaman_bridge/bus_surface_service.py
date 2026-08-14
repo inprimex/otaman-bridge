@@ -34,7 +34,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from otaman_bridge.bus_decision import (
     record_decision,
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from otaman_bridge.core import Transport
     from otaman_bridge.daemon import _AsyncLoopThread
 
-_log = logging.getLogger("maestro.bridge.bus_surface_service")
+_log = logging.getLogger("maestro.bridge.bus_surface_service")  # legacy: renamed at core 1.0
 
 
 class _PendingBusDecision:
@@ -127,7 +127,10 @@ class BusSurfaceService:
 
         _pm_event_cb = None
         try:
-            from otaman_bridge.pm_sync_handler import PmSyncHandler as _PmSyncHandler  # noqa: PLC0415
+            from otaman_bridge.pm_sync_handler import (
+                PmSyncHandler as _PmSyncHandler,  # noqa: PLC0415
+            )
+
             _pm_event_cb = _PmSyncHandler(bus_watcher_root).handle_event
         except Exception:
             _log.warning("pm sync: could not load PmSyncHandler; PM sync disabled")
@@ -143,7 +146,8 @@ class BusSurfaceService:
         self._bus_watcher_future = self._async.submit(self.bus_watcher.run())
         _log.info(
             "bus watcher started for %s (project=%s)",
-            bus_watcher_root, project_name,
+            bus_watcher_root,
+            project_name,
         )
 
     def stop(self) -> None:
@@ -194,7 +198,9 @@ class BusSurfaceService:
                 continue  # only Approve/Reject/Acknowledge cards need recovery
 
             req = build_approval_request(
-                msg, account=self.account, project=self.bus_watcher_project,
+                msg,
+                account=self.account,
+                project=self.bus_watcher_project,
             )
             pending = _PendingBusDecision(req, msg, root)
             with self._lock:
@@ -225,7 +231,9 @@ class BusSurfaceService:
         await self.transport.send_info(info)
 
     async def on_approval(
-        self, req: ApprovalRequest, msg: BusMessage,
+        self,
+        req: ApprovalRequest,
+        msg: BusMessage,
     ) -> None:
         """Surface an interactive bus spec-change-request to Telegram.
 
@@ -253,7 +261,8 @@ class BusSurfaceService:
             pending.handle = handle
         except Exception:  # noqa: BLE001
             _log.exception(
-                "bus approval: send_approval failed for %s", req.request_id,
+                "bus approval: send_approval failed for %s",
+                req.request_id,
             )
             # Drop from registry so the watcher's retry-on-fail path
             # can re-surface on the next scan (state file wasn't
@@ -266,7 +275,9 @@ class BusSurfaceService:
     # ----- decision write-back -------------------------------------------
 
     def _dispatch_bus_decision(
-        self, reply: InboundReply, pending: _PendingBusDecision,
+        self,
+        reply: InboundReply,
+        pending: _PendingBusDecision,
     ) -> None:
         """Resolve a bus spec-change-request tap.
 
@@ -298,7 +309,8 @@ class BusSurfaceService:
         if decision is None:
             _log.info(
                 "bus decision: non-decision action %r for %s (ignored)",
-                action, reply.request_id,
+                action,
+                reply.request_id,
             )
             return
 
@@ -319,8 +331,10 @@ class BusSurfaceService:
             )
             _log.info(
                 "bus decision: %s for %s → %s + %s",
-                decision, pending.msg.stem,
-                ack_path.name, broadcast_path.name,
+                decision,
+                pending.msg.stem,
+                ack_path.name,
+                broadcast_path.name,
             )
         except Exception:  # noqa: BLE001
             _log.exception(
@@ -341,14 +355,14 @@ class BusSurfaceService:
                 "rejected": f"✗ rejected by {reply.responder or 'user'}",
             }.get(decision, decision)
             try:
-                self._async.submit(
-                    self.transport.update(pending.handle, status_text)
-                )
+                self._async.submit(self.transport.update(pending.handle, status_text))
             except Exception:  # noqa: BLE001
                 _log.debug("bus decision: transport.update failed", exc_info=True)
 
     def _record_bus_comment(
-        self, reply: InboundReply, pending: _PendingBusDecision,
+        self,
+        reply: InboundReply,
+        pending: _PendingBusDecision,
     ) -> None:
         """Write a free-text reply bus message for a card that stays pending.
 
@@ -365,12 +379,15 @@ class BusSurfaceService:
             return
         try:
             reply_path = write_reply_message(
-                pending.project_root, pending.msg,
-                text=text, responder=reply.responder,
+                pending.project_root,
+                pending.msg,
+                text=text,
+                responder=reply.responder,
             )
             _log.info(
                 "bus comment: wrote %s (in_reply_to=%s)",
-                reply_path.name, pending.msg.stem,
+                reply_path.name,
+                pending.msg.stem,
             )
         except Exception:  # noqa: BLE001
             _log.exception(
@@ -379,7 +396,9 @@ class BusSurfaceService:
             )
 
     def _record_bus_acknowledge(
-        self, reply: InboundReply, pending: _PendingBusDecision,
+        self,
+        reply: InboundReply,
+        pending: _PendingBusDecision,
     ) -> None:
         """Record an Acknowledge tap on a ``to: human`` card.
 
@@ -388,17 +407,21 @@ class BusSurfaceService:
         """
         try:
             ack_path, reply_path = write_acknowledge(
-                pending.project_root, pending.msg,
-                responder=reply.responder, comment=reply.comment or "",
+                pending.project_root,
+                pending.msg,
+                responder=reply.responder,
+                comment=reply.comment or "",
             )
             _log.info(
                 "bus ack: wrote %s for %s%s",
-                ack_path.name, pending.msg.stem,
+                ack_path.name,
+                pending.msg.stem,
                 f" + reply {reply_path.name}" if reply_path else "",
             )
         except Exception:  # noqa: BLE001
             _log.exception(
-                "bus ack: write_acknowledge failed for %s", pending.msg.stem,
+                "bus ack: write_acknowledge failed for %s",
+                pending.msg.stem,
             )
             return
 

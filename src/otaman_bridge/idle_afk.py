@@ -48,7 +48,9 @@ def _state_dir(project_root: Path) -> Path:
 
 
 def _resolve_state_file(project_root: Path, filename: str) -> Path:
-    """Return the path for a state file, preferring .otaman/ over .maestro/ (legacy: fallback until otaman-core 1.0)."""
+    """Return the path for a state file, preferring .otaman/ over
+    .maestro/ (legacy: fallback until otaman-core 1.0).
+    """
     preferred = _state_dir(project_root) / filename
     if preferred.is_file():
         return preferred
@@ -135,7 +137,9 @@ class IdleAFKMonitor:
         """Run until cancelled / stop() called."""
         _log.info(
             "idle-afk monitor started for %s (threshold=%d min, poll=%.0fs)",
-            self.project_root, self.idle_minutes, self.poll_interval,
+            self.project_root,
+            self.idle_minutes,
+            self.poll_interval,
         )
         try:
             while not self._stopping.is_set():
@@ -145,7 +149,8 @@ class IdleAFKMonitor:
                     _log.exception("idle-afk monitor: check failed")
                 try:
                     await asyncio.wait_for(
-                        self._stopping.wait(), timeout=self.poll_interval,
+                        self._stopping.wait(),
+                        timeout=self.poll_interval,
                     )
                 except asyncio.TimeoutError:
                     continue
@@ -184,13 +189,12 @@ class IdleAFKMonitor:
                 _write_idle_afk(self.project_root, idle_seconds)
                 _log.info(
                     "idle-afk: enabled AFK (idle=%d min, threshold=%d min)",
-                    int(idle_seconds / 60), self.idle_minutes,
+                    int(idle_seconds / 60),
+                    self.idle_minutes,
                 )
                 if self._on_enabled and self._last_notified_state != "enabled":
                     try:
-                        await self._on_enabled(
-                            f"{int(idle_seconds / 60)} min of inactivity"
-                        )
+                        await self._on_enabled(f"{int(idle_seconds / 60)} min of inactivity")
                     except Exception:  # noqa: BLE001
                         _log.exception("idle-afk: on_enabled callback failed")
                     self._last_notified_state = "enabled"

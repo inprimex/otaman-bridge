@@ -9,13 +9,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 
-
-from otaman_bridge import core
-from otaman_bridge.core import ApprovalResponse, InboundReply
 from otaman_bridge.daemon import (
     BridgeDaemon,
     endpoint_path,
@@ -23,7 +19,6 @@ from otaman_bridge.daemon import (
     write_endpoint_file,
 )
 from otaman_bridge.transports.null import NullTransport
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -33,7 +28,9 @@ from otaman_bridge.transports.null import NullTransport
 def _clean_registry():
     # Preserve the built-in 'null' registration after each test.
     import importlib
+
     import otaman_bridge.transports.null
+
     importlib.reload(otaman_bridge.transports.null)
     yield
 
@@ -83,8 +80,12 @@ class TestEndpointFile:
     def test_write_and_read_roundtrip(self, tmp_path):
         path = tmp_path / "endpoint"
         write_endpoint_file(
-            path, port=12345, token="abc", pid=999,
-            account="personal", transport="null",
+            path,
+            port=12345,
+            token="abc",
+            pid=999,
+            account="personal",
+            transport="null",
         )
         data = read_endpoint_file(path)
         assert data["port"] == 12345
@@ -102,14 +103,18 @@ class TestEndpointFile:
         path.write_text("not json", encoding="utf-8")
         assert read_endpoint_file(path) is None
 
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="chmod 0600 semantics are POSIX"
-    )
+    @pytest.mark.skipif(sys.platform == "win32", reason="chmod 0600 semantics are POSIX")
     def test_mode_600_on_posix(self, tmp_path):
         import stat
+
         path = tmp_path / "endpoint"
         write_endpoint_file(
-            path, port=1, token="t", pid=1, account="a", transport="null",
+            path,
+            port=1,
+            token="t",
+            pid=1,
+            account="a",
+            transport="null",
         )
         mode = stat.S_IMODE(path.stat().st_mode)
         assert mode == 0o600
@@ -156,7 +161,9 @@ class TestLifecycle:
         transport = NullTransport()
         endpoint = tmp_path / ".maestro" / "bridge-x.endpoint"
         daemon = BridgeDaemon(
-            account="x", transport=transport, endpoint_file=endpoint,
+            account="x",
+            transport=transport,
+            endpoint_file=endpoint,
         )
         daemon.start()
         try:
@@ -172,7 +179,9 @@ class TestLifecycle:
         transport = NullTransport()
         endpoint = tmp_path / ".maestro" / "bridge-x.endpoint"
         daemon = BridgeDaemon(
-            account="x", transport=transport, endpoint_file=endpoint,
+            account="x",
+            transport=transport,
+            endpoint_file=endpoint,
         )
         daemon.start()
         daemon.stop()
@@ -186,10 +195,15 @@ class TestLifecycle:
         endpoint = tmp_path / ".maestro" / "bridge-x.endpoint"
         endpoint.parent.mkdir(parents=True, exist_ok=True)
         # Port 1 is reserved (tcpmux) — basically never listening locally.
-        endpoint.write_text(json.dumps({"port": 1, "token": "stale", "pid": 99999,
-                                         "account": "x", "transport": "null"}))
+        endpoint.write_text(
+            json.dumps(
+                {"port": 1, "token": "stale", "pid": 99999, "account": "x", "transport": "null"}
+            )
+        )
         daemon = BridgeDaemon(
-            account="x", transport=transport, endpoint_file=endpoint,
+            account="x",
+            transport=transport,
+            endpoint_file=endpoint,
         )
         daemon.start()
         try:
@@ -206,12 +220,16 @@ class TestLifecycle:
         transport1 = NullTransport()
         endpoint = tmp_path / ".maestro" / "bridge-x.endpoint"
         d1 = BridgeDaemon(
-            account="x", transport=transport1, endpoint_file=endpoint,
+            account="x",
+            transport=transport1,
+            endpoint_file=endpoint,
         )
         d1.start()
         try:
             d2 = BridgeDaemon(
-                account="x", transport=NullTransport(), endpoint_file=endpoint,
+                account="x",
+                transport=NullTransport(),
+                endpoint_file=endpoint,
             )
             with pytest.raises(RuntimeError, match="IS running"):
                 d2.start()
@@ -224,7 +242,8 @@ class TestLifecycle:
 
     def test_stop_is_idempotent(self, tmp_path):
         daemon = BridgeDaemon(
-            account="x", transport=NullTransport(),
+            account="x",
+            transport=NullTransport(),
             endpoint_file=tmp_path / ".maestro" / "bridge-x.endpoint",
         )
         daemon.start()
@@ -248,16 +267,21 @@ class TestAuth:
         daemon, _ = running_daemon
         url = f"http://127.0.0.1:{daemon.port}/notify"
         with pytest.raises(urllib.error.HTTPError) as exc:
-            _post(url, {"account": "x", "project": "p", "severity": "info", "title": "t"},
-                  token="wrong-token")
+            _post(
+                url,
+                {"account": "x", "project": "p", "severity": "info", "title": "t"},
+                token="wrong-token",
+            )
         assert exc.value.code == 401
 
     def test_correct_token_accepted(self, running_daemon):
         daemon, _ = running_daemon
         url = f"http://127.0.0.1:{daemon.port}/notify"
-        resp = _post(url,
-                     {"account": "x", "project": "p", "severity": "info", "title": "t"},
-                     token=daemon.token)
+        resp = _post(
+            url,
+            {"account": "x", "project": "p", "severity": "info", "title": "t"},
+            token=daemon.token,
+        )
         assert resp.status == 202
 
     def test_status_does_not_require_auth(self, running_daemon):
@@ -301,7 +325,7 @@ class TestHealthz:
             url = f"http://127.0.0.1:{port}/healthz"
             try:
                 _get(url)
-                assert False, "expected HTTP 503"
+                raise AssertionError("expected HTTP 503")
             except urllib.error.HTTPError as exc:
                 assert exc.code == 503
                 body = json.loads(exc.read().decode())
@@ -319,15 +343,19 @@ class TestNotify:
     def test_accepts_valid_info_message(self, running_daemon):
         daemon, transport = running_daemon
         url = f"http://127.0.0.1:{daemon.port}/notify"
-        resp = _post(url, {
-            "account": "personal",
-            "project": "demo",
-            "severity": "info",
-            "title": "task done",
-            "body": "backend finished 3.1",
-            "source_agent": "",
-            "bus_message_id": "",
-        }, token=daemon.token)
+        resp = _post(
+            url,
+            {
+                "account": "personal",
+                "project": "demo",
+                "severity": "info",
+                "title": "task done",
+                "body": "backend finished 3.1",
+                "source_agent": "",
+                "bus_message_id": "",
+            },
+            token=daemon.token,
+        )
         assert resp.status == 202
 
         # Give the async loop a beat to process
@@ -392,11 +420,15 @@ class TestApproval:
         assert transport.sent_approvals, "approval never reached transport"
 
         # Deliver a decision via /reply
-        _post(reply_url, {
-            "decision": "allow",
-            "request_id": body["request_id"],
-            "responder": "test:harness",
-        }, token=daemon.token)
+        _post(
+            reply_url,
+            {
+                "decision": "allow",
+                "request_id": body["request_id"],
+                "responder": "test:harness",
+            },
+            token=daemon.token,
+        )
 
         t.join(timeout=5.0)
         assert "error" not in result_holder, result_holder.get("error")
@@ -437,19 +469,22 @@ class TestReply:
         daemon, _ = running_daemon
         url = f"http://127.0.0.1:{daemon.port}/reply"
         with pytest.raises(urllib.error.HTTPError) as exc:
-            _post(url, {
-                "decision": "allow",
-                "request_id": "does-not-exist",
-                "responder": "x",
-            }, token=daemon.token)
+            _post(
+                url,
+                {
+                    "decision": "allow",
+                    "request_id": "does-not-exist",
+                    "responder": "x",
+                },
+                token=daemon.token,
+            )
         assert exc.value.code == 404
 
     def test_reply_requires_request_id(self, running_daemon):
         daemon, _ = running_daemon
         url = f"http://127.0.0.1:{daemon.port}/reply"
         with pytest.raises(urllib.error.HTTPError) as exc:
-            _post(url, {"decision": "allow", "responder": "x"},
-                  token=daemon.token)
+            _post(url, {"decision": "allow", "responder": "x"}, token=daemon.token)
         assert exc.value.code == 400
 
 
@@ -475,7 +510,9 @@ class TestShutdown:
         transport = NullTransport()
         endpoint = tmp_path / ".maestro" / "bridge-x.endpoint"
         daemon = BridgeDaemon(
-            account="x", transport=transport, endpoint_file=endpoint,
+            account="x",
+            transport=transport,
+            endpoint_file=endpoint,
         )
         daemon.start()
         port = daemon.port
@@ -508,8 +545,7 @@ class TestUnknownRoutes:
     def test_post_unknown_route_404(self, running_daemon):
         daemon, _ = running_daemon
         with pytest.raises(urllib.error.HTTPError) as exc:
-            _post(f"http://127.0.0.1:{daemon.port}/nope", {},
-                  token=daemon.token)
+            _post(f"http://127.0.0.1:{daemon.port}/nope", {}, token=daemon.token)
         assert exc.value.code == 404
 
 
@@ -522,7 +558,9 @@ class TestShutdownCancelsPending:
         transport = NullTransport()
         endpoint = tmp_path / ".maestro" / "bridge-x.endpoint"
         daemon = BridgeDaemon(
-            account="x", transport=transport, endpoint_file=endpoint,
+            account="x",
+            transport=transport,
+            endpoint_file=endpoint,
         )
         daemon.start()
         try:

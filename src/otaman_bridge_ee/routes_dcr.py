@@ -89,10 +89,13 @@ def _handle_oauth_register(handler: Any, daemon: Any) -> None:
             return
     body = handler._read_body()
     if body is None:
-        handler._reply_json(400, {
-            "error": "invalid_client_metadata",
-            "error_description": "request body is not valid JSON",
-        })
+        handler._reply_json(
+            400,
+            {
+                "error": "invalid_client_metadata",
+                "error_description": "request body is not valid JSON",
+            },
+        )
         return
     from otaman_bridge_ee.dcr_shim import (
         DCRError,
@@ -101,24 +104,31 @@ def _handle_oauth_register(handler: Any, daemon: Any) -> None:
         parse_register_request,
         to_rfc7591_response,
     )
+
     try:
         request = parse_register_request(body)
     except DCRError as exc:
-        handler._reply_json(exc.http_status, {
-            "error": exc.error,
-            "error_description": exc.description,
-        })
+        handler._reply_json(
+            exc.http_status,
+            {
+                "error": exc.error,
+                "error_description": exc.description,
+            },
+        )
         return
     # Lazy-build the mgmt client (idempotent — once per daemon).
     mgmt_client = daemon.get_or_build_dcr_mgmt_client()
     if mgmt_client is None:
-        handler._reply_json(503, {
-            "error": "server_error",
-            "error_description": (
-                "DCR shim enabled but management API credentials "
-                "(client_id/client_secret/org_id) are not configured."
-            ),
-        })
+        handler._reply_json(
+            503,
+            {
+                "error": "server_error",
+                "error_description": (
+                    "DCR shim enabled but management API credentials "
+                    "(client_id/client_secret/org_id) are not configured."
+                ),
+            },
+        )
         return
     try:
         client_id = find_or_create_client(
@@ -129,16 +139,22 @@ def _handle_oauth_register(handler: Any, daemon: Any) -> None:
         )
     except ZitadelMgmtError as exc:
         _log.warning("DCR mgmt API failure: %s", exc)
-        handler._reply_json(502, {
-            "error": "server_error",
-            "error_description": f"upstream IdP rejected: {exc}",
-        })
+        handler._reply_json(
+            502,
+            {
+                "error": "server_error",
+                "error_description": f"upstream IdP rejected: {exc}",
+            },
+        )
         return
-    handler._reply_json(201, to_rfc7591_response(
-        request=request,
-        client_id=client_id,
-        now_unix=int(_time.time()),
-    ))
+    handler._reply_json(
+        201,
+        to_rfc7591_response(
+            request=request,
+            client_id=client_id,
+            now_unix=int(_time.time()),
+        ),
+    )
 
 
 def _handle_protected_resource(handler: Any, daemon: Any) -> None:
@@ -158,6 +174,7 @@ def _handle_protected_resource(handler: Any, daemon: Any) -> None:
         _build_protected_resource_metadata,
         _resolve_public_resource_url,
     )
+
     resource = _resolve_public_resource_url(handler.headers.get("Host", ""))
     # With the DCR shim enabled (D3+), advertise the bridge itself as the
     # authorization server so MCP clients fetch the AS metadata overlay
@@ -192,6 +209,7 @@ def _handle_authorization_server(handler: Any, daemon: Any) -> None:
         fetch_upstream_metadata,
         overlay_metadata,
     )
+
     cached = daemon._idp_metadata_cache.get()
     if cached is None:
         try:

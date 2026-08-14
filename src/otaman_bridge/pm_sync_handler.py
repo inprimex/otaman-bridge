@@ -42,7 +42,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 try:
-    from otaman_adapters.easy8 import Easy8McpClient as _Easy8McpClient  # type: ignore[attr-defined]
+    from otaman_adapters.easy8 import (
+        Easy8McpClient as _Easy8McpClient,  # type: ignore[attr-defined]
+    )
+
     _MCP_CLIENT_CLS = _Easy8McpClient
 except (ImportError, AttributeError):
     _MCP_CLIENT_CLS = None  # task 9.2 not yet merged; fall back to REST always
@@ -52,7 +55,8 @@ except (ImportError, AttributeError):
 # Human-roster assignee resolution (human-roster spec)
 # ---------------------------------------------------------------------------
 
-def resolve_assignee(msg_to: str, roster: list) -> "int | None":
+
+def resolve_assignee(msg_to: str, roster: list) -> int | None:
     """Return pm-user-id for the person responsible for msg_to.
 
     Algorithm:
@@ -78,7 +82,7 @@ def resolve_assignee(msg_to: str, roster: list) -> "int | None":
 class _SpecChangeWithAssignee:
     """Thin wrapper around SpecChange that adds assigned_to_id for adapters that support it."""
 
-    def __init__(self, spec_change: object, assigned_to_id: "int | None") -> None:
+    def __init__(self, spec_change: object, assigned_to_id: int | None) -> None:
         self._sc = spec_change
         self.assigned_to_id = assigned_to_id
 
@@ -91,11 +95,11 @@ class _SpecChangeWithAssignee:
 # ---------------------------------------------------------------------------
 
 _COMMENT_TEMPLATES: dict[str, str] = {
-    "task-assignment":    "🤖 {from_} → {to}: {subject}",
-    "task-complete":      "✅ {from_}: task complete — {subject}",
+    "task-assignment": "🤖 {from_} → {to}: {subject}",
+    "task-complete": "✅ {from_}: task complete — {subject}",
     "spec-change-request": "📋 {from_} proposed spec change — {subject} — awaiting human approval",
     "spec-change-approved": "✅ Spec approved — {subject}",
-    "question":           "❓ {from_} → {to}: {subject}",
+    "question": "❓ {from_} → {to}: {subject}",
 }
 
 # Bus event types that mirror as PM comments (gated by capabilities.issue_comments)
@@ -131,6 +135,7 @@ class PmSyncHandler:
 
         try:
             from otaman_core.pm_sync import load_pm_sync_config
+
             self.config = load_pm_sync_config(platform_yaml)
         except ImportError:
             logger.debug("pm_sync_handler: otaman_core not available")
@@ -180,7 +185,9 @@ class PmSyncHandler:
                 subject,
             )
 
-        self.handle_bus_event(msg_type, msg_from, msg_to, subject, spec_path, change_name, jtbd_id=jtbd_id)
+        self.handle_bus_event(
+            msg_type, msg_from, msg_to, subject, spec_path, change_name, jtbd_id=jtbd_id
+        )
 
     def handle_bus_event(
         self,
@@ -197,11 +204,14 @@ class PmSyncHandler:
             return
 
         try:
-            self._dispatch_outbound(msg_type, msg_from, msg_to, subject, spec_path, change_name, jtbd_id=jtbd_id)
+            self._dispatch_outbound(
+                msg_type, msg_from, msg_to, subject, spec_path, change_name, jtbd_id=jtbd_id
+            )
         except Exception:
             logger.exception(
                 "pm_sync_handler: error handling bus event type=%r change=%r",
-                msg_type, change_name,
+                msg_type,
+                change_name,
             )
 
     def _dispatch_outbound(
@@ -250,7 +260,9 @@ class PmSyncHandler:
             # Also post spec-change-approved comment if comments capability present (task 4.6)
             if self.adapter.capabilities.issue_comments:
                 comment = _COMMENT_TEMPLATES["spec-change-approved"].format(
-                    from_=msg_from, to=msg_to, subject=subject,
+                    from_=msg_from,
+                    to=msg_to,
+                    subject=subject,
                 )
                 self.adapter.add_comment(issue.id, comment)
 
@@ -264,18 +276,19 @@ class PmSyncHandler:
                 return
             try:
                 from otaman_core.pm_sync import SpecState
+
                 state = SpecState(status="in_progress")
             except ImportError:
                 state = "in_progress"  # type: ignore[assignment]
             self.adapter.update_issue(issue_id, state)
             if self.adapter.capabilities.issue_comments:
                 comment = _COMMENT_TEMPLATES["task-assignment"].format(
-                    from_=msg_from, to=msg_to, subject=subject,
+                    from_=msg_from,
+                    to=msg_to,
+                    subject=subject,
                 )
                 self.adapter.add_comment(issue_id, comment)
-                logger.info(
-                    "pm_sync_handler: updated issue #%s → In-Progress + comment", issue_id
-                )
+                logger.info("pm_sync_handler: updated issue #%s → In-Progress + comment", issue_id)
 
         elif msg_type == "task-complete":
             # task 4.4: update status → Done AND add comment
@@ -287,30 +300,34 @@ class PmSyncHandler:
                 return
             try:
                 from otaman_core.pm_sync import SpecState
+
                 state = SpecState(status="done")
             except ImportError:
                 state = "done"  # type: ignore[assignment]
             self.adapter.update_issue(issue_id, state)
             if self.adapter.capabilities.issue_comments:
                 comment = _COMMENT_TEMPLATES["task-complete"].format(
-                    from_=msg_from, to=msg_to, subject=subject,
+                    from_=msg_from,
+                    to=msg_to,
+                    subject=subject,
                 )
                 self.adapter.add_comment(issue_id, comment)
-                logger.info(
-                    "pm_sync_handler: updated issue #%s → Done + comment", issue_id
-                )
+                logger.info("pm_sync_handler: updated issue #%s → Done + comment", issue_id)
 
-        elif msg_type in ("spec-change-request", "question") and self.adapter.capabilities.issue_comments:
+        elif (
+            msg_type in ("spec-change-request", "question")
+            and self.adapter.capabilities.issue_comments
+        ):
             # task 4.6: comment-only event types
             issue_id = self._resolve_issue_id(change_name, subject)
             if issue_id is not None:
                 comment = _COMMENT_TEMPLATES[msg_type].format(
-                    from_=msg_from, to=msg_to, subject=subject,
+                    from_=msg_from,
+                    to=msg_to,
+                    subject=subject,
                 )
                 self.adapter.add_comment(issue_id, comment)
-                logger.info(
-                    "pm_sync_handler: posted %s comment on issue #%s", msg_type, issue_id
-                )
+                logger.info("pm_sync_handler: posted %s comment on issue #%s", msg_type, issue_id)
 
     # ------------------------------------------------------------------
     # Inbound: PM webhook → bus event (task 4.5)
@@ -333,7 +350,11 @@ class PmSyncHandler:
         # Normalise event_type — adapter may return Easy8 action strings ("create",
         # "update", "destroy") or already-normalised names ("issue_created", etc.)
         etype = str(getattr(event, "event_type", "") or "")
-        _action_map = {"create": "issue_created", "update": "issue_updated", "destroy": "issue_deleted"}
+        _action_map = {
+            "create": "issue_created",
+            "update": "issue_updated",
+            "destroy": "issue_deleted",
+        }
         norm_type = _action_map.get(etype, etype)
 
         project_id: int = int(getattr(event, "project_id", 0) or 0)
@@ -489,13 +510,14 @@ class PmSyncHandler:
     # .pm-sync.yaml — spec-side issue ID (pm-sync-issue-id-on-spec spec)
     # ------------------------------------------------------------------
 
-    def _specs_root(self) -> "Path | None":
+    def _specs_root(self) -> Path | None:
         """Resolve the openspec changes directory from platform.yaml specs.path."""
         platform_yaml = self.project_root / "platform.yaml"
         if not platform_yaml.is_file():
             platform_yaml = self.project_root / "otaman-meta" / "platform.yaml"
         try:
             import yaml
+
             data = yaml.safe_load(platform_yaml.read_text(encoding="utf-8")) or {}
         except Exception:
             return None
@@ -509,7 +531,7 @@ class PmSyncHandler:
         candidate = self.project_root / "openspec" / "changes"
         return candidate if candidate.is_dir() else None
 
-    def _pm_sync_file(self, change_name: str) -> "Path | None":
+    def _pm_sync_file(self, change_name: str) -> Path | None:
         """Return path to .pm-sync.yaml for a change, or None if unresolvable."""
         root = self._specs_root()
         if root is None:
@@ -539,11 +561,13 @@ class PmSyncHandler:
             logger.warning(
                 "pm_sync_handler: change directory %s does not exist; "
                 "refusing to create it -- skipping .pm-sync.yaml write for %r",
-                path.parent, change_name,
+                path.parent,
+                change_name,
             )
             return
         try:
             import yaml
+
             existing: dict = {}
             if path.is_file():
                 try:
@@ -558,21 +582,25 @@ class PmSyncHandler:
             if existing.get("tasks"):
                 data["tasks"] = existing["tasks"]
             path.write_text(
-                yaml.dump(data, default_flow_style=False, sort_keys=True), encoding="utf-8",
+                yaml.dump(data, default_flow_style=False, sort_keys=True),
+                encoding="utf-8",
             )
             logger.debug("pm_sync_handler: wrote .pm-sync.yaml for %r → #%s", change_name, issue_id)
         except Exception:
             logger.warning(
-                "pm_sync_handler: failed to write .pm-sync.yaml for %r", change_name, exc_info=True,
+                "pm_sync_handler: failed to write .pm-sync.yaml for %r",
+                change_name,
+                exc_info=True,
             )
 
-    def _read_pm_sync_yaml(self, change_name: str) -> "int | None":
+    def _read_pm_sync_yaml(self, change_name: str) -> int | None:
         """Read change_issue_id from .pm-sync.yaml; returns None on miss or error."""
         path = self._pm_sync_file(change_name)
         if path is None or not path.is_file():
             return None
         try:
             import yaml
+
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             val = data.get("change_issue_id")
             return int(val) if val is not None else None
@@ -630,6 +658,7 @@ class PmSyncHandler:
 
         try:
             from otaman_core.pm_sync import get_pm_adapter
+
             cls = get_pm_adapter(provider)
         except (ImportError, KeyError):
             pass
@@ -637,6 +666,7 @@ class PmSyncHandler:
         if cls is None and provider == "easy8":
             try:
                 from otaman_adapters.easy8 import Easy8Adapter
+
                 cls = Easy8Adapter
             except ImportError:
                 logger.warning(
@@ -678,6 +708,7 @@ class PmSyncHandler:
             platform_yaml = self.project_root / "otaman-meta" / "platform.yaml"
         try:
             import yaml
+
             data = yaml.safe_load(platform_yaml.read_text(encoding="utf-8")) or {}
         except Exception:
             return None
@@ -701,7 +732,7 @@ class PmSyncHandler:
         except OSError:
             return ""
 
-    def _extract_proposal_title(self, description: str) -> "str | None":
+    def _extract_proposal_title(self, description: str) -> str | None:
         """Return first `# Heading` line from proposal.md text, or None."""
         for line in description.splitlines():
             stripped = line.strip()
@@ -709,7 +740,7 @@ class PmSyncHandler:
                 return stripped.lstrip("# ").strip()
         return None
 
-    def _build_issue_title(self, change_name: str, proposal_title: "str | None") -> str:
+    def _build_issue_title(self, change_name: str, proposal_title: str | None) -> str:
         """Return `[{change_name}] {proposal_title or change_name}`."""
         label = proposal_title or change_name
         return f"[{change_name}] {label}"
@@ -732,6 +763,7 @@ class PmSyncHandler:
         """Read human-roster list from platform.yaml; returns [] on any error."""
         try:
             import yaml
+
             data = yaml.safe_load(platform_yaml.read_text(encoding="utf-8")) or {}
             roster = data.get("human-roster", [])
             return roster if isinstance(roster, list) else []

@@ -12,8 +12,8 @@ import urllib.parse
 import pytest
 
 from otaman_bridge_ee.web_auth import (
-    TokenExchanger,
     TokenExchangeError,
+    TokenExchanger,
     TokenResponse,
     WebAuthConfig,
 )
@@ -31,17 +31,20 @@ def config():
 def _fetcher_returning(payload):
     """Make a fetcher that returns a fixed JSON-encoded payload."""
     captured = {}
+
     def f(url, body, timeout):
         captured["url"] = url
         captured["body"] = body
         captured["timeout"] = timeout
         return json.dumps(payload).encode("utf-8")
+
     return f, captured
 
 
 def _fetcher_raising(exc):
     def f(url, body, timeout):  # noqa: ARG001
         raise exc
+
     return f
 
 
@@ -58,13 +61,15 @@ class TestTokenResponse:
         assert r.token_type == "Bearer"
 
     def test_from_dict_full(self):
-        r = TokenResponse.from_dict({
-            "access_token": "at",
-            "id_token": "it",
-            "refresh_token": "rt",
-            "expires_in": 3600,
-            "token_type": "Bearer",
-        })
+        r = TokenResponse.from_dict(
+            {
+                "access_token": "at",
+                "id_token": "it",
+                "refresh_token": "rt",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            }
+        )
         assert r.access_token == "at"
         assert r.id_token == "it"
         assert r.refresh_token == "rt"
@@ -80,13 +85,15 @@ class TestTokenResponse:
 
 class TestExchangeCode:
     def test_returns_token_response_on_success(self, config):
-        fetcher, captured = _fetcher_returning({
-            "access_token": "at-1",
-            "id_token": "it-1",
-            "refresh_token": "rt-1",
-            "expires_in": 3600,
-            "token_type": "Bearer",
-        })
+        fetcher, captured = _fetcher_returning(
+            {
+                "access_token": "at-1",
+                "id_token": "it-1",
+                "refresh_token": "rt-1",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            }
+        )
         x = TokenExchanger(config, fetcher=fetcher)
         r = x.exchange_code("auth-code-xyz", "verifier-abc")
         assert isinstance(r, TokenResponse)
@@ -111,10 +118,12 @@ class TestExchangeCode:
         assert params["redirect_uri"] == "https://otaman.example/auth/callback"
 
     def test_oauth_error_response_raises(self, config):
-        fetcher, _ = _fetcher_returning({
-            "error": "invalid_grant",
-            "error_description": "code expired",
-        })
+        fetcher, _ = _fetcher_returning(
+            {
+                "error": "invalid_grant",
+                "error_description": "code expired",
+            }
+        )
         x = TokenExchanger(config, fetcher=fetcher)
         with pytest.raises(TokenExchangeError, match="invalid_grant"):
             x.exchange_code("c", "v")
@@ -128,6 +137,7 @@ class TestExchangeCode:
     def test_malformed_json_raises(self, config):
         def bad_fetcher(url, body, timeout):  # noqa: ARG001
             return b"not-json-at-all"
+
         x = TokenExchanger(config, fetcher=bad_fetcher)
         with pytest.raises(TokenExchangeError, match="not JSON"):
             x.exchange_code("c", "v")

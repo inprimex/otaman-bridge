@@ -60,7 +60,7 @@ class BusMessage:
     """Parsed .agents/bus/active/*.md file."""
 
     path: Path
-    stem: str   # filename without extension — used for ack-file lookup
+    stem: str  # filename without extension — used for ack-file lookup
     frontmatter: dict[str, Any]
     body: str
 
@@ -108,8 +108,8 @@ class SurfaceDecision:
     surface: bool
     severity: Severity = "info"
     interactive: bool = False
-    actions: list[str] = field(default_factory=list)   # "approve", "reject", etc.
-    reason: str = ""   # why we made this decision (for debugging)
+    actions: list[str] = field(default_factory=list)  # "approve", "reject", etc.
+    reason: str = ""  # why we made this decision (for debugging)
 
     def __bool__(self) -> bool:
         return self.surface
@@ -121,16 +121,16 @@ class SurfaceDecision:
 
 _DEFAULT_POLICY: dict[str, tuple[SurfaceMode, Severity, list[str]]] = {
     # type → (mode, default severity, default interactive actions)
-    "spec-change-request":   ("always", "approval", ["approve", "reject", "details", "comment"]),
-    "review-request":        ("configurable", "info",   []),
-    "task-complete":         ("configurable", "info",   []),
-    "spec-change-approved":  ("configurable", "info",   []),
-    "spec-change-rejected":  ("configurable", "info",   []),
-    "task-assignment":       ("never",        "info",   []),
-    "info":                  ("never",        "info",   []),
-    "spec-change":           ("configurable", "info",   []),  # post-commit notice
-    "contract-change":       ("configurable", "info",   []),
-    "proposal":              ("configurable", "info",   []),
+    "spec-change-request": ("always", "approval", ["approve", "reject", "details", "comment"]),
+    "review-request": ("configurable", "info", []),
+    "task-complete": ("configurable", "info", []),
+    "spec-change-approved": ("configurable", "info", []),
+    "spec-change-rejected": ("configurable", "info", []),
+    "task-assignment": ("never", "info", []),
+    "info": ("never", "info", []),
+    "spec-change": ("configurable", "info", []),  # post-commit notice
+    "contract-change": ("configurable", "info", []),
+    "proposal": ("configurable", "info", []),
 }
 
 
@@ -179,7 +179,8 @@ def decide(
     # 1. Urgent — always blocking, regardless of type
     if msg.priority == "urgent":
         return SurfaceDecision(
-            surface=True, severity="blocking",
+            surface=True,
+            severity="blocking",
             interactive=bool(msg.to and _is_to_human(msg.to)),
             actions=["acknowledge"] if _is_to_human(msg.to) else [],
             reason="priority: urgent",
@@ -197,8 +198,10 @@ def decide(
             )
         if mode == "always":
             return SurfaceDecision(
-                surface=True, severity=severity,
-                interactive=bool(actions), actions=list(actions),
+                surface=True,
+                severity=severity,
+                interactive=bool(actions),
+                actions=list(actions),
                 reason=f"type={msg.type} is always surfaced",
             )
         # mode == "configurable": check per-agent override first, then global
@@ -214,15 +217,19 @@ def decide(
                     )
                 if agent_decision is True:
                     return SurfaceDecision(
-                        surface=True, severity=severity,
-                        interactive=bool(actions), actions=list(actions),
+                        surface=True,
+                        severity=severity,
+                        interactive=bool(actions),
+                        actions=list(actions),
                         reason=f"by_agent.{msg.from_}.{msg.type}=true",
                     )
         global_decision = _override_for(overrides, msg.type)
         if global_decision is True:
             return SurfaceDecision(
-                surface=True, severity=severity,
-                interactive=bool(actions), actions=list(actions),
+                surface=True,
+                severity=severity,
+                interactive=bool(actions),
+                actions=list(actions),
                 reason=f"global override: {msg.type}=true",
             )
         # Default off
@@ -234,16 +241,20 @@ def decide(
     # 3. to: human — approval with reply, regardless of type
     if _is_to_human(msg.to):
         return SurfaceDecision(
-            surface=True, severity="approval",
-            interactive=True, actions=["acknowledge", "comment"],
+            surface=True,
+            severity="approval",
+            interactive=True,
+            actions=["acknowledge", "comment"],
             reason="to: human",
         )
 
     # 4. priority: high — approval (buttons iff to:human, but that branched above)
     if msg.priority == "high":
         return SurfaceDecision(
-            surface=True, severity="approval",
-            interactive=False, actions=[],
+            surface=True,
+            severity="approval",
+            interactive=False,
+            actions=[],
             reason="priority: high",
         )
 
@@ -278,7 +289,8 @@ def parse_bus_file(path: Path) -> BusMessage | None:
     if not isinstance(fm, dict):
         return None
     return BusMessage(
-        path=path, stem=path.stem,
+        path=path,
+        stem=path.stem,
         frontmatter=fm,
         body=m.group(2),
     )

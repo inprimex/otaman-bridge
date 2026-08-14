@@ -17,6 +17,7 @@ from otaman_bridge.transports.null import NullTransport  # noqa: F401
 # This lets otaman bridge run --transport null work without the dep.
 try:
     from otaman_bridge.transports.telegram import TelegramTransport  # noqa: F401
+
     _HAS_TELEGRAM = True
 except ImportError:  # pragma: no cover
     _HAS_TELEGRAM = False

@@ -47,7 +47,12 @@ def _request(url, *, allow_redirects=False):
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **kw):  # noqa: ARG002
             return None
-    opener = urllib.request.build_opener(_NoRedirect()) if not allow_redirects else urllib.request.build_opener()
+
+    opener = (
+        urllib.request.build_opener(_NoRedirect())
+        if not allow_redirects
+        else urllib.request.build_opener()
+    )
     req = urllib.request.Request(url, method="GET")
     try:
         with opener.open(req, timeout=2) as resp:
@@ -115,7 +120,9 @@ class TestAuthCallbackRoute:
         _wire_full_web_auth(daemon)
         sess = Session(
             id="session-id-1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-            user_id="u1", email="a@b", roles=("otaman:viewer",),
+            user_id="u1",
+            email="a@b",
+            roles=("otaman:viewer",),
             expires_at=9_999_999_999.0,
         )
         daemon.login_completer = _StubCompleter(session=sess)
@@ -159,5 +166,7 @@ class TestAuthCallbackRoute:
         daemon.login_completer = _StubCompleter()
         base = _daemon_url(endpoint)
         # Zitadel returns ?error=access_denied when user denies consent
-        code, _, _ = _request(f"{base}/auth/callback?error=access_denied&error_description=user+denied")
+        code, _, _ = _request(
+            f"{base}/auth/callback?error=access_denied&error_description=user+denied"
+        )
         assert code == 400

@@ -7,19 +7,16 @@ library. Catches leaks early in CI.
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 
 
 def _load_check_module():
-    scripts_dir = REPO_ROOT / "scripts"
     import importlib
+
     from otaman_bridge import check_transport_boundary as ctb
+
     return importlib.reload(ctb)
 
 
@@ -52,7 +49,8 @@ class TestDetection:
         leaky = tmp_path / "bridge" / "daemon.py"
         leaky.parent.mkdir(parents=True)
         leaky.write_text(
-            "from slack_sdk import WebClient\n", encoding="utf-8",
+            "from slack_sdk import WebClient\n",
+            encoding="utf-8",
         )
         monkeypatch.setattr(check_mod, "REPO_ROOT", tmp_path)
         exit_code = check_mod.main()
@@ -63,7 +61,8 @@ class TestDetection:
         leaky = tmp_path / "scripts" / "x.py"
         leaky.parent.mkdir(parents=True)
         leaky.write_text(
-            "from telegram.ext import Application\n", encoding="utf-8",
+            "from telegram.ext import Application\n",
+            encoding="utf-8",
         )
         monkeypatch.setattr(check_mod, "REPO_ROOT", tmp_path)
         exit_code = check_mod.main()
@@ -76,7 +75,8 @@ class TestDetection:
         allowed.write_text("import telegram\n", encoding="utf-8")
         # Provide a non-leaky sibling to make sure the scan runs over something
         (tmp_path / "bridge" / "core.py").write_text(
-            "from typing import Protocol\n", encoding="utf-8",
+            "from typing import Protocol\n",
+            encoding="utf-8",
         )
         monkeypatch.setattr(check_mod, "REPO_ROOT", tmp_path)
         exit_code = check_mod.main()
@@ -84,7 +84,8 @@ class TestDetection:
 
     def test_clean_tree_returns_zero(self, tmp_path, monkeypatch):
         (tmp_path / "some.py").write_text(
-            "from pathlib import Path\nimport json\n", encoding="utf-8",
+            "from pathlib import Path\nimport json\n",
+            encoding="utf-8",
         )
         monkeypatch.setattr(check_mod, "REPO_ROOT", tmp_path)
         exit_code = check_mod.main()
