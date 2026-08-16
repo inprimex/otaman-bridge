@@ -663,10 +663,17 @@ class TestDaemonBusWatcher:
                 # Pending registry should hold the bus decision context.
                 assert scr_stem in daemon._pending_bus
 
-                # Dedup state should now list the SCR.
+                # Dedup state should now list the SCR. The approval surfaces
+                # MID-scan but the watcher writes state at END of scan —
+                # poll briefly instead of racing it (lost stochastically on
+                # CI: ubuntu+windows 2026-08-16).
                 import json as _json
 
                 state_file = project_root / ".otaman" / "bus-surfaced.state"
+                for _ in range(100):
+                    if state_file.is_file():
+                        break
+                    time.sleep(0.05)
                 assert state_file.is_file()
                 state = _json.loads(state_file.read_text(encoding="utf-8"))
                 assert scr_stem in state
