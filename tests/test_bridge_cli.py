@@ -23,6 +23,12 @@ BRIDGE_CLI = [sys.executable, "-m", "otaman_bridge.cli"]
 
 def _env_with_home(home: Path) -> dict:
     env = os.environ.copy()
+    # Strip workspace-resolution vars so subprocesses never inherit a stale
+    # session OTAMAN_ROOT and resolve into a live bus (deploy-agent fleet
+    # mitigation 20260816T193911; see tests/conftest.py). Tests that need
+    # one set it explicitly on the returned dict, sandboxed under tmp_path.
+    for var in ("OTAMAN_ROOT", "MAESTRO_ROOT", "OTAMAN_AGENT"):  # legacy: MAESTRO_ROOT pre-rename
+        env.pop(var, None)
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)  # Windows
     # Subprocess needs explicit PYTHONPATH (pytest pythonpath does not propagate)
@@ -368,28 +374,23 @@ class TestWatchBusAutoDetect:
 
     def test_auto_detect_rejects_non_program_root(self, sandbox_home, tmp_path):
         """Auto-resolved root with .agents/bus but no platform.yaml
-        (org-level shape) → hard error, not a silent empty-bus watch."""
-        maestro = tmp_path / "my-maestro"
-        maestro.mkdir()
-        (maestro / "platform.yaml").write_text("project: x\n", encoding="utf-8")
-        (maestro / ".agents").mkdir()
-        (maestro / "launch-settings.yaml").write_text(
-            "accounts:\n  demo:\n    config_dir: ~/.claude-demo\n    transport: null\n",
-            encoding="utf-8",
-        )
+        (org-level shape) → hard error, not a silent empty-bus watch.
+
+        Routed through the resolver's walk-up step (cwd inside the org
+        root, no OTAMAN_ROOT): the env step now rejects org-level roots in
+        otaman-core itself (bus-test-isolation 1.2), but walk-up still
+        accepts bare-`.agents` candidates — the bridge guard covers it."""
         # Org-level shape: has a bus directory but no platform.yaml.
         org_root = tmp_path / "org-root"
         (org_root / ".agents" / "bus" / "active").mkdir(parents=True)
 
-        env = _env_with_home(sandbox_home)
-        env["OTAMAN_ROOT"] = str(org_root)  # workspace finder lands here
         result = subprocess.run(
             BRIDGE_CLI + ["run", "--account", "demo", "--transport", "null", "--watch-bus"],
             capture_output=True,
             text=True,
             timeout=15,
-            env=env,
-            cwd=maestro,
+            env=_env_with_home(sandbox_home),
+            cwd=org_root,
         )
         assert result.returncode == 1
         assert "not a program bus root" in result.stderr
