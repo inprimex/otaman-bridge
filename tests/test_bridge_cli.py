@@ -74,6 +74,7 @@ class TestStatus:
             text=True,
             timeout=10,
             env=_env_with_home(sandbox_home),
+            cwd=sandbox_home,
         )
         assert result.returncode == 0
         assert "ghost" in result.stdout
@@ -100,6 +101,7 @@ class TestRunStopLifecycle:
             stderr=subprocess.PIPE,
             text=True,
             env=_env_with_home(sandbox_home),
+            cwd=sandbox_home,
         )
         try:
             # Wait for endpoint file to appear
@@ -123,6 +125,7 @@ class TestRunStopLifecycle:
                 text=True,
                 timeout=10,
                 env=_env_with_home(sandbox_home),
+                cwd=sandbox_home,
             )
             assert status.returncode == 0
             assert "running" in status.stdout
@@ -134,6 +137,7 @@ class TestRunStopLifecycle:
                 text=True,
                 timeout=10,
                 env=_env_with_home(sandbox_home),
+                cwd=sandbox_home,
             )
             assert stop.returncode == 0, stop.stderr
             assert "Stopped" in stop.stdout
@@ -155,6 +159,7 @@ class TestRunStopLifecycle:
             text=True,
             timeout=10,
             env=_env_with_home(sandbox_home),
+            cwd=sandbox_home,
         )
         assert result.returncode == 2
         assert "Unknown transport" in result.stderr
@@ -179,6 +184,7 @@ class TestRunStopLifecycle:
             stderr=subprocess.PIPE,
             text=True,
             env=_env_with_home(sandbox_home),
+            cwd=sandbox_home,
         )
         try:
             for _ in range(60):
@@ -195,6 +201,7 @@ class TestRunStopLifecycle:
                 text=True,
                 timeout=10,
                 env=_env_with_home(sandbox_home),
+                cwd=sandbox_home,
             )
             assert stop.returncode == 0, stop.stderr
 
@@ -225,6 +232,7 @@ class TestRunStopLifecycle:
             text=True,
             timeout=10,
             env=_env_with_home(sandbox_home),
+            cwd=sandbox_home,
         )
         assert result.returncode == 0
         assert "already stopped" in result.stdout.lower()
@@ -253,6 +261,7 @@ class TestRunStopLifecycle:
             text=True,
             timeout=10,
             env=_env_with_home(sandbox_home),
+            cwd=sandbox_home,
         )
         assert result.returncode == 0
         assert not endpoint.exists(), "stale endpoint file should be removed"
@@ -267,6 +276,7 @@ class TestInvalidArgs:
             text=True,
             timeout=10,
             env=_env_with_home(sandbox_home),
+            cwd=sandbox_home,
         )
         assert result.returncode != 0
         assert "account" in result.stderr.lower()
@@ -287,6 +297,7 @@ class TestInvalidArgs:
             text=True,
             timeout=10,
             env=_env_with_home(sandbox_home),
+            cwd=sandbox_home,
         )
         assert result.returncode == 0
         assert "run" in result.stdout

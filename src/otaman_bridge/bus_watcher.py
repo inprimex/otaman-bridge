@@ -24,6 +24,12 @@ import logging
 import time
 from pathlib import Path
 
+from otaman_bridge.bus_provenance import (
+    build_quarantine_alert,
+    is_privileged_type,
+    quarantine_message,
+    verify_provenance,
+)
 from otaman_bridge.bus_surface import (
     BusMessage,
     decide,
@@ -232,6 +238,7 @@ class BusWatcher:
         on_approval,  # async callable: (ApprovalRequest, BusMessage) -> ...
         on_event=None,  # sync callable: (BusMessage) -> None; called for every surfaced msg
         poll_interval: float = POLL_INTERVAL_SECONDS,
+        ledger_path: Path | None = None,  # confirmation ledger override (tests); None = canonical
     ) -> None:
         self.project_root = project_root
         self.account = account
@@ -240,6 +247,7 @@ class BusWatcher:
         self._on_approval = on_approval
         self._on_event = on_event
         self.poll_interval = max(0.1, poll_interval)
+        self.ledger_path = ledger_path
         self._stopping = asyncio.Event()
 
     async def run(self) -> None:
@@ -283,6 +291,28 @@ class BusWatcher:
         for msg in iter_bus_messages(self.project_root):
             if msg.stem in state:
                 continue  # already processed in a previous scan
+
+            # Privileged types require ledger provenance (bus-write-integrity
+            # 3.1). Unverified -> quarantine + non-privileged info alert;
+            # NEVER act (a forged halt must not halt anything), never delete.
+            if is_privileged_type(msg) and not verify_provenance(msg, ledger_path=self.ledger_path):
+                quarantined_to = quarantine_message(self.project_root, msg)
+                _log.warning(
+                    "quarantined unverified privileged message %s (type=%s) -> %s",
+                    msg.stem,
+                    msg.type,
+                    quarantined_to,
+                )
+                try:
+                    await self._on_info(
+                        build_quarantine_alert(
+                            msg, quarantined_to, account=self.account, project=self.project
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    _log.exception("quarantine alert dispatch failed for %s", msg.stem)
+                continue
+
             decision = decide(msg, overrides=overrides)
 
             if not decision.surface:

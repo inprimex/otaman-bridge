@@ -28,6 +28,15 @@ def _suppress_notifications(monkeypatch):
     monkeypatch.setenv("MAESTRO_AFK_NO_NOTIFY", "1")
 
 
+@pytest.fixture(autouse=True)
+def _own_root_resolution(monkeypatch):
+    """These tests resolve their own maestro_folder via chdir (walk-up), so
+    drop isolate_bus's pinned OTAMAN_ROOT — the bus-test-isolation footgun
+    pattern. OTAMAN_TEST_MODE stays: both roots live under tmp."""
+    monkeypatch.delenv("OTAMAN_ROOT", raising=False)
+    monkeypatch.delenv("MAESTRO_ROOT", raising=False)  # legacy: pre-rename alias
+
+
 @pytest.fixture
 def maestro_folder(tmp_path):
     root = tmp_path / "my-maestro"
