@@ -642,8 +642,12 @@ class TestDaemonBusWatcher:
                 # Info broadcast should NOT surface (never rule).
                 _write_bus_msg(project_root, "20260424T100000-broadcast", type="info", to="all")
 
-                # Interactive messages flow via send_approval.
-                for _ in range(80):
+                # Interactive messages flow via send_approval. Budget is
+                # generous (15s) because loaded CI runners (macOS especially)
+                # can take several seconds between daemon.start() and the
+                # watcher's first scan — the old 4s budget flaked on all
+                # three OSes (2026-08-14, three consecutive occurrences).
+                for _ in range(300):
                     if transport.sent_approvals:
                         break
                     time.sleep(0.05)

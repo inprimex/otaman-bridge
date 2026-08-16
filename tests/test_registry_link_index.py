@@ -256,8 +256,11 @@ class TestFromProjectRoot:
 
 class TestFindBusinessDir:
     def test_env_var_overrides_platform(self, tmp_path):
-        result = _find_business_dir(tmp_path, {"OTAMAN_BUSINESS_DIR": "/some/biz"})
-        assert result == Path("/some/biz")
+        # Use a real absolute path: _find_business_dir resolves the override,
+        # and a bare "/some/biz" resolves to a drive-qualified path on Windows.
+        biz = tmp_path / "biz"
+        result = _find_business_dir(tmp_path, {"OTAMAN_BUSINESS_DIR": str(biz)})
+        assert result == biz.resolve()
 
     def test_returns_none_without_platform_yaml(self, tmp_path):
         assert _find_business_dir(tmp_path, {}) is None
