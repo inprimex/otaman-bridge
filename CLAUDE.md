@@ -146,8 +146,12 @@ This is a single CLI call — no file editing, no token overhead. It lets the hu
 - Resume the blocked task only after you see BOTH `spec-change-approved` AND `spec-change` messages
 - Check `../../.agents/blocked/bridge-agent.md` for your currently blocked tasks
 
-
-
+### Spec Authoring — NOT your job (CRITICAL)
+- **spec-agent authors ALL spec artifacts** — `proposal.md`, `design.md`, `tasks.md`, `specs/*/spec.md`, JSON schemas, ADRs. These live in `otaman-specs` which is READ-ONLY for you.
+- **Your only spec action is `/otaman:propose`** — you describe what you need, spec-agent writes it.
+- **After approval + spec-change notification**: wait for `task-assignment` messages addressed to you from the mapped `tasks.md`. Those tasks will be **implementation work in your repo**, not spec authoring.
+- **Never write**: `proposal.md`, `design.md`, `tasks.md`, `spec.md`, ADR files, or any file under `otaman-specs/openspec/`. Even after approval. Even if you think it would be faster.
+- If you feel the urge to "just fill in the spec myself" — stop, send a `question` message to spec-agent instead.
 
 
 ### Git Workflow
