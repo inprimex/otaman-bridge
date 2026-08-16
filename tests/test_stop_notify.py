@@ -221,6 +221,11 @@ def _env_with_home(home: Path) -> dict:
     env.pop("OTAMAN_ACTIVE_ROUTING", None)
     env.pop("OTAMAN_ACTIVE_ACCOUNT", None)
     env.pop("MAESTRO_ACTIVE_ACCOUNT", None)
+    # isolate_bus pins OTAMAN_ROOT at its sandbox; the spawned helper must
+    # resolve the test's OWN cwd fixture tree instead (bus-test-isolation
+    # subprocess pattern). OTAMAN_TEST_MODE stays — cwd is under tmp.
+    for var in ("OTAMAN_ROOT", "MAESTRO_ROOT", "OTAMAN_AGENT"):  # legacy: MAESTRO_ROOT pre-rename
+        env.pop(var, None)
     bridge_src = str(REPO_ROOT / "src")
     core_src = str(REPO_ROOT.parent / "otaman-core" / "src")
     env["PYTHONPATH"] = os.pathsep.join([bridge_src, core_src, env.get("PYTHONPATH", "")])

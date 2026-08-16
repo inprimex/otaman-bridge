@@ -52,6 +52,11 @@ def _run_helper(
     env.pop("OTAMAN_ACTIVE_ROUTING", None)
     env.pop("OTAMAN_ACTIVE_ACCOUNT", None)
     env.pop("MAESTRO_ACTIVE_ACCOUNT", None)
+    # isolate_bus pins OTAMAN_ROOT at its sandbox; the spawned helper must
+    # resolve the test's OWN cwd fixture tree instead (bus-test-isolation
+    # subprocess pattern). OTAMAN_TEST_MODE stays — cwd is under tmp.
+    for var in ("OTAMAN_ROOT", "MAESTRO_ROOT", "OTAMAN_AGENT"):  # legacy: MAESTRO_ROOT pre-rename
+        env.pop(var, None)
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
