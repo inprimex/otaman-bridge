@@ -49,6 +49,7 @@ from otaman_bridge.core import (
     InfoMessage,
     Transport,
 )
+from otaman_bridge.experimental_mode import healthz_extras
 from otaman_bridge.http_handler import _make_handler
 from otaman_bridge.mcp_dispatch_service import McpDispatchService
 
@@ -923,11 +924,15 @@ class BridgeDaemon:
             return 503, {"ok": False, "reason": "shutdown in progress"}
         if self._server is None:
             return 503, {"ok": False, "reason": "http server not started"}
-        return 200, {
+        payload: dict[str, Any] = {
             "ok": True,
             "uptime_seconds": int(time.monotonic() - self.started_at),
             "transport": self.transport.name,
         }
+        # ADR-012 gate 2: monitoring must see experimental_multi_tenant mode
+        # without parsing logs. Empty dict in normal single mode.
+        payload.update(healthz_extras(self.bus_watcher_root))
+        return 200, payload
 
 
 # ---------------------------------------------------------------------------
