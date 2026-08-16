@@ -3,14 +3,14 @@
 
 **You are `bridge-agent`**. You own this repository: **otaman-bridge**.
 
-Otaman folder: `../../` (contains `.agents/`, `platform.yaml`, bus messages)
+Otaman folder: `../otaman-meta/` (contains `.agents/`, `platform.yaml`, bus messages)
 
 ### First Session Checklist
 1. Run `otaman check` (Bash) — see pending bus messages. The CLI auto-detects project root, your agent identity, and ack status. No MCP tool-loading needed for this hot path; pre-allowed in `.claude/settings.local.json`.
-2. Read `../../.agents/queue/bridge-agent.md` — see your active/queued/blocked tasks
+2. Read `../otaman-meta/.agents/queue/bridge-agent.md` — see your active/queued/blocked tasks
 3. Read specs relevant to your repo (specs_dir paths below)
 4. Run `git log --oneline -10` — understand recent changes
-5. If `../../.agents/knowledge/` exists, check for tech docs relevant to your work
+5. If `../otaman-meta/.agents/knowledge/` exists, check for tech docs relevant to your work
 6. Then: resume active task, or pick highest-priority queued task, or act on bus messages
 
 ### Ownership
@@ -111,7 +111,7 @@ otaman set-status idle
 This is a single CLI call — no file editing, no token overhead. It lets the human see live fleet state in `otaman status` and in `otaman check`. Per `agent-status-presence` design Q3.
 
 ### Task Queue
-- Your queue file: `../../.agents/queue/bridge-agent.md`
+- Your queue file: `../otaman-meta/.agents/queue/bridge-agent.md`
 - Max 1 active task at a time — finish or pause before switching
 - When a `task-assignment` arrives while you're busy: ack as `read`, add to Queued section
 - When you finish a task: check bus, then pick highest-priority queued item
@@ -144,7 +144,7 @@ This is a single CLI call — no file editing, no token overhead. It lets the hu
 - **Never implement against a spec that doesn't exist yet** — wait for human approval + spec commit
 - After proposing, switch to other tasks. Run `/otaman:check` periodically to see if your proposal was approved
 - Resume the blocked task only after you see BOTH `spec-change-approved` AND `spec-change` messages
-- Check `../../.agents/blocked/bridge-agent.md` for your currently blocked tasks
+- Check `../otaman-meta/.agents/blocked/bridge-agent.md` for your currently blocked tasks
 
 ### Spec Authoring — NOT your job (CRITICAL)
 - **spec-agent authors ALL spec artifacts** — `proposal.md`, `design.md`, `tasks.md`, `specs/*/spec.md`, JSON schemas, ADRs. These live in `otaman-specs` which is READ-ONLY for you.
