@@ -213,6 +213,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
+    # ADR-012 gate 2: emit the experimental-mode banner when the workspace
+    # declares experimental_multi_tenant mode. Runs after start() so the
+    # daemon is fully up before we log the warning (ordering matters for
+    # container log parsers that correlate startup messages).
+    if bus_watcher_root is not None:
+        from otaman_bridge.experimental_mode import emit_startup_banner  # noqa: PLC0415
+
+        emit_startup_banner(bus_watcher_root)
+
     print(
         f"otaman bridge: account={args.account} "
         f"transport={transport_name} "
