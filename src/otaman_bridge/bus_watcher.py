@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -117,7 +118,12 @@ def _save_state(project_root: Path, state: dict[str, float]) -> None:
     # Prune old entries so the file doesn't grow unbounded.
     cutoff = time.time() - PRUNE_OLDER_THAN_SECONDS
     pruned = {k: v for k, v in state.items() if v >= cutoff}
-    path.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
+    # Atomic write (tmp + rename): a plain write_text truncates first, so a
+    # concurrent reader (restart-recovery pass, tests) can observe an empty
+    # or partial file — and a crash mid-write would corrupt dedup state.
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 # ---------------------------------------------------------------------------
