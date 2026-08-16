@@ -7,6 +7,7 @@ from pathlib import Path
 from otaman_bridge.bus_surface import (
     BusMessage,
     decide,
+    is_cross_org,
     iter_bus_messages,
     load_surface_overrides,
     parse_bus_file,
@@ -22,6 +23,8 @@ def _make_msg(
     priority: str = "normal",
     subject: str = "test",
     body: str = "body text",
+    from_org: str = "",
+    to_org: str = "",
 ) -> BusMessage:
     fm = {
         "id": "20260424T100000-test",
@@ -31,6 +34,10 @@ def _make_msg(
         "type": type,
         "timestamp": "2026-04-24T10:00:00Z",
     }
+    if from_org:
+        fm["from_org"] = from_org
+    if to_org:
+        fm["to_org"] = to_org
     return BusMessage(
         path=Path("dummy.md"),
         stem="20260424T100000-test",
@@ -78,6 +85,45 @@ class TestAlwaysSurface:
         assert d.surface
         assert d.severity == "approval"
         assert not d.interactive
+
+
+# ---------------------------------------------------------------------------
+# Cross-org rejection — single-bus-per-program Q4 / ADR-012
+
+
+class TestCrossOrg:
+    def test_differing_orgs_never_surface(self):
+        d = decide(_make_msg(type="spec-change-request", from_org="contoso", to_org="acme"))
+        assert not d.surface
+        assert "cross-org routing not yet implemented" in d.reason
+        assert "acme" in d.reason  # foreign to_org is named
+
+    def test_cross_org_trumps_urgent(self):
+        """A foreign-org envelope must not reach the human, even urgent."""
+        d = decide(_make_msg(type="info", priority="urgent", from_org="contoso", to_org="acme"))
+        assert not d.surface
+        assert "cross-org routing not yet implemented" in d.reason
+
+    def test_same_org_projections_surface_normally(self):
+        d = decide(_make_msg(type="spec-change-request", from_org="acme", to_org="acme"))
+        assert d.surface
+
+    def test_org_comparison_case_insensitive(self):
+        d = decide(_make_msg(type="spec-change-request", from_org="Acme", to_org="acme"))
+        assert d.surface
+
+    def test_one_sided_projection_is_local(self):
+        """A lone from_org/to_org means an intra-org send that only projected
+        one side — not a cross-org envelope."""
+        assert not is_cross_org(_make_msg(from_org="acme"))
+        assert not is_cross_org(_make_msg(to_org="acme"))
+        d = decide(_make_msg(type="spec-change-request", to_org="acme"))
+        assert d.surface
+
+    def test_absent_projections_unchanged(self):
+        assert not is_cross_org(_make_msg())
+        d = decide(_make_msg(type="spec-change-request"))
+        assert d.surface
 
 
 # ---------------------------------------------------------------------------

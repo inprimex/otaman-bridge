@@ -61,6 +61,24 @@ curl http://127.0.0.1:<port>/status
 
 The daemon writes an endpoint file to `~/.otaman/bridge.endpoint` (mode 0600) so the CLI and plugin scripts can locate it without configuration.
 
+## Bus watching — one program bus per instance
+
+A bridge instance watches **exactly one** program bus (`--watch-bus
+/path/to/program-meta-dir`, the directory holding that program's
+`platform.yaml` and `.agents/bus/`). This is the permanent architecture per
+the `single-bus-per-program` spec (post P1 split-brain incident):
+
+- The per-program bus is the *only* bus. An org-level `orgs/<org>/.agents/`
+  is never a valid watch target; bare `--watch-bus` auto-detection refuses
+  roots that lack `platform.yaml` + `.agents/bus/` rather than silently
+  polling an empty directory.
+- **Multi-program orgs run one bridge instance per program** (parameterized
+  systemd template, `otaman-bridge@<program>` style — owned by
+  otaman-deploy). Single-process multi-bus watching is explicitly deferred.
+- Envelopes whose `from_org`/`to_org` projections name two different orgs
+  are not surfaced: cross-org routing is not yet implemented (ADR-012
+  Phase 5+); the watcher logs a warning and leaves the file untouched.
+
 ## See also
 
 - [ADR-006 (NATS system bus)](https://github.com/inprimex/otaman-meta/blob/main/adrs/ADR-006-nats-system-bus.md) — Step 4 event substrate

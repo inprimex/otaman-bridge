@@ -164,6 +164,23 @@ def cmd_run(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            # single-bus-per-program: walk-up discovery must land on a
+            # program bus root (platform.yaml + .agents/bus). An org-level
+            # `.agents` is never a valid bus — silently watching one is
+            # the P1 split-brain failure mode.
+            if (
+                not (resolved / "platform.yaml").is_file()
+                or not (resolved / ".agents" / "bus").is_dir()
+            ):
+                print(
+                    f"ERROR: auto-detected workspace {resolved} is not a "
+                    "program bus root (needs platform.yaml and .agents/bus/) — "
+                    "the daemon is not in an otaman program workspace. A bridge "
+                    "instance watches exactly one program bus; pass "
+                    "--watch-bus /path/to/program-meta-dir explicitly.",
+                    file=sys.stderr,
+                )
+                return 1
             bus_watcher_root = resolved
         # Project name: --watch-bus-project explicit override, else read
         # platform.yaml's `project:` (same helper used by the PreToolUse
