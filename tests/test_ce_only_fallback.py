@@ -97,7 +97,9 @@ def test_daemon_degrades_gracefully_with_ee_absent():
         [sys.executable, "-c", _SCRIPT],
         capture_output=True,
         text=True,
-        timeout=30,
+        # 90s: loaded macOS CI runners hit the old 30s cap on cold interpreter
+        # start + daemon startup alone (3 consecutive occurrences, 2026-08-14).
+        timeout=90,
     )
     assert result.returncode == 0, (
         f"CE-only fallback check failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"

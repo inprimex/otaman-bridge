@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import pytest
@@ -284,11 +285,15 @@ class TestRoundtrip:
 
 
 class TestFilePermissions:
+    @pytest.mark.skipif(
+        os.name != "posix",
+        reason="chmod 0600 semantics are POSIX-only; Windows reports 0o666 "
+        "regardless (the old hasattr(stat, 'S_IRWXG') guard was ineffective — "
+        "Python defines that constant on Windows too)",
+    )
     def test_file_mode_is_0600(self, inbox, tmp_path):
         m = inbox.write_message(from_user="A", from_email=None, to_user="B", body="hi")
         import stat
 
         mode = stat.S_IMODE(m.path.stat().st_mode)
-        # On POSIX: 0o600. On non-POSIX: skip the check.
-        if hasattr(stat, "S_IRWXG"):  # POSIX
-            assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+        assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
