@@ -1,5 +1,7 @@
 # otaman-bridge
 
+> **Otaman platform:** [otaman-core](https://github.com/inprimex/otaman-core) · [otaman-cli](https://github.com/inprimex/otaman-cli) · [otaman-plugin](https://github.com/inprimex/otaman-plugin) · **otaman-bridge (you are here)** · [otaman-runner](https://github.com/inprimex/otaman-runner) · [otaman-adapters](https://github.com/inprimex/otaman-adapters)
+
 Otaman's server daemon — HTTP API, HTTP MCP server, transport coordination, approval flow, and audit log writer. Runs on a shared dev server or self-hosted VPS; agents and the CLI talk to it over loopback or LAN.
 
 ## Status
