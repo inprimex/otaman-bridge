@@ -4,9 +4,8 @@ ADR-012 gate 2 requires that any bridge running in ``experimental_multi_tenant``
 mode makes this unambiguous to operators and surfaces it in all approval
 prompts sent to the human.
 
-Canonical banner text lives here — ``research/experimental-banner-contract.md``
-documents the contract; this module is the single source of truth for the
-actual strings so all code paths import from one place rather than
+Canonical banner text lives here: this module is the single source of truth
+for the actual strings so all code paths import from one place rather than
 duplicating text.
 """
 
