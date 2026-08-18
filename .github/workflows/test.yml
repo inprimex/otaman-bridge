@@ -93,3 +93,15 @@ jobs:
       - name: Run tests
         working-directory: workspace/otaman-bridge
         run: uv run pytest tests/ -v
+
+  # Branch-protection anchor (fleet-uniform, spec-agent 20260818T202444):
+  # `ci-ok` needs every merge-blocking job; protection requires exactly this
+  # one check, immune to job renames and matrix churn. Plain variant (no
+  # `if: always()`): a skipped ci-ok counts as not-passed, which blocks
+  # correctly.
+  ci-ok:
+    name: ci-ok
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
