@@ -4,9 +4,8 @@ ADR-012 gate 2 requires that any bridge running in ``experimental_multi_tenant``
 mode makes this unambiguous to operators and surfaces it in all approval
 prompts sent to the human.
 
-Canonical banner text lives here — ``research/experimental-banner-contract.md``
-documents the contract; this module is the single source of truth for the
-actual strings so all code paths import from one place rather than
+Canonical banner text lives here: this module is the single source of truth
+for the actual strings so all code paths import from one place rather than
 duplicating text.
 """
 
@@ -25,7 +24,7 @@ RUNTIME_MODE_SINGLE = "single"
 RUNTIME_MODE_EXPERIMENTAL_MULTI_TENANT = "experimental_multi_tenant"
 
 # ---------------------------------------------------------------------------
-# Canonical banner text — the contract document references these constants.
+# Canonical banner text — this module is the single source of truth.
 
 #: One-line prefix for Telegram messages and log lines.
 BANNER_ONELINE = (
