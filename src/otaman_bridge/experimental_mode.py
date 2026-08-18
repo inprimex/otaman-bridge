@@ -24,7 +24,7 @@ RUNTIME_MODE_SINGLE = "single"
 RUNTIME_MODE_EXPERIMENTAL_MULTI_TENANT = "experimental_multi_tenant"
 
 # ---------------------------------------------------------------------------
-# Canonical banner text — the contract document references these constants.
+# Canonical banner text — this module is the single source of truth.
 
 #: One-line prefix for Telegram messages and log lines.
 BANNER_ONELINE = (
