@@ -30,6 +30,7 @@ try:
 except ImportError:  # pragma: no cover
     _yaml = None  # type: ignore[assignment]
 
+from .edition import auto_session_spawn_available, emit_ce_notice_once
 from .lifecycle_telemetry import emit_spawn_failed, emit_spawn_start, otel_spawn_span
 from .runner_client import RunnerClient, RunnerUnreachableError, SpawnError
 from .session_registry import SessionRegistry
@@ -219,6 +220,14 @@ def handle_bus_event(
     - The message type is not ``task-assignment``.
     - The message's ``to`` field is not an agent this bridge owns.
     """
+    # ce-ee-release-channels 3.1: auto-session-spawn is an EE capability,
+    # probe-gated (package presence enforces; edition.yaml only informs).
+    # In CE this subsystem disables with one honest notice — no runner
+    # connection attempts, no spawn-failed telemetry.
+    if not auto_session_spawn_available():
+        emit_ce_notice_once(_log)
+        return None
+
     parsed = _parse_message(message_path)
     if parsed is None:
         _log.debug("Could not parse bus message: %s", message_path)
