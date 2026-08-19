@@ -49,6 +49,7 @@ from otaman_bridge.core import (
     InfoMessage,
     Transport,
 )
+from otaman_bridge.edition import edition_status, emit_ce_notice_once
 from otaman_bridge.experimental_mode import healthz_extras
 from otaman_bridge.http_handler import _make_handler
 from otaman_bridge.mcp_dispatch_service import McpDispatchService
@@ -646,6 +647,10 @@ class BridgeDaemon:
             self.transport.name,
         )
 
+        # ce-ee-release-channels 3.1: one-time honest edition notice at
+        # startup when the (EE) auto-session-spawn subsystem is absent.
+        emit_ce_notice_once(_log)
+
     def stop(self) -> None:
         """Graceful shutdown — remove endpoint file, cancel pending approvals.
 
@@ -900,7 +905,7 @@ class BridgeDaemon:
         )
 
     def handle_status(self) -> tuple[int, dict[str, Any]]:
-        return 200, {
+        payload: dict[str, Any] = {
             "account": self.account,
             "transport": self.transport.name,
             "pid": self.pid,
@@ -908,6 +913,10 @@ class BridgeDaemon:
             "uptime_seconds": int(time.monotonic() - self.started_at),
             "pending_approvals": self._approval_service.count(),
         }
+        # ce-ee-release-channels 3.1: edition identity + probe-gated
+        # capability, plus the honesty diagnostic on file/probe mismatch.
+        payload.update(edition_status())
+        return 200, payload
 
     def handle_shutdown(self) -> tuple[int, dict[str, Any]]:
         # Schedule shutdown slightly later so this response can flush first.

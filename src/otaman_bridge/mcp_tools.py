@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from otaman_bridge.edition import runner_feature_unavailable_text
 from otaman_bridge.mcp_server import CallContext, Tool
 from otaman_bridge.runner_client import (
     RunnerAuthError,
@@ -95,6 +96,15 @@ def build_list_team_sessions_tool(
         try:
             raw_sessions = runner_client.list_sessions()
         except RunnerUnreachableError as exc:
+            # ce-ee-release-channels 3.1: in CE an absent runner is an
+            # edition boundary, not a fault — say so honestly.
+            ce_text = runner_feature_unavailable_text("Team session listing")
+            if ce_text is not None:
+                _log.info("list_team_sessions: %s", ce_text)
+                return {
+                    "isError": True,
+                    "content": [{"type": "text", "text": ce_text}],
+                }
             # Per v0 design: explicit error -> LLM says "list unavailable"
             # rather than "no sessions" (would mask the real problem).
             _log.warning("list_team_sessions: runner unreachable: %s", exc)
@@ -716,7 +726,9 @@ def build_get_recent_activity_tool(
                     exclude_user_id=ctx.user_id,
                 )
             except RunnerUnreachableError as exc:
-                team_error = f"runner unreachable: {exc}"
+                # In CE the absent runner is an edition boundary (3.1).
+                ce_text = runner_feature_unavailable_text("The team activity snapshot")
+                team_error = ce_text if ce_text is not None else f"runner unreachable: {exc}"
             except RunnerAuthError as exc:
                 team_error = f"runner auth failed: {exc}"
             except Exception as exc:  # noqa: BLE001
@@ -859,6 +871,10 @@ def build_kill_session_for_user_tool(
         except RunnerAuthError as exc:
             return _mcp_error(f"runner auth failed: {exc}")
         except RunnerUnreachableError as exc:
+            # In CE the absent runner is an edition boundary (3.1).
+            ce_text = runner_feature_unavailable_text("Session management")
+            if ce_text is not None:
+                return _mcp_error(ce_text)
             return _mcp_error(f"runner unreachable: {exc}")
         except ValueError as exc:
             return _mcp_error(f"invalid session_id: {exc}")
