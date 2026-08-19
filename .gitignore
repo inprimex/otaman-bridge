@@ -36,3 +36,6 @@ secrets.env
 credentials.json
 service-account*.json
 .maestro/
+
+# Local-only orchestration rules written by `otaman init` (gitignored, never committed)
+CLAUDE.local.md
