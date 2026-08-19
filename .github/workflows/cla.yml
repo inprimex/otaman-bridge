@@ -1,0 +1,31 @@
+# CLA caller — copy verbatim to .github/workflows/cla.yml in each CE repo.
+# All logic lives in the reusable workflow in the public inprimex/.github repo;
+# see otaman-deploy/docs/cla/README.md for the rollout runbook.
+# Requires repo secret CLA_SIGNATURES_TOKEN (PAT scoped to inprimex/cla-signatures).
+#
+# The uses: ref is PINNED to a full commit SHA (F182 — no mutable refs in the
+# execution path; external-audit remediation 2026-08-18). To bump: verify the
+# new inprimex/.github commit, update the SHA + date comment here, fan out to
+# the callers via ordinary PRs. Never @main.
+name: cla
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+# Least-privilege permissions the reusable workflow needs — a called workflow
+# cannot exceed the caller's token, and CE repos default to read-only, so
+# omitting this block = startup_failure (proven on otaman-adapters run 32249388876).
+permissions:
+  actions: write
+  contents: read
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    uses: inprimex/.github/.github/workflows/cla.yml@5c6a9d7ab58854b0dec4a650550431616e5f652f # 2026-08-18
+    secrets:
+      CLA_SIGNATURES_TOKEN: ${{ secrets.CLA_SIGNATURES_TOKEN }}
