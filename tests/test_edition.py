@@ -161,3 +161,47 @@ class TestSpawnGate:
             project_root=str(tmp_path),
         )
         assert outcome is None
+
+    def test_ce_gate_ignores_stale_runner_endpoint(self, tmp_path, monkeypatch, caplog):
+        """1.3 boundary case 4: a leftover runner.endpoint from a prior EE run
+        is irrelevant under CE. The probe gates first, so the endpoint file is
+        never read and no connection/retry is attempted — one honest notice,
+        clean logs (no spawn-failed noise), graceful skip."""
+        from otaman_bridge.runner_client import RunnerClient
+
+        # A well-formed endpoint file, exactly as a prior EE run would leave.
+        stale = tmp_path / "runner.endpoint"
+        stale.write_text("host=127.0.0.1\nport=8091\ntoken=TKN\npid=1234\n", encoding="utf-8")
+
+        def _explode(*_a, **_k):
+            raise AssertionError("CE bridge touched a stale runner endpoint")
+
+        client = RunnerClient(endpoint_file=stale, opener=_explode)
+        # Reaching the endpoint read (or any connection) at all is a CE-gate failure.
+        monkeypatch.setattr(client, "_read_endpoint", _explode)
+
+        # CE = EE package absent; probe drives both the gate and the notice.
+        monkeypatch.setattr(edition_mod, "ee_features_present", lambda: False)
+        monkeypatch.setattr(edition_mod, "_ce_notice_emitted", False)
+
+        msg = tmp_path / "20260824T000000-task.md"
+        msg.write_text(
+            "---\ntype: task-assignment\nto: bridge-agent\n---\n\n## Subject: x\n",
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.INFO):
+            outcome = spawn_mod.handle_bus_event(
+                msg,
+                registry=None,
+                runner_client=client,
+                owned_agents={"otaman-bridge": "bridge-agent"},
+                bus_dir=tmp_path,
+                project_root=str(tmp_path),
+            )
+        assert outcome is None  # graceful skip, no crash
+        assert stale.exists()  # leftover file left untouched on disk
+        # Exactly one honest edition notice; zero runner/spawn-failed noise.
+        assert sum(CE_SPAWN_NOTICE in r.message for r in caplog.records) == 1
+        assert not any(
+            "spawn" in r.message.lower() and "fail" in r.message.lower() for r in caplog.records
+        )
