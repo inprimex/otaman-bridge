@@ -239,3 +239,68 @@ class TestRoutes:
 
     def test_attach_not_configured_404(self, tmp_path):
         assert attach_response(None, "Bearer x", {})[0] == 404
+
+
+# ---------------------------------------------------------------------------
+# End-to-end against the REAL otaman_core.web_auth.CeAuthManager
+# (proves the mounted core module + issue_session_token seam interoperate)
+# ---------------------------------------------------------------------------
+
+
+class TestRealIntegration:
+    def _real_svc(self, tmp_path, *, users=("alice",)):
+        import bcrypt
+        from otaman_core.web_auth import CeAuthManager, LocalAuthConfig, UserRecord
+
+        recs = [
+            UserRecord(
+                username=u,
+                password_hash=bcrypt.hashpw(b"secret", bcrypt.gensalt()).decode(),
+                role="observer",
+            )
+            for u in users
+        ]
+        cfg = LocalAuthConfig(enabled=True, users=recs)
+        mgr = CeAuthManager(config=cfg, hmac_secret="x" * 40, attach_token_ttl=3600)
+        return CeWebAuthService(mgr, RefreshTokenStore(tmp_path)), mgr
+
+    def test_login_refresh_attach_end_to_end(self, tmp_path):
+        svc, mgr = self._real_svc(tmp_path)
+        login = svc.login("alice", "secret")
+
+        # Refresh mints a REAL fresh session JWT with no password (reload path).
+        refreshed = svc.refresh(login["refresh_token"])
+        assert refreshed["refresh_token"] != login["refresh_token"]  # rotated
+        claims = mgr.verify_session_token(refreshed["token"])
+        assert claims["sub"] == "alice" and claims["type"] == "session"
+
+        # The refreshed session JWT exchanges for a REAL attach token.
+        attach = svc.attach_token(refreshed["token"])
+        aclaims = mgr.verify_attach_token(attach["token"])
+        assert aclaims["sub"] == "alice" and aclaims["type"] == "attach"
+
+    def test_response_mappers_end_to_end(self, tmp_path):
+        svc, _ = self._real_svc(tmp_path)
+        s, login = login_response(svc, {"username": "alice", "password": "secret"})
+        assert s == 200 and login["token_type"] == "Bearer"
+        s, refreshed = refresh_response(svc, {"refresh_token": login["refresh_token"]})
+        assert s == 200 and refreshed["token"]
+        s, attach = attach_response(svc, f"Bearer {refreshed['token']}", {})
+        assert s == 200 and attach["mode"]
+
+    def test_refresh_rejected_after_user_removed(self, tmp_path):
+        from otaman_core.web_auth import LocalAuthConfig
+
+        svc, mgr = self._real_svc(tmp_path)
+        login = svc.login("alice", "secret")
+        mgr._config = LocalAuthConfig(enabled=True, users=[])  # account removed
+        # issue_session_token raises AuthError -> RefreshError -> 401 fallback
+        assert refresh_response(svc, {"refresh_token": login["refresh_token"]})[0] == 401
+
+    def test_refresh_token_rejected_at_login(self, tmp_path):
+        """The refresh token is refresh-only: it must never authenticate at login."""
+        svc, _ = self._real_svc(tmp_path)
+        login = svc.login("alice", "secret")
+        # Presenting the refresh token as the password fails like any bad password.
+        status, _ = login_response(svc, {"username": "alice", "password": login["refresh_token"]})
+        assert status == 401
