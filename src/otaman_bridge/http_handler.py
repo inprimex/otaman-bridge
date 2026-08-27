@@ -297,6 +297,24 @@ def _make_handler(daemon: BridgeDaemon) -> type[BaseHTTPRequestHandler]:
                 result = daemon._pm_sync_handler.handle_inbound_webhook(body)
                 self._reply_json(200, result)
                 return
+            if route in ("/api/auth/login", "/api/auth/refresh", "/api/terminal/attach-token"):
+                # ce-refresh-token 1.2: public CE web-auth endpoints — they carry
+                # their own credentials (password / refresh token / session JWT),
+                # NOT the daemon loopback bearer, so no _auth_ok() gate here.
+                body = self._read_body()
+                if body is None:
+                    self._reply_error(400, "invalid JSON body")
+                    return
+                if route == "/api/auth/login":
+                    status, resp = daemon.handle_ce_login(body)
+                elif route == "/api/auth/refresh":
+                    status, resp = daemon.handle_ce_refresh(body)
+                else:  # /api/terminal/attach-token
+                    status, resp = daemon.handle_ce_attach_token(
+                        self.headers.get("Authorization", ""), body
+                    )
+                self._reply_json(status, resp)
+                return
             if route in ("/approval", "/notify", "/reply", "/shutdown"):
                 if not self._auth_ok():
                     self._reply_error(401, "invalid or missing bearer token")

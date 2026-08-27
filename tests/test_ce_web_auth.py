@@ -5,17 +5,17 @@ from __future__ import annotations
 import json
 
 import pytest
+from otaman_core.web_auth import AuthError  # the real error the mapping catches
 
 import otaman_bridge.ce_web_auth as cwa
 from otaman_bridge.ce_web_auth import (
     CeWebAuthService,
     RefreshError,
     RefreshTokenStore,
+    attach_response,
+    login_response,
+    refresh_response,
 )
-
-
-class _AuthError(ValueError):
-    """Stand-in for otaman_core.web_auth.AuthError."""
 
 
 class _FakeMgr:
@@ -29,12 +29,12 @@ class _FakeMgr:
     def login(self, username, password):
         if username in self._users and password == "pw":
             return f"session:{username}"
-        raise _AuthError("invalid credentials")
+        raise AuthError("invalid credentials")
 
     def issue_session_token(self, username):
         if username in self._users:
             return f"session:{username}"
-        raise _AuthError("unknown user")
+        raise AuthError("unknown user")
 
     def attach_token(self, session_jwt, available_session_ids=None):
         self.attach_calls.append((session_jwt, available_session_ids))
@@ -128,7 +128,7 @@ class TestService:
 
     def test_login_bad_credentials_raises(self, tmp_path):
         svc, _ = self._svc(tmp_path)
-        with pytest.raises(_AuthError):
+        with pytest.raises(AuthError):
             svc.login("alice", "wrong")
 
     def test_refresh_rotates_and_reissues_session(self, tmp_path):
@@ -170,3 +170,72 @@ class TestService:
         out = svc.attach_token("session:alice", ["s1"])
         assert out["token"] == "attach:session:alice"
         assert mgr.attach_calls == [("session:alice", ["s1"])]
+
+
+# ---------------------------------------------------------------------------
+# HTTP response mapping (login/refresh/attach) — status codes match the runner
+# ---------------------------------------------------------------------------
+
+
+class TestRoutes:
+    def _svc(self, tmp_path, **mgr_kw):
+        return CeWebAuthService(_FakeMgr(**mgr_kw), RefreshTokenStore(tmp_path))
+
+    # ---- login ----
+    def test_login_ok(self, tmp_path):
+        status, resp = login_response(self._svc(tmp_path), {"username": "alice", "password": "pw"})
+        assert status == 200
+        assert resp["token"] == "session:alice"
+        assert resp["refresh_token"] and resp["token_type"] == "Bearer"
+
+    def test_login_bad_credentials_401(self, tmp_path):
+        status, resp = login_response(
+            self._svc(tmp_path), {"username": "alice", "password": "nope"}
+        )
+        assert status == 401
+        assert resp == {"error": "invalid credentials"}
+
+    def test_login_missing_fields_400(self, tmp_path):
+        status, _ = login_response(self._svc(tmp_path), {"username": "alice"})
+        assert status == 400
+
+    def test_login_not_configured_404(self, tmp_path):
+        assert login_response(None, {"username": "a", "password": "b"})[0] == 404
+        disabled = self._svc(tmp_path, enabled=False)
+        assert login_response(disabled, {"username": "a", "password": "b"})[0] == 404
+
+    # ---- refresh ----
+    def test_refresh_ok_rotates(self, tmp_path):
+        svc = self._svc(tmp_path)
+        _, login = login_response(svc, {"username": "alice", "password": "pw"})
+        status, resp = refresh_response(svc, {"refresh_token": login["refresh_token"]})
+        assert status == 200
+        assert resp["token"] == "session:alice"
+        assert resp["refresh_token"] != login["refresh_token"]
+
+    def test_refresh_invalid_401_single_step(self, tmp_path):
+        status, resp = refresh_response(self._svc(tmp_path), {"refresh_token": "bogus"})
+        assert status == 401  # non-2xx -> client falls back to password in one step
+        assert "error" in resp
+
+    def test_refresh_missing_field_400(self, tmp_path):
+        assert refresh_response(self._svc(tmp_path), {})[0] == 400
+
+    def test_refresh_reused_token_401(self, tmp_path):
+        svc = self._svc(tmp_path)
+        _, login = login_response(svc, {"username": "alice", "password": "pw"})
+        refresh_response(svc, {"refresh_token": login["refresh_token"]})
+        # replay of the now-rotated token
+        assert refresh_response(svc, {"refresh_token": login["refresh_token"]})[0] == 401
+
+    # ---- attach ----
+    def test_attach_ok(self, tmp_path):
+        status, resp = attach_response(self._svc(tmp_path), "Bearer session:alice", {})
+        assert status == 200
+        assert resp["token"] == "attach:session:alice"
+
+    def test_attach_missing_bearer_401(self, tmp_path):
+        assert attach_response(self._svc(tmp_path), "", {})[0] == 401
+
+    def test_attach_not_configured_404(self, tmp_path):
+        assert attach_response(None, "Bearer x", {})[0] == 404

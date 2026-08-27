@@ -231,9 +231,99 @@ class CeWebAuthService:
         return self._store.revoke_user(username)
 
 
+# ---------------------------------------------------------------------------
+# HTTP response mapping (pure (service, request) -> (status, body); no I/O)
+# ---------------------------------------------------------------------------
+#
+# These keep the daemon methods one-line delegators and are unit-testable
+# without an HTTP server. Status codes match the runner's terminal-auth-rbac
+# implementation so the CE (bridge) and EE (runner) surfaces are identical,
+# with the refresh route added per web-agent's contract (non-2xx on any invalid
+# token so the client falls back to the password prompt in one step).
+
+
+def _auth_exc_to_status(
+    exc: Exception, route: str, *, invalid_status: int, invalid_msg: str | None
+) -> tuple[int, dict[str, Any]]:
+    """Map a core AuthError to ``invalid_status``; anything else to 500."""
+    try:
+        from otaman_core.web_auth import AuthError  # noqa: PLC0415 — svc set ⇒ extra present
+    except ImportError:  # pragma: no cover - svc-not-None implies the extra is present
+        AuthError = ()  # type: ignore[assignment]
+    if isinstance(exc, AuthError):
+        return invalid_status, {"error": invalid_msg or str(exc)}
+    _log.exception("unexpected error in %s", route)
+    return 500, {"error": "internal error"}
+
+
+def login_response(
+    svc: CeWebAuthService | None, body: dict[str, Any]
+) -> tuple[int, dict[str, Any]]:
+    """``POST /api/auth/login`` — verify credentials, issue ``{token, refresh_token}``."""
+    if svc is None or not svc.enabled:
+        return 404, {"error": "local auth not configured"}
+    username = str(body.get("username", "")).strip()
+    password = str(body.get("password", ""))
+    if not username or not password:
+        return 400, {"error": "username and password required"}
+    try:
+        out = svc.login(username, password)
+    except Exception as exc:  # noqa: BLE001 — mapped to a status below
+        return _auth_exc_to_status(
+            exc, "/api/auth/login", invalid_status=401, invalid_msg="invalid credentials"
+        )
+    return 200, {**out, "token_type": "Bearer"}
+
+
+def refresh_response(
+    svc: CeWebAuthService | None, body: dict[str, Any]
+) -> tuple[int, dict[str, Any]]:
+    """``POST /api/auth/refresh`` — rotate the refresh token, re-establish the session.
+
+    Any invalid/expired/revoked token is a 401 (never a 200 with an error body)
+    so the client clears the stored token and re-prompts for the password in one
+    step, with no retry loop.
+    """
+    if svc is None or not svc.enabled:
+        return 404, {"error": "local auth not configured"}
+    refresh_token = str(body.get("refresh_token", "")).strip()
+    if not refresh_token:
+        return 400, {"error": "refresh_token required"}
+    try:
+        out = svc.refresh(refresh_token)
+    except RefreshError:
+        return 401, {"error": "invalid or expired refresh token"}
+    except Exception:  # noqa: BLE001
+        _log.exception("unexpected error in /api/auth/refresh")
+        return 500, {"error": "internal error"}
+    return 200, {**out, "token_type": "Bearer"}
+
+
+def attach_response(
+    svc: CeWebAuthService | None, auth_header: str, body: dict[str, Any]
+) -> tuple[int, dict[str, Any]]:
+    """``POST /api/terminal/attach-token`` — exchange the session JWT (Bearer) for an attach JWT."""
+    if svc is None:
+        return 404, {"error": "terminal auth not configured"}
+    if not auth_header.startswith("Bearer "):
+        return 401, {"error": "Bearer token required"}
+    session_jwt = auth_header[len("Bearer ") :].strip()
+    try:
+        # CE Phase 3: all active sessions are accessible (core defaults None -> ["*"]).
+        result = svc.attach_token(session_jwt, None)
+    except Exception as exc:  # noqa: BLE001
+        return _auth_exc_to_status(
+            exc, "/api/terminal/attach-token", invalid_status=401, invalid_msg=None
+        )
+    return 200, result
+
+
 __all__ = [
     "DEFAULT_REFRESH_TTL",
     "CeWebAuthService",
     "RefreshError",
     "RefreshTokenStore",
+    "attach_response",
+    "login_response",
+    "refresh_response",
 ]

@@ -140,6 +140,35 @@ def read_endpoint_file(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _build_ce_web_auth(bus_watcher_root: Path | None, state_dir: Path):
+    """Construct the CE web-auth service, or None (ce-refresh-token 1.2).
+
+    Returns None — so the ``/api/auth/*`` + ``/api/terminal/attach-token``
+    routes 404 — when there is no workspace, the ``otaman-core[web-auth]`` extra
+    is absent, or ``terminal.local_auth`` is not configured/enabled. This is the
+    runner-free CE surface; EE serves the equivalent from the runner.
+    """
+    if bus_watcher_root is None:
+        return None
+    try:
+        from otaman_core.web_auth import CeAuthManager
+
+        from otaman_bridge.ce_web_auth import CeWebAuthService, RefreshTokenStore
+    except ImportError:
+        _log.debug("CE web-auth unavailable (otaman-core[web-auth] extra not installed)")
+        return None
+    platform_yaml = Path(bus_watcher_root) / "platform.yaml"
+    try:
+        manager = CeAuthManager.from_platform_yaml(platform_yaml, Path(state_dir))
+    except Exception:  # noqa: BLE001 — never let auth wiring crash daemon startup
+        _log.exception("CE web-auth: failed to build auth manager from %s", platform_yaml)
+        return None
+    if not manager.enabled:
+        return None
+    _log.info("CE web-auth enabled (runner-free): /api/auth/login, /refresh, attach-token")
+    return CeWebAuthService(manager, RefreshTokenStore(Path(state_dir)))
+
+
 # ---------------------------------------------------------------------------
 # Async loop helper — runs in a dedicated thread so sync HTTP handlers
 # can submit coroutines via run_coroutine_threadsafe.
@@ -380,6 +409,12 @@ class BridgeDaemon:
         # (F185) read platform.yaml's terminal.dcr_shim_trust when a
         # workspace is configured; None in env-only/--no-config mode.
         self._auth_stack = AuthStack(token=self.token, project_root=self.bus_watcher_root)
+
+        # ce-refresh-token 1.2: the bridge is the runner-free CE web-auth host.
+        # Mounts otaman-core's shared AuthService + a refresh layer when
+        # local_auth is configured and the otaman-core[web-auth] extra is
+        # present; None otherwise (the /api/auth/* routes then 404).
+        self.ce_web_auth = _build_ce_web_auth(self.bus_watcher_root, self.endpoint_file.parent)
 
         # MCP tool registry + RunnerClient + Inbox. Extracted to
         # McpDispatchService (F040 phase 5) — mcp_server, _runner_client,
@@ -735,6 +770,26 @@ class BridgeDaemon:
 
     def handle_approval(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         return self._approval_service.handle_approval(body)
+
+    # ce-refresh-token 1.2: runner-free CE web-auth surface. Thin delegators to
+    # the pure response mappers in ce_web_auth; self.ce_web_auth is None (404)
+    # when the otaman-core[web-auth] extra is absent or local_auth is unconfigured.
+    def handle_ce_login(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        from otaman_bridge.ce_web_auth import login_response
+
+        return login_response(self.ce_web_auth, body)
+
+    def handle_ce_refresh(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        from otaman_bridge.ce_web_auth import refresh_response
+
+        return refresh_response(self.ce_web_auth, body)
+
+    def handle_ce_attach_token(
+        self, auth_header: str, body: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        from otaman_bridge.ce_web_auth import attach_response
+
+        return attach_response(self.ce_web_auth, auth_header, body)
 
     def handle_notify(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         try:
