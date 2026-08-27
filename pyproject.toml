@@ -13,7 +13,15 @@ dependencies = [
 [project.optional-dependencies]
 telegram = ["python-telegram-bot>=21,<23"]
 oidc = ["pyjwt[crypto]>=2.8"]
-test = ["pytest>=7", "python-telegram-bot>=21,<23", "pyjwt[crypto]>=2.8"]
+# ce-refresh-token 1.2: the runner-free CE web-auth surface mounts
+# otaman-core's shared AuthService (pyjwt[crypto] + bcrypt).
+web-auth = ["otaman-core[web-auth]"]
+test = [
+    "pytest>=7",
+    "python-telegram-bot>=21,<23",
+    "pyjwt[crypto]>=2.8",
+    "otaman-core[web-auth]",
+]
 
 [build-system]
 requires = ["hatchling"]
