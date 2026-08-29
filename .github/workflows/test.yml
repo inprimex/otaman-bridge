@@ -46,7 +46,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: inprimex/otaman-core
-          token: ${{ secrets.INPRIMEX_RO_TOKEN }}
           path: workspace/otaman-core
 
       - name: Generate workspace pyproject.toml

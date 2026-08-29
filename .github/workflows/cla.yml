@@ -3,10 +3,9 @@
 # see otaman-deploy/docs/cla/README.md for the rollout runbook.
 # Requires repo secret CLA_SIGNATURES_TOKEN (PAT scoped to inprimex/cla-signatures).
 #
-# The uses: ref is PINNED to a full commit SHA (F182 — no mutable refs in the
-# execution path; external-audit remediation 2026-08-18). To bump: verify the
-# new inprimex/.github commit, update the SHA + date comment here, fan out to
-# the callers via ordinary PRs. Never @main.
+# The uses: ref is PINNED to a full commit SHA (no mutable refs in the execution
+# path). To bump: verify the new inprimex/.github commit, update the SHA + date
+# comment here, fan out to the callers via ordinary PRs. Never @main.
 name: cla
 
 on:
@@ -17,7 +16,8 @@ on:
 
 # Least-privilege permissions the reusable workflow needs — a called workflow
 # cannot exceed the caller's token, and CE repos default to read-only, so
-# omitting this block = startup_failure (proven on otaman-adapters run 32249388876).
+# omitting this block = startup_failure. Explicit permissions are required by
+# the reusable workflow.
 permissions:
   actions: write
   contents: read
