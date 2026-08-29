@@ -38,6 +38,7 @@ from otaman_bridge.bus_surface import (
     load_surface_overrides,
 )
 from otaman_bridge.core import ApprovalRequest, InfoMessage
+from otaman_bridge.lifecycle_gate import is_inert, program_lifecycle_state
 
 _log = logging.getLogger("maestro.bridge.bus_watcher")  # legacy: logger renamed at otaman-core 1.0
 
@@ -255,6 +256,9 @@ class BusWatcher:
         self.poll_interval = max(0.1, poll_interval)
         self.ledger_path = ledger_path
         self._stopping = asyncio.Event()
+        # program-lifecycle-states 2.2: tracks the current inert state (suspended
+        # /archived) so transitions log once, not every scan. None = active/normal.
+        self._lifecycle_inert: str | None = None
 
     async def run(self) -> None:
         """Run the poll loop until cancelled / stop() called."""
@@ -288,6 +292,23 @@ class BusWatcher:
 
     async def _scan_once(self) -> int:
         """One pass over the bus. Returns number of messages surfaced to transport."""
+        # program-lifecycle-states 2.2: gate on the program's lifecycle state
+        # (design D1 read point). suspended/archived → this per-program bridge is
+        # inert: no surfacing, no AFK/watch. active/limited → normal. Transitions
+        # (suspend/resume, archive/unarchive) are picked up here at runtime.
+        lifecycle_state = program_lifecycle_state(self.project_root)
+        if is_inert(lifecycle_state):
+            if self._lifecycle_inert != lifecycle_state:
+                _log.info(
+                    "program lifecycle=%s → bridge inert (surfacing + AFK/watch paused)",
+                    lifecycle_state,
+                )
+                self._lifecycle_inert = lifecycle_state
+            return 0
+        if self._lifecycle_inert is not None:
+            _log.info("program lifecycle=%s → bridge resumed", lifecycle_state)
+            self._lifecycle_inert = None
+
         overrides = load_surface_overrides(self.project_root)
         state = _load_state(self.project_root)
         now = time.time()
