@@ -13,7 +13,7 @@ Otaman's server daemon — HTTP API, HTTP MCP server, transport coordination, ap
 | Adapter coordination (Telegram adapter) | shipped | — |
 | Approval flow logic (AFK remote-approve) | shipped | — |
 | Audit log writer (JSONL on disk) | shipped | — |
-| Web UI static serving | shipped | Step 3 web UI |
+| Web login landing page | shipped | otaman-web dashboard serving (Step 3) |
 | Magic-link auth | — | Step 3 |
 | SQLite-backed multi-user sessions | — | Step 3 |
 | NATS pub/sub gateway | — | Step 4 (ADR-006) |
@@ -29,7 +29,7 @@ Otaman's server daemon — HTTP API, HTTP MCP server, transport coordination, ap
 - **Audit log writer** — appends CloudEvents-shaped JSONL; shared read path exposed via `GET /audit`.
 - **Adapter coordination** — owns the lifecycle of registered transport adapters; Telegram is the first-class adapter today.
 - **Transport surfacing** — Telegram today; Slack / Discord arrive after Step 4.
-- **Web UI** — serves the static web dashboard built by `otaman-web`; React/Vite bundle drop-in.
+- **Web UI** — serves a minimal login landing page today (identity / login / logout); serving the `otaman-web` React/Vite dashboard bundle is roadmap (Step 3).
 - **Approval flow** — receives `permissionDecision` requests from the bridge-approval hook, forwards to the human's phone, returns allow/deny.
 - **Magic-link auth** — single-click session creation for web UI (Step 3).
 - **OIDC middleware** — validates Zitadel tokens for multi-tenant deployments (Step 4).
@@ -37,13 +37,18 @@ Otaman's server daemon — HTTP API, HTTP MCP server, transport coordination, ap
 
 ## Dependencies
 
-- Python 3.11+
+- Python 3.10+
 - `uv` (workspace package manager)
-- `otaman-core` (storage protocols, auth validators, CloudEvents helpers, OTel setup)
-- `otaman-adapters` (Telegram adapter and adapter registry)
-- `otaman-router` (message routing logic)
-- NATS server (optional today, required Step 4)
-- SQLite (bundled) — Postgres optional at import time
+- `otaman-core` — the only required runtime dependency (storage protocols, auth
+  validators / shared `AuthService`, CloudEvents helpers, OTel setup, program
+  lifecycle read point)
+- `python-telegram-bot` — optional `telegram` extra; the Telegram transport is
+  native to this repo (`transports/telegram.py`)
+- `otaman-adapters` — optional; only the Easy8 PM-sync integration imports it
+  (lazily, soft-fail when absent)
+- NATS server — not used today; the event-source and session-registry seams are
+  stubbed for a future Mode-2+ swap
+- SQLite (bundled) — `SqliteSessionRegistry` backend
 
 ## Quick start (development)
 
