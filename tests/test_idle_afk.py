@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+from otaman_core.lifecycle import lifecycle_registry_path, record_transition
 
 from otaman_bridge.idle_afk import (
     ACTIVITY_FILENAME,
@@ -246,3 +247,99 @@ class TestConfig:
             poll_interval=0.1,
         )
         assert monitor.poll_interval >= 5.0
+
+
+# ---------------------------------------------------------------------------
+# program-lifecycle-states 2.2 (A1 conformance fix): auto-AFK goes inert while
+# the program is suspended/archived and resumes on unarchive/resume — no restart.
+
+
+def _program_root(tmp_path: Path, *, org: str = "acme", program: str = "proj") -> tuple[Path, Path]:
+    """Canonical <org_root>/programs/<program>/otaman-meta with a .otaman/ dir.
+
+    Returns (project_root, org_root).
+    """
+    project_root = tmp_path / "orgs" / org / "programs" / program / "otaman-meta"
+    (project_root / ".otaman").mkdir(parents=True)
+    return project_root, tmp_path / "orgs" / org
+
+
+def _write_activity_otaman(root: Path, *, age_seconds: float = 0.0) -> Path:
+    """Write the activity file under .otaman/; mtime = now - age_seconds."""
+    path = root / ".otaman" / ACTIVITY_FILENAME
+    path.write_text("2026-04-24T12:00:00+00:00\n", encoding="utf-8")
+    if age_seconds > 0:
+        t = time.time() - age_seconds
+        os.utime(path, (t, t))
+    return path
+
+
+def _set_state(org_root: Path, program: str, state: str) -> None:
+    record_transition(lifecycle_registry_path(org_root), program, state, by="roman@acme")
+
+
+class TestLifecycleGate:
+    def test_active_program_enables_normally(self, tmp_path):
+        """Absent registry → active → normal enable (regression guard on canonical layout)."""
+        project_root, _ = _program_root(tmp_path)
+        _write_activity_otaman(project_root, age_seconds=180)
+        monitor = IdleAFKMonitor(project_root, idle_minutes=1)
+        asyncio.run(monitor._check_once())
+        assert (project_root / ".otaman" / AFK_FILENAME).is_file()
+
+    def test_suspended_program_does_not_enable(self, tmp_path):
+        """Inert: no AFK written and no Telegram notice, even well past the threshold."""
+        project_root, org_root = _program_root(tmp_path)
+        _write_activity_otaman(project_root, age_seconds=180)
+        _set_state(org_root, "proj", "suspended")
+        calls = []
+
+        async def on_enabled(reason):
+            calls.append(reason)
+
+        monitor = IdleAFKMonitor(project_root, idle_minutes=1, on_enabled=on_enabled)
+        asyncio.run(monitor._check_once())
+        assert not (project_root / ".otaman" / AFK_FILENAME).exists()
+        assert calls == []
+
+    def test_archived_program_does_not_enable(self, tmp_path):
+        project_root, org_root = _program_root(tmp_path)
+        _write_activity_otaman(project_root, age_seconds=180)
+        _set_state(org_root, "proj", "archived")
+        monitor = IdleAFKMonitor(project_root, idle_minutes=1)
+        asyncio.run(monitor._check_once())
+        assert not (project_root / ".otaman" / AFK_FILENAME).exists()
+
+    def test_inert_does_not_clear_existing_idle_afk(self, tmp_path):
+        """State is frozen while inert: an idle-auto AFK set before suspend is left as-is."""
+        project_root, org_root = _program_root(tmp_path)
+        _write_activity_otaman(project_root, age_seconds=1)  # fresh → would normally clear
+        afk = project_root / ".otaman" / AFK_FILENAME
+        afk.write_text(
+            "enabled_at: 2026-04-24T12:00:00+00:00\nsource: idle-auto\n", encoding="utf-8"
+        )
+        _set_state(org_root, "proj", "suspended")
+        monitor = IdleAFKMonitor(project_root, idle_minutes=1)
+        asyncio.run(monitor._check_once())
+        assert afk.is_file()
+
+    def test_suspend_then_resume_restores_enable(self, tmp_path):
+        """Runtime transition: inert on suspend, enables again on resume with no restart."""
+        project_root, org_root = _program_root(tmp_path)
+        _write_activity_otaman(project_root, age_seconds=180)
+        _set_state(org_root, "proj", "suspended")
+        monitor = IdleAFKMonitor(project_root, idle_minutes=1)
+        asyncio.run(monitor._check_once())
+        assert not (project_root / ".otaman" / AFK_FILENAME).exists()
+        _set_state(org_root, "proj", "active")  # resume — same monitor instance
+        asyncio.run(monitor._check_once())
+        assert (project_root / ".otaman" / AFK_FILENAME).is_file()
+
+    def test_limited_program_is_not_inert(self, tmp_path):
+        """limited is a runner concern; the bridge's auto-AFK stays fully normal."""
+        project_root, org_root = _program_root(tmp_path)
+        _write_activity_otaman(project_root, age_seconds=180)
+        _set_state(org_root, "proj", "limited")
+        monitor = IdleAFKMonitor(project_root, idle_minutes=1)
+        asyncio.run(monitor._check_once())
+        assert (project_root / ".otaman" / AFK_FILENAME).is_file()

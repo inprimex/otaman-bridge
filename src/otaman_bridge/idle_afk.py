@@ -29,6 +29,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from otaman_bridge.lifecycle_gate import is_inert, program_lifecycle_state
+
 _log = logging.getLogger("maestro.bridge.idle_afk")  # legacy: logger renamed at otaman-core 1.0
 
 
@@ -132,6 +134,7 @@ class IdleAFKMonitor:
         self._on_cleared = on_cleared
         self._stopping = asyncio.Event()
         self._last_notified_state: str | None = None  # "enabled" | "cleared"
+        self._lifecycle_inert: str | None = None  # last inert state logged (program-lifecycle 2.2)
 
     async def run(self) -> None:
         """Run until cancelled / stop() called."""
@@ -164,6 +167,21 @@ class IdleAFKMonitor:
 
     async def _check_once(self) -> None:
         """One tick of the state machine."""
+        # program-lifecycle-states 2.2 (A1 conformance fix): when this
+        # per-program bridge's program is suspended/archived it goes inert —
+        # auto-AFK must stop (no enable, no clear), matching the bus watcher's
+        # surfacing gate. State is frozen while inert and restored on resume
+        # with no restart. Fail-safe: any resolution error resolves to active.
+        lifecycle_state = program_lifecycle_state(self.project_root)
+        if is_inert(lifecycle_state):
+            if self._lifecycle_inert != lifecycle_state:
+                _log.info("program lifecycle=%s → idle-afk paused", lifecycle_state)
+                self._lifecycle_inert = lifecycle_state
+            return
+        if self._lifecycle_inert is not None:
+            _log.info("program lifecycle=%s → idle-afk resumed", lifecycle_state)
+            self._lifecycle_inert = None
+
         activity = _activity_file(self.project_root)
         afk = _afk_file(self.project_root)
 

@@ -299,8 +299,10 @@ class BusWatcher:
         lifecycle_state = program_lifecycle_state(self.project_root)
         if is_inert(lifecycle_state):
             if self._lifecycle_inert != lifecycle_state:
+                # The idle-afk monitor gates itself on the same state (see
+                # idle_afk._check_once); this log speaks only for surfacing/watch.
                 _log.info(
-                    "program lifecycle=%s → bridge inert (surfacing + AFK/watch paused)",
+                    "program lifecycle=%s → bridge inert (surfacing + watch paused)",
                     lifecycle_state,
                 )
                 self._lifecycle_inert = lifecycle_state
