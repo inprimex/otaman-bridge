@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout otaman-bridge
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -38,12 +38,12 @@ jobs:
 
     steps:
       - name: Checkout otaman-bridge
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           path: workspace/otaman-bridge
 
       - name: Checkout otaman-core (sibling path-dep)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: inprimex/otaman-core
           path: workspace/otaman-core
