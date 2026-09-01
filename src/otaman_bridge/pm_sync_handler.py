@@ -238,7 +238,9 @@ class PmSyncHandler:
             specs_repo = self._specs_repo_name()
             description = self._read_proposal_description(change_name)
             proposal_title = self._extract_proposal_title(description)
-            issue_title = self._build_issue_title(change_name, proposal_title)
+            issue_title = self._build_issue_title(
+                change_name, proposal_title, specs_repo, self._agent_identification_mode()
+            )
             spec_change: object = SpecChange(
                 change_name=change_name,
                 title=issue_title,
@@ -696,6 +698,11 @@ class PmSyncHandler:
 
         if hasattr(adapter, "set_project_map") and config.project_map:
             adapter.set_project_map(config.project_map)
+        # pm-agent-ident (B5): hand the adapter the identification mode so it can
+        # gate the otaman-agent custom-field write (subject-prefix → skip). Guarded
+        # like set_project_map so merge-ordering with the adapter change is safe.
+        if hasattr(adapter, "set_agent_identification"):
+            adapter.set_agent_identification(self._agent_identification_mode())
         return adapter
 
     def _repo_to_agent(self, repo_name: str | None) -> str | None:
@@ -740,9 +747,35 @@ class PmSyncHandler:
                 return stripped.lstrip("# ").strip()
         return None
 
-    def _build_issue_title(self, change_name: str, proposal_title: str | None) -> str:
-        """Return `[{change_name}] {proposal_title or change_name}`."""
+    def _agent_identification_mode(self) -> str:
+        """pm-sync ``agent_identification`` mode (B5 ruling), coerced to a valid value.
+
+        Mirrors ``otaman_core.pm_sync.AGENT_IDENTIFICATION_MODES``; core's loader
+        already coerces invalid/absent values to ``both``, but the local guard keeps
+        a slightly older core (or a hand-built config) safe. Decides WHERE the agent
+        identifier lives: the subject prefix, the ``otaman-agent`` custom field, or both.
+        """
+        mode = getattr(self.config, "agent_identification", "both")
+        return mode if mode in ("subject-prefix", "custom-field", "both") else "both"
+
+    def _build_issue_title(
+        self,
+        change_name: str,
+        proposal_title: str | None,
+        agent_name: str = "",
+        mode: str = "both",
+    ) -> str:
+        """Compose the PM issue subject per the ``agent_identification`` mode (B5 ruling).
+
+        The change prefix ``[<change_name>]`` is always present. The agent segment
+        ``[<agent_name>]`` is included for ``both`` and ``subject-prefix``; under
+        ``custom-field`` the agent lives only in the ``otaman-agent`` custom field, so
+        the subject carries the change prefix alone. The adapter uses this subject
+        verbatim — it no longer prepends the agent itself (easy8 ``create_issue``).
+        """
         label = proposal_title or change_name
+        if agent_name and mode in ("both", "subject-prefix"):
+            return f"[{change_name}][{agent_name}] {label}"
         return f"[{change_name}] {label}"
 
     def _specs_repo_name(self) -> str:

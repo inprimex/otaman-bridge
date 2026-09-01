@@ -16,6 +16,7 @@ Scenarios covered:
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -658,6 +659,36 @@ class TestProposalHelpers:
     def test_build_issue_title_falls_back_to_change_name(self, handler: PmSyncHandler) -> None:
         assert handler._build_issue_title("my-change", None) == "[my-change] my-change"
 
+    # pm-agent-ident (B5): subject composition per agent_identification mode.
+    def test_build_issue_title_both_includes_agent(self, handler: PmSyncHandler) -> None:
+        assert (
+            handler._build_issue_title("my-change", "My Title", "spec-agent", "both")
+            == "[my-change][spec-agent] My Title"
+        )
+
+    def test_build_issue_title_subject_prefix_includes_agent(self, handler: PmSyncHandler) -> None:
+        assert (
+            handler._build_issue_title("my-change", "My Title", "spec-agent", "subject-prefix")
+            == "[my-change][spec-agent] My Title"
+        )
+
+    def test_build_issue_title_custom_field_omits_agent(self, handler: PmSyncHandler) -> None:
+        assert (
+            handler._build_issue_title("my-change", "My Title", "spec-agent", "custom-field")
+            == "[my-change] My Title"
+        )
+
+    def test_build_issue_title_both_fallback_to_change_name(self, handler: PmSyncHandler) -> None:
+        assert (
+            handler._build_issue_title("my-change", None, "spec-agent", "both")
+            == "[my-change][spec-agent] my-change"
+        )
+
+    def test_build_issue_title_empty_agent_never_emits_empty_segment(
+        self, handler: PmSyncHandler
+    ) -> None:
+        assert handler._build_issue_title("my-change", "T", "", "both") == "[my-change] T"
+
 
 # ---------------------------------------------------------------------------
 # spec-change-approved rich title + description (task 3.4)
@@ -679,7 +710,10 @@ class TestSpecChangeApprovedRichTitle:
             "my-change",
         )
         call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
-        assert getattr(call_sc, "title", "") == "[my-change] Rich Issue Title"
+        # Default mode is `both`, so the subject carries the agent segment after
+        # the change prefix (agent value = the resolved specs-repo name).
+        agent = handler_with_openspec._specs_repo_name()
+        assert getattr(call_sc, "title", "") == f"[my-change][{agent}] Rich Issue Title"
 
     def test_title_falls_back_to_change_name_when_no_proposal(
         self, handler_with_openspec: PmSyncHandler
@@ -694,7 +728,8 @@ class TestSpecChangeApprovedRichTitle:
             "my-change",
         )
         call_sc = handler_with_openspec.adapter.create_issue.call_args[0][0]
-        assert getattr(call_sc, "title", "") == "[my-change] my-change"
+        agent = handler_with_openspec._specs_repo_name()
+        assert getattr(call_sc, "title", "") == f"[my-change][{agent}] my-change"
 
     def test_description_populated_from_proposal(
         self, handler_with_openspec: PmSyncHandler, workspace: Path
@@ -873,3 +908,75 @@ class TestLoadAdapterCustomFields:
         assert mock_cls.called
         passed_cf = mock_cls.call_args.kwargs.get("platform_custom_fields")
         assert passed_cf == {}
+
+
+# ---------------------------------------------------------------------------
+# pm-agent-ident (B5 ruling): configurable agent identification
+# ---------------------------------------------------------------------------
+
+
+class TestAgentIdentification:
+    """Bridge half of pm-agent-ident: compose the subject per config + pass the
+    mode to the adapter (which gates the otaman-agent custom-field write)."""
+
+    def _fire(self, handler: PmSyncHandler) -> object:
+        handler.handle_bus_event(
+            "spec-change-approved", "spec-agent", "human", "Approved: my-change", None, "my-change"
+        )
+        return handler.adapter.create_issue.call_args[0][0]
+
+    def _write_proposal(self, workspace: Path) -> None:
+        (workspace / "openspec" / "changes" / "my-change" / "proposal.md").write_text(
+            "# Rich Title\n\nBody.", encoding="utf-8"
+        )
+
+    def test_default_both_composes_agent_segment(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        self._write_proposal(workspace)
+        sc = self._fire(handler_with_openspec)  # config default → both
+        agent = handler_with_openspec._specs_repo_name()
+        assert getattr(sc, "title", "") == f"[my-change][{agent}] Rich Title"
+
+    def test_custom_field_mode_omits_agent_from_subject(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        self._write_proposal(workspace)
+        handler_with_openspec.config = dataclasses.replace(
+            handler_with_openspec.config, agent_identification="custom-field"
+        )
+        sc = self._fire(handler_with_openspec)
+        assert getattr(sc, "title", "") == "[my-change] Rich Title"
+
+    def test_subject_prefix_mode_includes_agent(
+        self, handler_with_openspec: PmSyncHandler, workspace: Path
+    ) -> None:
+        self._write_proposal(workspace)
+        handler_with_openspec.config = dataclasses.replace(
+            handler_with_openspec.config, agent_identification="subject-prefix"
+        )
+        sc = self._fire(handler_with_openspec)
+        agent = handler_with_openspec._specs_repo_name()
+        assert getattr(sc, "title", "") == f"[my-change][{agent}] Rich Title"
+
+    def test_mode_passed_to_adapter_setter(self, workspace: Path) -> None:
+        """_load_adapter hands the mode to the adapter's set_agent_identification."""
+        (workspace / "platform.yaml").write_text(
+            _PLATFORM_YAML_WITH_CUSTOM_FIELDS.replace(
+                "  custom-fields:",
+                "  agent-identification: custom-field\n  custom-fields:",
+            ),
+            encoding="utf-8",
+        )
+        mock_cls = MagicMock()
+        mock_cls.return_value.capabilities = _make_capabilities()
+        with patch("otaman_core.pm_sync.get_pm_adapter", return_value=mock_cls):
+            PmSyncHandler(workspace)
+        mock_cls.return_value.set_agent_identification.assert_called_once_with("custom-field")
+
+    def test_default_mode_passed_to_adapter_setter(self, workspace: Path) -> None:
+        mock_cls = MagicMock()
+        mock_cls.return_value.capabilities = _make_capabilities()
+        with patch("otaman_core.pm_sync.get_pm_adapter", return_value=mock_cls):
+            PmSyncHandler(workspace)
+        mock_cls.return_value.set_agent_identification.assert_called_once_with("both")
