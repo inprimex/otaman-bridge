@@ -85,15 +85,19 @@ def _session_project(project_root: Path | None) -> str:
 
 
 def _current_agent(project_root: Path | None) -> str:
-    if project_root is None:
-        return ""
-    agent_file = project_root / ".agents" / "current-agent"
-    if not agent_file.is_file():
-        return ""
+    """Resolve the acting agent's display identity (team-mode B1).
+
+    The ``.agents/current-agent`` marker is retired (Roman's B1 amendment); this
+    delegates to the shared core resolver — cwd-ownership is authoritative over
+    ``OTAMAN_AGENT`` (a poisoned env var can't override the real owner of the
+    session's directory). Returns "" when unresolved (the caller's display
+    fallback). Degrades to "" if a lagging pinned core lacks the resolver.
+    """
     try:
-        return agent_file.read_text(encoding="utf-8").strip()
-    except OSError:
+        from otaman_core.identity import resolve_agent_identity  # noqa: PLC0415
+    except ImportError:
         return ""
+    return resolve_agent_identity(project_root=project_root) or ""
 
 
 _SEVERITIES = ("info", "approval", "blocking")

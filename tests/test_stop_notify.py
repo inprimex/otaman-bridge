@@ -395,3 +395,26 @@ class TestIntegrationWithDaemon:
             assert len(transport.sent_infos) == 2
         finally:
             daemon.stop()
+
+
+# ---------------------------------------------------------------------------
+# team-mode B1: _current_agent delegates to the shared core resolver
+# ---------------------------------------------------------------------------
+
+
+class TestCurrentAgentResolver:
+    def test_delegates_to_core_resolver(self, monkeypatch, tmp_path):
+        import otaman_core.identity as core_identity
+
+        from otaman_bridge.stop_notify import _current_agent
+
+        monkeypatch.setattr(core_identity, "resolve_agent_identity", lambda **kw: "backend-agent")
+        assert _current_agent(tmp_path) == "backend-agent"
+
+    def test_unresolved_returns_empty_string(self, monkeypatch, tmp_path):
+        import otaman_core.identity as core_identity
+
+        from otaman_bridge.stop_notify import _current_agent
+
+        monkeypatch.setattr(core_identity, "resolve_agent_identity", lambda **kw: None)
+        assert _current_agent(tmp_path) == ""
