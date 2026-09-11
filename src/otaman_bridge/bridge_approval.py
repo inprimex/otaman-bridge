@@ -212,14 +212,17 @@ def main() -> int:
         _emit_allow_and_exit()
     port, token = endpoint
 
-    # --- Figure out a reasonable agent name (current-agent file > cwd) ---
+    # --- Resolve the acting agent's display identity (team-mode B1) ---
+    # The .agents/current-agent marker is retired (Roman's B1 amendment); the
+    # shared core resolver derives the agent from cwd-ownership (authoritative
+    # over OTAMAN_AGENT). "" when unresolved; degrades to "" on a lagging core.
     agent = ""
-    agent_file = project_root / ".agents" / "current-agent"
-    if agent_file.is_file():
-        try:
-            agent = agent_file.read_text(encoding="utf-8").strip()
-        except OSError:
-            pass
+    try:
+        from otaman_core.identity import resolve_agent_identity  # noqa: PLC0415
+
+        agent = resolve_agent_identity(project_root=project_root) or ""
+    except ImportError:
+        pass
 
     # --- Build the ApprovalRequest payload ---
     # Timeout: default 9 minutes to stay under Claude Code's 10-minute hook cap.

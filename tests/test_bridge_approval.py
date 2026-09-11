@@ -331,10 +331,10 @@ class TestAfkOnWithDaemon:
     def test_payload_carries_expected_fields(self, maestro_folder):
         """Verify the daemon receives account, project, agent, tool fields."""
         self._set_afk(maestro_folder)
-        (maestro_folder / ".agents" / "current-agent").write_text(
-            "backend-agent\n",
-            encoding="utf-8",
-        )
+        # team-mode B1: agent identity comes from the shared core resolver, not
+        # the retired .agents/current-agent marker. The helper runs with cwd =
+        # maestro_folder (the root, unowned by the ownership map), so OTAMAN_AGENT
+        # supplies the identity (cwd-owner would win if the cwd were an owned repo).
         daemon, transport = _start_daemon("riseapps", maestro_folder)
         try:
             result_holder: dict = {}
@@ -350,7 +350,11 @@ class TestAfkOnWithDaemon:
                     },
                     cwd=maestro_folder,
                     home=maestro_folder,
-                    env_extra={"MAESTRO_ACTIVE_ACCOUNT": "riseapps", "MAESTRO_BRIDGE_TIMEOUT": "5"},
+                    env_extra={
+                        "MAESTRO_ACTIVE_ACCOUNT": "riseapps",
+                        "MAESTRO_BRIDGE_TIMEOUT": "5",
+                        "OTAMAN_AGENT": "backend-agent",
+                    },
                     timeout=20.0,
                 )
 
