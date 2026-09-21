@@ -93,6 +93,54 @@ jobs:
         working-directory: workspace/otaman-bridge
         run: uv run pytest tests/ -v
 
+  # release-notes-sibling-coverage 2.3: block a shipped-code PR that carries no
+  # changelog.d/ fragment (nor the `changelog: exempt` PR-body marker). The gate
+  # is otaman-core's shared evaluator invoked as one identical line every sibling
+  # wires (core #68/#69) — no otaman CLI (private, and cli→bridge forbids the
+  # import), no repo-local script. The module is stdlib-only, so otaman-core on
+  # PYTHONPATH is all it needs. PR-only.
+  changelog-fragment:
+    name: changelog-fragment
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout otaman-bridge
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # full history so the base...HEAD merge-base diff resolves
+          path: otaman-bridge
+
+      - name: Checkout otaman-core (evaluator home)
+        uses: actions/checkout@v7
+        with:
+          repository: inprimex/otaman-core
+          path: otaman-core
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Fetch base ref
+        working-directory: otaman-bridge
+        run: git fetch --no-tags origin "${{ github.base_ref }}"
+
+      - name: Write PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" > "${RUNNER_TEMP}/pr_body.txt"
+
+      - name: Changelog fragment gate
+        working-directory: otaman-bridge
+        env:
+          PYTHONPATH: ${{ github.workspace }}/otaman-core/src
+        run: >
+          python -m otaman_core.changelog_fragment
+          --check
+          --base "origin/${{ github.base_ref }}"
+          --pr "${{ github.event.pull_request.number }}"
+          --pr-body-file "${RUNNER_TEMP}/pr_body.txt"
+
   # Branch-protection anchor (fleet-uniform, spec-agent 20260818T202444):
   # `ci-ok` needs every merge-blocking job; protection requires exactly this
   # one check, immune to job renames and matrix churn. Plain variant (no
@@ -100,7 +148,7 @@ jobs:
   # correctly.
   ci-ok:
     name: ci-ok
-    needs: [lint, test]
+    needs: [lint, test, changelog-fragment]
     runs-on: ubuntu-latest
     steps:
       - run: echo ok
