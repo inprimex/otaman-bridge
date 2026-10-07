@@ -23,10 +23,10 @@ jobs:
       # ruff pinned exactly per F182 doctrine (ce-lint-standard);
       # version bumps are ordinary PRs.
       - name: ruff check
-        run: uv tool run ruff@0.16.3 check .
+        run: uv tool run ruff@0.16.9 check .
 
       - name: ruff format check
-        run: uv tool run ruff@0.16.3 format --check .
+        run: uv tool run ruff@0.16.9 format --check .
 
   test:
     runs-on: ${{ matrix.os }}
